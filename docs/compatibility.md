@@ -42,6 +42,8 @@ Arquivos: crates/appkit/src/event.rs, cgevent.rs, nsevent.rs, application.rs, wi
 
 O diff instrumenta eventos SDL, criação de NSEvent, estado de mouse associado/relativo, coordenadas de janela e backing, janela alvo, evento corrente, hit-test, dispatch e retorno dos métodos. O identificador de trace permite correlacionar um movimento físico com a leitura posterior de CGGetLastMouseDelta. Também há tratamento de eco/ajuste de warp e rastreamento de janela/foco.
 
+The Play cursor lag was traced to the no-button event path: after SDL updated the pointer position, the event pump discarded `mouseMoved:` unless the window opted in or a tracking area handled it. LMB movement used `mouseDragged:` and bypassed that gate. The compatibility fallback now forwards unbuttoned motion to the content view while preserving tracking-area delivery without duplicates. The user confirmed in Play that pointer position updates immediately without a button held.
+
 O usuário localizou o bloqueio de cliques na opção Show View Selector: o controle gráfico não aparecia, mas uma superfície invisível interceptava uma faixa larga no topo do viewport e certos cliques abriam o submenu de seleção de dispositivo. O View Selector não foi desativado; a compatibilidade de hit testing/área interativa foi ajustada. O usuário confirmou os cliques funcionando em Edit e em Play.
 
 O diff também introduz MOUSE_LOOK_DELTA_SCALE=0.003 na conversão de delta usada quando o mouse está capturado ou o botão direito está pressionado. Nos demais movimentos, a escala permanece 1.0. Um teste unitário cobre essas condições. Isso ainda não satisfez a percepção de velocidade do usuário e não elimina picos bruscos de delta.

@@ -19,6 +19,11 @@ A suíte de câmera prova apenas a multiplicação condicional do delta. Ela nã
 
 ## Verificações concluídas no checkout Citric
 
+- The focused AppKit regression `event::tests::hover_motion_reaches_a_view_without_window_mouse_move_opt_in` passed; it verifies a hover event reaches its view when the window did not opt into mouse-move events.
+- All 10 tests matched by `cargo test --locked -p appkit event::tests` passed.
+- Citric build-script check-only applied the updated canonical patch to the pinned base, and the offline Release build completed and installed the local executable.
+- The user confirmed the Play hover fix manually: pointer position now updates immediately with no button held, matching the responsive behavior while holding LMB.
+
 Estas verificações foram executadas no próprio checkout Citric antes do
 fechamento da migração:
 

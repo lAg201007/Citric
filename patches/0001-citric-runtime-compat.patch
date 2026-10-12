@@ -680,7 +680,7 @@ index f395984..2c764ce 100644
  }
  
 diff --git a/crates/appkit/src/event.rs b/crates/appkit/src/event.rs
-index 663570d..e13c195 100644
+index 663570d..507c12a 100644
 --- a/crates/appkit/src/event.rs
 +++ b/crates/appkit/src/event.rs
 @@ -1,9 +1,23 @@
@@ -875,16 +875,45 @@ index 663570d..e13c195 100644
                  },
                  button: held.map_or(0, crate::button::number),
                  window,
-@@ -494,7 +574,7 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
-                 let window = object_for(id);
-                 let areas = crate::cursor::mouse_moved_areas(window);
-                 if !areas.is_empty() {
+@@ -488,32 +568,12 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+                 ..Fields::default()
+             };
+             if held.is_none() {
+-                // An area made with `NSTrackingMouseMoved` has its owner sent
+-                // the move, and that is the whole of the delivery: the view
+-                // under the pointer is not sent it a second time.
+-                let window = object_for(id);
+-                let areas = crate::cursor::mouse_moved_areas(window);
+-                if !areas.is_empty() {
 -                    let location = location(window, x, y);
-+                    let location = location(window, x as f64, y as f64);
-                     for area in &areas {
-                         dispatch(window, nsevent::make(fields(window, location, *area)));
-                     }
-@@ -523,20 +603,36 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+-                    for area in &areas {
+-                        dispatch(window, nsevent::make(fields(window, location, *area)));
+-                    }
+-                    areas.into_iter().for_each(objc::arc::release);
+-                    return;
+-                }
+-            }
+-            if held.is_none() && !wants_mouse_moved(object_for(id)) {
+-                if tracing() {
+-                    eprintln!(
+-                        "rosemary: appkit: -mouseMoved: dropped: the window did not ask for it \
+-                         and no view is tracking"
+-                    );
+-                }
+-                return;
++                deliver_unbuttoned_mouse_motion(id, x, y, &fields);
++            } else {
++                send(id, Some((x, y)), |window, location| {
++                    fields(window, location, std::ptr::null_mut())
++                });
+             }
+-            send(id, Some((x, y)), |window, location| {
+-                fields(window, location, std::ptr::null_mut())
+-            });
+         }
+         Event::MouseButton {
+             window: id,
+@@ -523,20 +583,36 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              x,
              y,
          } => {
@@ -928,7 +957,7 @@ index 663570d..e13c195 100644
              let (x, y) = track_pointer(id, x, y);
              send(id, Some((x, y)), |window, location| Fields {
                  kind,
-@@ -655,7 +751,7 @@ fn key_equivalent(window: Id, fields: Fields, text: &str) -> bool {
+@@ -655,7 +731,7 @@ fn key_equivalent(window: Id, fields: Fields, text: &str) -> bool {
  ///
  /// The base coordinate system is the whole frame, so a titlebar this runtime
  /// draws is above the content view's top.
@@ -937,7 +966,7 @@ index 663570d..e13c195 100644
      let content = window::content_view_of(window);
      let height = match content.is_null() {
          true => 0.0,
-@@ -669,7 +765,7 @@ fn location(window: Id, x: f32, y: f32) -> NSPoint {
+@@ -669,7 +745,7 @@ fn location(window: Id, x: f32, y: f32) -> NSPoint {
          },
      };
      let height = height + window::content_inset(window);
@@ -946,7 +975,7 @@ index 663570d..e13c195 100644
  }
  
  /// Hand one input event to its window, as `-[NSApplication sendEvent:]` does.
-@@ -678,7 +774,9 @@ fn send(id: u32, at: Option<(f32, f32)>, fields: impl FnOnce(Id, NSPoint) -> Fie
+@@ -678,10 +754,37 @@ fn send(id: u32, at: Option<(f32, f32)>, fields: impl FnOnce(Id, NSPoint) -> Fie
      if window.is_null() {
          return;
      }
@@ -957,7 +986,35 @@ index 663570d..e13c195 100644
      dispatch(window, nsevent::make(fields(window, point)));
  }
  
-@@ -699,7 +797,25 @@ pub(crate) fn dispatch(window: Id, event: Id) {
++fn deliver_unbuttoned_mouse_motion<F>(id: u32, x: f32, y: f32, fields: &F)
++where
++    F: Fn(Id, NSPoint, Id) -> Fields,
++{
++    let window = object_for(id);
++    if window.is_null() {
++        return;
++    }
++    let areas = crate::cursor::mouse_moved_areas(window);
++    if !areas.is_empty() {
++        let point = location(window, x as f64, y as f64);
++        for area in &areas {
++            dispatch(window, nsevent::make(fields(window, point, *area)));
++        }
++        areas.into_iter().for_each(objc::arc::release);
++        return;
++    }
++    if !wants_mouse_moved(window) && tracing() {
++        eprintln!("rosemary: appkit: forwarding -mouseMoved: through the compatibility fallback");
++    }
++    send(id, Some((x, y)), |window, point| {
++        fields(window, point, std::ptr::null_mut())
++    });
++}
++
+ /// Hand a built event to its window's `-sendEvent:`, after the local monitors.
+ pub(crate) fn dispatch(window: Id, event: Id) {
+     // Before the window sees it, which is where AppKit runs a local monitor: a
+@@ -699,7 +802,25 @@ pub(crate) fn dispatch(window: Id, event: Id) {
      unsafe {
          let f: unsafe extern "C" fn(Id, objc::sel::Sel, Id) =
              std::mem::transmute(objc::msg::entry());
@@ -984,7 +1041,7 @@ index 663570d..e13c195 100644
      }
  }
  
-@@ -716,6 +832,94 @@ pub(crate) fn dispatch(window: Id, event: Id) {
+@@ -716,6 +837,94 @@ pub(crate) fn dispatch(window: Id, event: Id) {
  /// log file once it is running - takes every later trace line with it, and
  /// input arrives long after that.
  pub const LOG_ENV: &str = "ROSEMARY_EVENT_LOG";
@@ -1079,7 +1136,7 @@ index 663570d..e13c195 100644
  
  fn log_path() -> Option<&'static std::path::Path> {
      static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-@@ -737,10 +941,69 @@ pub fn debug_log(line: &str) {
+@@ -737,10 +946,69 @@ pub fn debug_log(line: &str) {
      }
  }
  
@@ -1150,7 +1207,7 @@ index 663570d..e13c195 100644
          return;
      }
      let at = nsevent::location_of(event);
-@@ -763,6 +1026,45 @@ fn log_route(window: Id, event: Id, kind: u64) {
+@@ -763,6 +1031,45 @@ fn log_route(window: Id, event: Id, kind: u64) {
          local.x,
          local.y,
      ));
@@ -1196,7 +1253,7 @@ index 663570d..e13c195 100644
  }
  
  pub fn route(window: Id, event: Id) {
-@@ -790,12 +1092,37 @@ pub fn route(window: Id, event: Id) {
+@@ -790,12 +1097,37 @@ pub fn route(window: Id, event: Id) {
              );
          }
          if let Some(method) = method {
@@ -1234,7 +1291,7 @@ index 663570d..e13c195 100644
          }
          return;
      }
-@@ -807,11 +1134,43 @@ pub fn route(window: Id, event: Id) {
+@@ -807,11 +1139,43 @@ pub fn route(window: Id, event: Id) {
          false => responder_of(window),
      };
      let Some((responder, method)) = chain(start, sel) else {
@@ -1278,7 +1335,7 @@ index 663570d..e13c195 100644
      if tracing() {
          // SAFETY: a live object this runtime allocated.
          let class = unsafe { objc::object::class_of(responder) };
-@@ -820,12 +1179,32 @@ pub fn route(window: Id, event: Id) {
+@@ -820,12 +1184,32 @@ pub fn route(window: Id, event: Id) {
              class.map_or("no class", |c| c.name_str()),
          );
      }
@@ -1311,7 +1368,7 @@ index 663570d..e13c195 100644
  }
  
  /// The responder method an event type is delivered through.
-@@ -910,23 +1289,131 @@ pub(crate) fn warp_pointer(x: f32, y: f32) {
+@@ -910,23 +1294,131 @@ pub(crate) fn warp_pointer(x: f32, y: f32) {
  /// synchronously, X11 reports the server's MotionNotify), with a delta of
  /// `target - previous`. A game that recentres the cursor after every
  /// `-mouseMoved:` would read that delta as the player undoing their own motion.
@@ -1372,6 +1429,12 @@ index 663570d..e13c195 100644
 +        .unwrap_or_else(|e| e.into_inner())
 +        .back()
 +        .map(|echo| echo.to)
++}
++
++fn take_warp_echo(x: f32, y: f32, dx: f32, dy: f32) -> WarpEchoResult {
++    let now = Instant::now();
++    let mut echoes = WARP_ECHOES.lock().unwrap_or_else(|e| e.into_inner());
++    take_warp_echo_from_queue(&mut echoes, x, y, dx, dy, now)
  }
  
 -fn take_warp_echo(x: f32, y: f32) -> bool {
@@ -1379,12 +1442,6 @@ index 663570d..e13c195 100644
 -    let hit = echo.is_some_and(|target| lands_on(target, (x, y)));
 -    if hit {
 -        *echo = None;
-+fn take_warp_echo(x: f32, y: f32, dx: f32, dy: f32) -> WarpEchoResult {
-+    let now = Instant::now();
-+    let mut echoes = WARP_ECHOES.lock().unwrap_or_else(|e| e.into_inner());
-+    take_warp_echo_from_queue(&mut echoes, x, y, dx, dy, now)
-+}
-+
 +fn enqueue_warp_echo(
 +    echoes: &mut VecDeque<WarpEcho>,
 +    from: (f32, f32),
@@ -1451,7 +1508,7 @@ index 663570d..e13c195 100644
  }
  
  /// Within half a pixel: SDL converts between desktop and window coordinates.
-@@ -950,25 +1437,35 @@ pub(crate) fn pointer_position() -> (f32, f32) {
+@@ -950,25 +1442,35 @@ pub(crate) fn pointer_position() -> (f32, f32) {
  /// cursor never was - which is a hit test, and so a first responder, against the
  /// wrong view.
  fn track_pointer(window: u32, x: f32, y: f32) -> (f32, f32) {
@@ -1495,7 +1552,85 @@ index 663570d..e13c195 100644
  }
  
  /// The SDL id of the window the last pointer event came from; `0` before any.
-@@ -1141,12 +1638,74 @@ mod tests {
+@@ -1129,6 +1631,77 @@ fn delegate_selector(name: &str) -> &'static str {
+ mod tests {
+     use super::*;
+ 
++    static UNREQUESTED_MOUSE_MOVES: std::sync::atomic::AtomicUsize =
++        std::sync::atomic::AtomicUsize::new(0);
++
++    unsafe extern "C" fn record_unrequested_mouse_move(
++        _receiver: Id,
++        _sel: objc::sel::Sel,
++        _event: Id,
++    ) {
++        UNREQUESTED_MOUSE_MOVES.fetch_add(1, Ordering::Relaxed);
++    }
++
++    #[test]
++    fn hover_motion_reaches_a_view_without_window_mouse_move_opt_in() {
++        crate::bootstrap();
++        let view_class = objc::class::allocate_pair(
++            Some(objc::class::lookup(c"NSView").expect("NSView")),
++            c"UnrequestedMouseMoveProbe",
++            0,
++        )
++        .expect("a view subclass");
++        view_class.add_method(
++            objc::sel::get("mouseMoved:"),
++            record_unrequested_mouse_move as objc::class::Imp,
++            c"v24@0:8@16",
++        );
++        objc::class::register_pair(view_class);
++
++        let window =
++            objc::object::create_instance(objc::class::lookup(c"NSWindow").expect("NSWindow"), 0);
++        let frame = foundation::geometry::NSRect {
++            origin: NSPoint::default(),
++            size: foundation::geometry::NSSize {
++                width: 320.0,
++                height: 240.0,
++            },
++        };
++        if !unsafe { window::init_with_content_rect_for_tests(window, frame) } {
++            objc::arc::release(window);
++            return;
++        }
++
++        let view = objc::object::create_instance(view_class, 0);
++        unsafe {
++            let set_content_view: unsafe extern "C" fn(Id, objc::sel::Sel, Id) =
++                std::mem::transmute(objc::msg::entry());
++            set_content_view(window, objc::sel::get("setContentView:"), view);
++        }
++        objc::arc::release(view);
++        assert!(!wants_mouse_moved(window));
++
++        let before = UNREQUESTED_MOUSE_MOVES.load(Ordering::Relaxed);
++        let sdl = unsafe { window::sdl_window(window) };
++        let pool = objc::arc::pool_push();
++        deliver_unbuttoned_mouse_motion(
++            sdl3::video::window_id(sdl),
++            20.0,
++            50.0,
++            &|window, location, tracking_area| Fields {
++                kind: kind::MOUSE_MOVED,
++                location,
++                window,
++                tracking_area,
++                ..Fields::default()
++            },
++        );
++
++        objc::arc::pool_pop(pool);
++        assert_eq!(UNREQUESTED_MOUSE_MOVES.load(Ordering::Relaxed), before + 1);
++        objc::arc::release(window);
++    }
++
+     #[test]
+     fn a_programmatic_warp_updates_the_reported_pointer() {
+         let previous = pointer_position();
+@@ -1141,12 +1714,74 @@ mod tests {
  
      #[test]
      fn a_warp_echo_is_taken_once() {
