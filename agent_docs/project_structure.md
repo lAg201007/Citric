@@ -9,7 +9,8 @@
 - scripts/citric: GTK launcher entry point and CLI wrapper.
 - citric_launcher/: GTK 4 UI, configuration, desktop-entry integration, and
   launch diagnostics.
-- scripts/build-studio.sh: locked release build for Rosemary.
+- scripts/build-studio.sh: fetches the pinned Rosemary base, applies the patch
+  series in a temporary checkout, and performs a locked release build.
 - scripts/patch-color-dialog.py: idempotent Qt Cocoa QColorDialog patching.
 - app/full/RobloxStudio.app: ignored local Studio bundle.
 - bin/rosemary: ignored ready-to-run Rosemary binary.
@@ -21,6 +22,7 @@
   entry tests.
 - agent_docs/: durable deployment state for future agent handoffs.
 
-The source repository is the owner of Rust behavior. The scripts own local
+The patch series is the owner of Citric's Rust behavior; the temporary
+Rosemary checkout owns upstream source during a build. The scripts own local
 launch composition. docs/ owns the user-facing record; agent_docs/ owns the
 workflow handoff state.

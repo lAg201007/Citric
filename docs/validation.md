@@ -54,3 +54,10 @@ condicional do delta; ela não mede a sensação de movimento em hardware real.
 2. Quando a abertura estiver estável, testar Edit e Play com o usuário validando câmera e controles. A escala 0,003 ainda não tem resultado manual.
 3. Confirmar que scripts/patch-color-dialog.py aceita o bundle já patchado e não modifica binários quando o patch já está presente.
 4. Conferir hashes de RobloxStudio.app e Rosemary contra docs/bundle.md e validar o manifesto completo.
+
+
+## Migração para patches
+
+A árvore patch-only foi validada buscando a revisão registrada em patches/base-commit, aplicando patches/series com o mesmo script usado no build e executando a suíte do launcher. O modo ./scripts/build-studio.sh --check-only testa a obtenção da base e a aplicação dos diffs sem compilar nem iniciar o Studio.
+
+O teste de integração buscou o commit fixado por uma URL Git local isolada, aplicou a série canônica e completou cargo build --release --locked -p rosemary em modo offline. O comando usou --build-only e gerou o executável no diretório temporário de teste, sem substituir bin/rosemary. A compilação em instalação nova ainda depende das ferramentas Rust e bibliotecas exigidas pelo commit Rosemary fixado.\n\nA migração não reescreve commits históricos e não altera o bundle, o binário Rosemary local, o prefixo autenticado ou o cache Darwin.

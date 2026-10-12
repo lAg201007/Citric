@@ -1,6 +1,6 @@
 # Mudanças de compatibilidade
 
-Esta página descreve o diff que foi levado do checkout Rosemary para Citric. O estado atual do código é a fonte canônica; os arquivos de patches/ são snapshots históricos, não três etapas para aplicar cegamente.
+Esta página descreve as mudanças de compatibilidade representadas pelo patch canônico em patches/series. Os caminhos citados pertencem ao commit-base Rosemary; o source é obtido temporariamente pelo build, e não integra a árvore atual do Citric. Os outros três arquivos de patch são snapshots históricos, não etapas para aplicar junto com a série canônica.
 
 ## AppKit e ciclo de vida de janelas
 

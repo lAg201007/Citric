@@ -10,6 +10,7 @@ from pathlib import Path
 from .core import (
     ROOT,
     build_launch_spec,
+    build_rosemary_spec,
     diagnose,
     format_command,
     install_desktop_entry,
@@ -21,6 +22,11 @@ from .core import (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="citric", description="Launcher local do Roblox Studio pelo Rosemary")
     commands = parser.add_subparsers(dest="command")
+
+    build = commands.add_parser("build", help="baixar a base Rosemary, aplicar patches e compilar")
+    build_modes = build.add_mutually_exclusive_group()
+    build_modes.add_argument("--check-only", action="store_true", help="validar fetch e patches sem compilar")
+    build_modes.add_argument("--build-only", action="store_true", help="compilar sem substituir bin/rosemary")
 
     launch = commands.add_parser("launch", help="iniciar o Studio")
     launch.add_argument("place", nargs="?", help="arquivo .rbxl ou .rbxlx")
@@ -59,6 +65,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "uninstall-desktop":
         print(uninstall_desktop_entry())
         return 0
+    if args.command == "build":
+        try:
+            spec = build_rosemary_spec(ROOT, args.check_only, args.build_only)
+        except FileNotFoundError as error:
+            print(error, file=sys.stderr)
+            return 1
+        return subprocess.run(spec.argv, cwd=ROOT, check=False).returncode
     if args.command == "launch":
         try:
             spec = build_launch_spec(load_config(), args.place)

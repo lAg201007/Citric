@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Rosemary
-Comment=Run macOS applications across architectures and operating systems
-Exec=rosemary %F
-Categories=Utility;
-Terminal=true

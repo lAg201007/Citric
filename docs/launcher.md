@@ -1,40 +1,33 @@
 # Launcher do Citric
 
-O launcher GTK 4 inicia o Roblox Studio usando o wrapper existente `scripts/run-studio.sh`. Ele não baixa nem atualiza o Studio, o runtime Rosemary ou places. O bundle proprietário continua fora do Git.
+O launcher GTK 4 inicia Roblox Studio com scripts/run-studio.sh. Ele também pode preparar o runtime quando o checkout ainda não tem bin/rosemary.
 
 ## Abrir
 
-Execute `./scripts/citric` para abrir a interface, ou `python3 -m citric_launcher` a partir da raiz do repositório.
+Execute ./scripts/citric para abrir a interface ou python3 -m citric_launcher na raiz do repositório.
 
-A janela permite:
+A janela permite iniciar o Studio ou uma place .rbxl/.rbxlx, compilar o Rosemary a partir da série de patches, escolher prefixo, executável Rosemary, bundle do Studio e driver SDL, salvar preferências XDG, instalar o atalho de menu e abrir a pasta de logs.
 
-- iniciar o Studio ou abrir diretamente um arquivo `.rbxl` / `.rbxlx`;
-- escolher prefixo, executável Rosemary, bundle do Studio e driver SDL;
-- salvar as preferências no XDG config;
-- adicionar ou remover a entrada do menu de aplicativos;
-- abrir a pasta local de logs.
-
-O padrão do driver SDL continua sendo X11, como no wrapper de testes atual.
+Na primeira instalação, clique em Baixar patches e compilar Rosemary. Isso busca a base fixada, aplica patches/series, compila e grava bin/rosemary. O bundle proprietário ainda precisa estar disponível em app/ ou ser selecionado manualmente.
 
 ## CLI
 
-```sh
-./scripts/citric launch
-./scripts/citric launch "/caminho/para/place.rbxl"
-./scripts/citric launch --dry-run
-./scripts/citric diagnose
-./scripts/citric install-desktop
-./scripts/citric uninstall-desktop
-```
+    ./scripts/citric build
+    ./scripts/citric build --check-only
+    ./scripts/citric build --build-only
+    ./scripts/citric launch
+    ./scripts/citric launch "/caminho/para/place.rbxl"
+    ./scripts/citric launch --dry-run
+    ./scripts/citric diagnose
+    ./scripts/citric install-desktop
+    ./scripts/citric uninstall-desktop
 
-`diagnose` verifica os caminhos necessários sem iniciar o Studio. O modo `--dry-run` imprime os argumentos e variáveis que seriam passados ao wrapper.
+build --check-only valida a revisão-base e os patches sem compilar. diagnose verifica caminhos locais sem iniciar o Studio. launch --dry-run mostra os argumentos e as variáveis que seriam passados ao wrapper.
 
-## Preferências
+## Preferências e arquivos locais
 
-O arquivo fica em `$XDG_CONFIG_HOME/citric/launcher.json`, ou em `~/.config/citric/launcher.json` quando `XDG_CONFIG_HOME` não estiver definido. O launcher cria esse arquivo com permissão 0600. Os logs continuam em `logs/` no checkout para manter o comportamento documentado do wrapper.
+As preferências ficam em $XDG_CONFIG_HOME/citric/launcher.json, ou em ~/.config/citric/launcher.json. Os logs ficam em logs/ no checkout. O source temporário e o target Cargo ficam em $XDG_CACHE_HOME/citric ou ~/.cache/citric. O executável gerado em bin/rosemary, app/full/RobloxStudio.app e downloads/darwin-cache estão excluídos do Git.
 
 ## Dependências
 
-A interface precisa de Python 3, PyGObject e GTK 4. A entrada .desktop é instalada no diretório `applications` sob `$XDG_DATA_HOME`, ou em `~/.local/share/applications` por padrão.
-
-O launcher apenas chama o wrapper do projeto. A configuração do prefixo, o patch do diálogo de cor, a escolha do Rosemary e a gravação dos logs permanecem centralizados em `scripts/run-studio.sh`.
+A interface precisa de Python 3, PyGObject e GTK 4. O build do Rosemary precisa de Git, Rust/Cargo e as dependências upstream exigidas pela revisão fixada. O script chama Cargo no source preparado e mantém toda a configuração de runtime em scripts/run-studio.sh.

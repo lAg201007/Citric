@@ -9,10 +9,11 @@ local release binary, validates and patches the Studio app when required, uses
 the local Darwin cache, and defaults SDL to X11/XWayland because that avoided a
 reappearing non-modal plugin-loading window during the recorded tests.
 
-The source diff currently includes AppKit window/view/input behavior,
+The compatibility diff includes AppKit window/view/input behavior,
 CoreFoundation lifetime handling, Objective-C autorelease safety, keyboard/font
-compatibility, and diagnostic logging. The source is authoritative; patches/
-are historical snapshots.
+compatibility, and diagnostic logging. `patches/0001-citric-runtime-compat.patch`
+is now the authoritative source representation; Rosemary is fetched into a
+temporary checkout only for applying and building it.
 
 The current canonical patch is `patches/0001-citric-runtime-compat.patch`,
 applied to the pinned base in `patches/base-commit` and ordered by

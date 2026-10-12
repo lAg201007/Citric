@@ -1,12 +1,12 @@
 # Project progress
 
-No active deployment remains. Deployment citric-local-migration-20261012
+No active deployment remains. Deployment citric-patch-overlay-20261012
 completed the local Citric repository migration.
 
 The launcher milestone is complete: `scripts/citric` and the `citric_launcher/`
 GTK 4 package provide GUI/CLI launch, XDG configuration, diagnostics, and an
-optional desktop-menu entry. The full Rosemary checkout remains the executable
-reference, with the canonical patch series recorded separately.
+optional desktop-menu entry. The current branch contains no Rosemary source;
+the canonical patch series and pinned base drive each build.
 
 The next milestone is a normal-launch reproduction of the latest place-opening
 crash, with a fresh log and exit code, followed by isolation of the invalid

@@ -1,13 +1,18 @@
 # Série de patches Citric
 
-A série canônica atual é:
+A série canônica está definida em patches/series e aplica-se à revisão Rosemary registrada em patches/base-commit. O repositório de origem está em patches/upstream-url.
 
-- Base: commit Rosemary `c14275b4197e97d08c068acee79a016dcb5c5f6d`.
-- Ordem: [series](../../patches/series).
-- Patch: [0001-citric-runtime-compat.patch](../../patches/0001-citric-runtime-compat.patch).
+O patch atual, 0001-citric-runtime-compat.patch, representa as alterações locais de compatibilidade em 18 arquivos Rust. Os três outros patches numerados são registros antigos da investigação; não fazem parte da série canônica e não devem ser aplicados junto com ela.
 
-O patch altera 18 arquivos Rust e foi validado com `git apply --check` e aplicado em um worktree temporário criado do commit base. Isso verifica que o diff pode ser reaplicado; não substitui build ou testes do runtime.
+Para verificar que a revisão-base pode ser obtida e que a série aplica sem conflito:
 
-Os outros três arquivos `0001-*.patch` são snapshots antigos da sessão de compatibilidade. Eles têm nomes sobrepostos e trechos duplicados; não devem ser aplicados junto com a série canônica.
+    ./scripts/build-studio.sh --check-only
+    ./scripts/build-studio.sh --build-only
 
-Uma futura distribuição enxuta pode manter a série e um script que baixa/prepara o checkout Rosemary no commit fixado, aplica os patches e compila. O checkout de trabalho completo permanece neste repositório até essa geração ser reproduzível e validada.
+A opção --build-only compila sem substituir bin/rosemary. Para compilar e instalar o executável local, use:
+
+    ./scripts/build-studio.sh
+
+O script busca a revisão exata do Rosemary, cria uma cópia temporária fora do checkout Citric, aplica os patches em ordem e compila com Cargo. O source temporário é removido ao terminar. O binário final é instalado atomicamente em bin/rosemary, que está excluído do Git.
+
+Depois de atualizar a base, valide cada patch contra o novo commit e rode os testes antes de mudar patches/base-commit. Um patch que não se aplica deve falhar sem substituir o binário local existente.

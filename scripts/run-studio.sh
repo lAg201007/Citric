@@ -17,7 +17,7 @@ if [[ ! -x "$ROSEMARY_BIN" ]]; then
     ROSEMARY_BIN="$HOME/rosemary/target/release/rosemary"
 fi
 if [[ ! -x "$ROSEMARY_BIN" ]]; then
-    printf 'Rosemary não encontrado.\n' >&2
+    printf 'Rosemary não encontrado. Compile com ./scripts/build-studio.sh ou ./scripts/citric build.\n' >&2
     exit 127
 fi
 if [[ -z "${STUDIO_APP:-}" ]]; then

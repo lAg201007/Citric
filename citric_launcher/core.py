@@ -91,6 +91,18 @@ def save_config(values: Mapping[str, object], path: Path | None = None, environm
     return path
 
 
+def build_rosemary_spec(root: Path = ROOT, check_only: bool = False, build_only: bool = False) -> LaunchSpec:
+    script = root / "scripts" / "build-studio.sh"
+    if not script.is_file():
+        raise FileNotFoundError(f"Script de build não encontrado: {script}")
+    argv = [str(script)]
+    if check_only:
+        argv.append("--check-only")
+    elif build_only:
+        argv.append("--build-only")
+    return LaunchSpec(tuple(argv), {})
+
+
 def detect_rosemary(root: Path = ROOT, environment: Mapping[str, str] | None = None) -> Path | None:
     environment = environment or os.environ
     candidates = (
@@ -220,10 +232,20 @@ def diagnose(root: Path = ROOT, environment: Mapping[str, str] | None = None) ->
         "rosemary_executable": str(rosemary) if rosemary else None,
         "studio_bundle": str(studio) if studio else None,
         "patch_script": (root / "scripts" / "patch-color-dialog.py").is_file(),
+        "build_script": (root / "scripts" / "build-studio.sh").is_file(),
+        "patch_series": (root / "patches" / "series").is_file() and (root / "patches" / "base-commit").is_file() and (root / "patches" / "upstream-url").is_file(),
         "display_server": environment.get("STUDIO_SDL_DRIVER", config["sdl_driver"]),
         "logs_directory": str(root / "logs"),
         "config_file": str(config_path(environment)),
         "config_error": config_error,
     }
-    checks["ready"] = bool(checks["launcher_script"] and rosemary and studio and checks["patch_script"] and not config_error)
+    checks["ready"] = bool(
+        checks["launcher_script"]
+        and checks["build_script"]
+        and checks["patch_series"]
+        and rosemary
+        and studio
+        and checks["patch_script"]
+        and not config_error
+    )
     return checks

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from citric_launcher.core import (
     build_launch_spec,
+    build_rosemary_spec,
     config_path,
     desktop_entry,
     desktop_file_path,
@@ -21,6 +22,22 @@ from citric_launcher.core import (
 
 
 class CitricLauncherTests(unittest.TestCase):
+    def test_build_spec_invokes_patch_build_script_and_supports_check_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = root / "scripts" / "build-studio.sh"
+            script.parent.mkdir()
+            script.write_text("#!/bin/sh\n")
+
+            build = build_rosemary_spec(root)
+            check = build_rosemary_spec(root, check_only=True)
+            build_only = build_rosemary_spec(root, build_only=True)
+
+            self.assertEqual(build.argv, (str(script),))
+            self.assertEqual(check.argv, (str(script), "--check-only"))
+            self.assertEqual(build_only.argv, (str(script), "--build-only"))
+            self.assertEqual(build.env, {})
+
     def test_config_uses_xdg_and_round_trips_with_private_permissions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)

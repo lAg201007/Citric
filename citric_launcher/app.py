@@ -7,13 +7,13 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, Gtk, GLib
 
-from .core import LOGS_DIR, build_launch_spec, default_config, install_desktop_entry, load_config, save_config
+from .core import LOGS_DIR, ROOT, build_launch_spec, build_rosemary_spec, default_config, install_desktop_entry, load_config, save_config
 
 
 class CitricWindow(Gtk.ApplicationWindow):
     def __init__(self, application: Gtk.Application) -> None:
         super().__init__(application=application, title="Citric Roblox Studio")
-        self.set_default_size(600, 420)
+        self.set_default_size(600, 470)
         self.config_error = None
         try:
             self.config = load_config()
@@ -78,6 +78,10 @@ class CitricWindow(Gtk.ApplicationWindow):
         buttons.append(place_button)
         outer.append(buttons)
 
+        self.build_button = Gtk.Button(label="Baixar patches e compilar Rosemary")
+        self.build_button.connect("clicked", self._build_rosemary)
+        outer.append(self.build_button)
+
         settings = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         save_button = Gtk.Button(label="Salvar configurações")
         save_button.connect("clicked", self._save_settings)
@@ -139,19 +143,39 @@ class CitricWindow(Gtk.ApplicationWindow):
                 launcher.setenv(name, value, True)
             process = launcher.spawnv(list(spec.argv))
             self._processes.append(process)
-            process.wait_async(None, self._on_process_exit, None)
+            process.wait_async(None, self._on_process_exit, "launch")
             self.status.set_text("Studio iniciado. O log desta sessão será salvo em logs/.")
         except (OSError, ValueError, GLib.Error) as error:
             self.status.set_text(f"Falha ao iniciar: {error}")
 
-    def _on_process_exit(self, process: Gio.Subprocess, result, _data) -> None:
+    def _build_rosemary(self, *_args) -> None:
+        try:
+            spec = build_rosemary_spec(ROOT)
+            launcher = Gio.SubprocessLauncher.new(Gio.SubprocessFlags.NONE)
+            process = launcher.spawnv(list(spec.argv))
+            self._processes.append(process)
+            self.build_button.set_sensitive(False)
+            process.wait_async(None, self._on_process_exit, "build")
+            self.status.set_text("Baixando o commit Rosemary fixado, aplicando patches e compilando…")
+        except (OSError, GLib.Error) as error:
+            self.status.set_text(f"Falha ao iniciar o build: {error}")
+
+    def _on_process_exit(self, process: Gio.Subprocess, result, operation) -> None:
         try:
             process.wait_finish(result)
             code = process.get_exit_status() if process.get_if_exited() else "interrompido"
-            self.status.set_text(f"Processo do Studio terminou (código {code}).")
+            if operation == "build":
+                if code == 0:
+                    self.status.set_text("Rosemary compilado em bin/rosemary. O Studio está pronto para abrir.")
+                else:
+                    self.status.set_text(f"Build do Rosemary terminou (código {code}).")
+            else:
+                self.status.set_text(f"Processo do Studio terminou (código {code}).")
         except GLib.Error as error:
-            self.status.set_text(f"Não consegui observar a saída do Studio: {error}")
+            self.status.set_text(f"Não consegui observar a saída do processo: {error}")
         finally:
+            if operation == "build":
+                self.build_button.set_sensitive(True)
             if process in self._processes:
                 self._processes.remove(process)
 
@@ -268,7 +292,7 @@ class CitricWindow(Gtk.ApplicationWindow):
             return "Pronto para iniciar. Use Editar se precisar apontar para outro bundle ou executável."
         missing = []
         if not result["rosemary_executable"]:
-            missing.append("executável Rosemary")
+            missing.append("Rosemary não compilado; use o botão de build")
         if not result["studio_bundle"]:
             missing.append("RobloxStudio.app")
         if not result["launcher_script"]:
