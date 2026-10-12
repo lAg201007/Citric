@@ -1,6 +1,6 @@
 # Verificação executada e pendente
 
-## Verificações que passaram no checkout de origem
+## Verificações históricas no checkout de origem
 
 Os resultados abaixo foram obtidos antes da migração para Citric, contra o mesmo diff de código copiado para cá:
 
@@ -17,7 +17,25 @@ Os resultados abaixo foram obtidos antes da migração para Citric, contra o mes
 
 A suíte de câmera prova apenas a multiplicação condicional do delta. Ela não mede a sensação de movimento da câmera em hardware real.
 
-## Verificações a fazer agora em Citric
+## Verificações concluídas no checkout Citric
+
+Estas verificações foram executadas no próprio checkout Citric antes do
+fechamento da migração:
+
+- 22/22 testes de view passaram.
+- 11/11 testes de backing passaram.
+- 1/1 teste de display link passou.
+- 1/1 teste de retenção de snapshot do timer passou.
+- 30/30 testes da crate objc passaram.
+- 1/1 teste direcionado da câmera passou.
+- cargo build --release --locked --offline -p rosemary passou.
+- O binário gerado tem o mesmo SHA-256 do bin/rosemary copiado.
+
+Esses resultados substituem os números menores registrados no histórico da
+árvore de origem. A suíte de câmera continua provando apenas a multiplicação
+condicional do delta; ela não mede a sensação de movimento em hardware real.
+
+## Verificações ainda pendentes
 
 1. Confirmar que o diff Rust de Citric corresponde ao diff aplicado antes da migração.
 2. Executar git diff --check e bash -n nos scripts.
