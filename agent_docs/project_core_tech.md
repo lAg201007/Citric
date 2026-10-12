@@ -36,3 +36,21 @@ run.
 
 Do not copy the authenticated prefix or raw logs into Git. Do not publish the
 proprietary app bundle without an explicit later decision.
+
+For periodic Play-stutter diagnosis, `ROSEMARY_PERF_TRACE` is enabled by
+default by the launcher and writes trace metadata with session logs. The
+instrumentation covers main-loop gaps, script/event/backing pumps,
+CoreFoundation callbacks, and AppKit/CoreVideo display-link schedule and
+callback timing. It also records aggregate background rendering time, the
+top slow background-rendered views, and per-view layer-presentation, fill, and
+contents-copy timings. The latest trace isolated image-content copying as the
+dominant cost. Exact-size BGRA content uses a clipped fast path: fully opaque
+rows are copied, opaque pixels inside mixed rows are copied directly, exactly
+transparent pixels are skipped, and partial-alpha pixels retain source-over
+blending. Completely transparent rows are skipped as a unit. Scaled images and
+RGBA surfaces retain the generic path. The user first confirmed that the
+pixel-copy optimization made the same 0.5-second stutter much lighter, then
+reported that the visible stutter disappeared after testing the latest build
+in Play on an empty Baseplate. The latest run still logs full-window
+invalidation about every 500 ms, so the optimization resolved the reported
+visual symptom without eliminating the periodic damage event.

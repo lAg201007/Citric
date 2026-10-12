@@ -1,8 +1,21 @@
 # Project progress
 
-No active deployment remains. Deployment citric-history-trim-20261012
-completed the local Citric repository history cleanup after the patch-overlay
-migration.
+Latest deployment: citric-play-periodic-stutter-20261012; user-visible
+stutter fix validated manually.
+
+The user confirmed that a periodic roughly 0.5 second stutter occurs in Play
+even in an empty Baseplate. A per-view trace isolated pixel-content copying
+as the dominant cost. The first row-copy optimization only reduced median
+composition from about 111 to 102 ms; the user retested and confirmed the
+stutter remains. A follow-up build copied opaque pixels directly and skipped
+transparent pixels; the user reported the same cadence but a much lighter
+stutter. Its trace measured a 28.73 ms median composition every 499.91 ms. The
+latest build skips completely transparent rows and records the Core Animation
+call site that requests window damage. After restarting through Citric, the
+user ran an empty Baseplate in Play for about 10 seconds and reported that the
+stutter disappeared. The trace still records full-window damage roughly every
+500 ms, but this no longer produces the reported visible stutter in the tested
+session.
 
 The launcher milestone is complete: `scripts/citric` and the `citric_launcher/`
 GTK 4 package provide GUI/CLI launch, XDG configuration, diagnostics, and an
@@ -31,3 +44,15 @@ imports remain untouched.
 Migration verification is documented in docs/validation.md. Several checks were
 run against the source tree before migration and must be rechecked in Citric
 before treating the copy as fully validated.
+
+For the current stutter investigation, the latest trace from the pixel-level
+optimization measured 712 compositions at a 28.73 ms median and 64.08 ms p95,
+with a 499.91 ms median interval. The user reported that the cadence is the
+same but the stutter is much lighter. The current build adds a fast path for
+fully transparent rows and preserves the original Core Animation setter
+location in damage traces. The canonical patch check, formatting, source diff
+check, all 11 Core Animation tests, and Release build passed. The installed
+binary SHA-256 is
+`1c81b0f81f3483c4eb6ccbfe15437f5634b275fc574e380d4f7b7e0f710a2513`; ELF
+build ID is `df984a5c36cf72f68b3704b10ee7c8b5a5ad7cb0`. The user manually
+confirmed the visible stutter disappeared on this build.

@@ -48,6 +48,57 @@ to arbitrary `require` names without evidence and a safe compatibility mapping.
 Token report: `unavailable`; no matching session record was available for
 `citric-generic-plugin-bit32-20261012`.
 
+---
+
+Deployment: citric-play-periodic-stutter-20261012
+
+State: the user-visible stutter is resolved in the latest tested build. On
+2026-10-12, the user restarted through Citric, ran an empty Baseplate in Play
+for about 10 seconds, and reported that the stutter disappeared.
+
+The user confirmed the stutter persists with per-view profiling. The trace
+measured 110.71 ms median slow window composition every 499.69 ms, with
+109.78 ms in `compose_render_background_total`. Across 3,658 slow view records,
+`contents_ms` had a 7.16 ms median and 25,773.7 ms cumulative time; presentation
+and fill were negligible. Every slow view had contents and no background.
+
+The first optimization uses clipped row copies for exact-size, opaque BGRA
+contents. The user retested and confirmed the stutter remained. In the next
+trace, all 95 slow-view records selected `exact_copy`; images had matching
+source and placed dimensions, no channel swap, and full layer opacity. However,
+82 records had only one fully opaque row. Mixed rows still ran the four-channel
+blend for every pixel, including fully opaque pixels, and did not skip fully
+transparent zero pixels. The current implementation copies opaque pixels
+directly, leaves exactly transparent pixels unchanged, and source-over blends
+only remaining pixels. It records opaque rows/pixels and transparent/blended
+pixel counts. Scaled images and RGBA surfaces remain on the generic path.
+
+The user tested that build and reported the same 0.5-second stutter, but much
+lighter. Its trace measured 28.73 ms median composition, 64.08 ms at p95, and
+499.91 ms median between compositions across 712 samples. The remaining
+composition still redraws the full 1920x1052 window. The current build adds a
+transparent-row skip and propagates `#[track_caller]` through Core Animation
+damage. The latest run log still records full-window damage for a 1920x1052
+region at a median interval of about 499.9 ms, while the visible stutter
+disappeared in the user's retest. Treat the visible symptom as resolved; the
+remaining periodic invalidation is a separate diagnostic detail and does not
+currently block use.
+
+Verification: the canonical patch applies to the pinned base; `cargo fmt
+--all -- --check`, source `git diff --check`, all 11 focused Core Animation
+tests, and the Release build/install pass. The full AppKit suite previously
+passed 281/283 tests; the same two named-color assertions expected black
+`textColor` but received white, an unrelated issue. The installed binary
+SHA-256 is `1c81b0f81f3483c4eb6ccbfe15437f5634b275fc574e380d4f7b7e0f710a2513`;
+ELF build ID is `df984a5c36cf72f68b3704b10ee7c8b5a5ad7cb0`.
+
+Exact continuation point: no further stutter retest is needed unless the user
+reports it returning. If it does, inspect transparent-row counts and the
+damage setter call sites in a fresh trace. Keep raw logs outside Git.
+
+Token report: `citric-play-periodic-stutter-20261012` is unavailable; no
+matching session record was found.
+
 Historical deployment record: the Citric branch snapshot is patch-only: Rosemary source was
 removed from the current tree, while `patches/base-commit`, `patches/series`,
 and `patches/upstream-url` define the reproducible overlay. The original

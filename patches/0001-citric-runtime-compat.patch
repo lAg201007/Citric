@@ -1,8 +1,16 @@
 diff --git a/crates/appkit/src/application.rs b/crates/appkit/src/application.rs
-index 21dff67..063aa4d 100644
+index 21dff67..c545a30 100644
 --- a/crates/appkit/src/application.rs
 +++ b/crates/appkit/src/application.rs
-@@ -143,10 +143,16 @@ unsafe extern "C" fn main_menu(receiver: Id, _sel: Sel) -> Id {
+@@ -63,6 +63,7 @@ static CURRENT_EVENT: AtomicUsize = AtomicUsize::new(0);
+ /// run loop source, so posting from another thread wakes the loop at once.
+ static POSTED_SOURCE: std::sync::OnceLock<std::sync::Arc<corefoundation::runloop::Source>> =
+     std::sync::OnceLock::new();
++static LAST_TURN_START: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+ 
+ /// Nothing to do: the events are sent by `turn`, or taken by
+ /// `-nextEventMatchingMask:`, once the loop returns for this source.
+@@ -143,10 +144,16 @@ unsafe extern "C" fn main_menu(receiver: Id, _sel: Sel) -> Id {
  unsafe extern "C" fn set_main_menu(receiver: Id, _sel: Sel, value: Id) {
      // SAFETY: an application.
      let slot = unsafe { &mut (*(receiver as *mut Application)).main_menu };
@@ -21,7 +29,61 @@ index 21dff67..063aa4d 100644
  }
  
  /// The icon the program set on `NSApp`, or nil when it set none or there is no
-@@ -504,7 +510,7 @@ pub(crate) fn check_last_window_closed() {
+@@ -350,18 +357,38 @@ const MODAL_PANEL_MODE: &str = "NSModalPanelRunLoopMode";
+ ///
+ /// `receiver` must be an application.
+ unsafe fn turn(receiver: Id, mode: &str) {
++    let turn_started = corefoundation::perf_trace_start();
++    if let Some(started) = turn_started {
++        let previous = LAST_TURN_START
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .replace(started);
++        if let Some(previous) = previous {
++            corefoundation::perf_trace_duration(
++                "appkit.main_loop_gap",
++                started.duration_since(previous),
++            );
++        }
++    }
+     register_common_modes();
+     // The window system first, and every turn. A window that is never pumped is
+     // one the platform has not been told to show: on macOS SDL's Cocoa backend
+     // needs its events drained for the window to appear at all, so this is not
+     // only about delivering input.
++    let event_pump_started = corefoundation::perf_trace_start();
+     crate::event::pump(receiver);
++    corefoundation::perf_trace_record("appkit.event_pump", event_pump_started);
+     // `-postEvent:atStart:` is used by Cocoa backends to wake work that must run
+     // through their `-sendEvent:` override. Dispatch through the receiver rather
+     // than calling this class's implementation directly so a principal
+     // `NSApplication` subclass sees the event.
++    let posted_events_started = corefoundation::perf_trace_start();
+     unsafe { dispatch_posted_events(receiver) };
++    corefoundation::perf_trace_record("appkit.posted_events", posted_events_started);
++    let run_loop_started = corefoundation::perf_trace_start();
+     unsafe { service_run_loop(mode, 0.002) };
++    corefoundation::perf_trace_record("appkit.service_run_loop", run_loop_started);
++    corefoundation::perf_trace_record("appkit.main_loop_turn", turn_started);
+ }
+ 
+ /// Drain the main queue and run the main run loop in `mode` for `seconds`.
+@@ -375,10 +402,14 @@ unsafe fn turn(receiver: Id, mode: &str) {
+ ///
+ /// Called on the main thread, from a place a run loop callback may reenter.
+ unsafe fn service_run_loop(mode: &str, seconds: f64) {
++    let drain_started = corefoundation::perf_trace_start();
+     darwin::dispatch::queue::drain_main();
++    corefoundation::perf_trace_record("appkit.main_queue_drain", drain_started);
+     // Returning after a source lets an event posted from another thread be sent
+     // now rather than when the slice ends - see `POSTED_SOURCE`.
++    let run_loop_started = corefoundation::perf_trace_start();
+     let result = corefoundation::runloop::main().run_in_mode(mode, seconds, true);
++    corefoundation::perf_trace_record("appkit.run_loop_slice", run_loop_started);
+     if result == corefoundation::runloop::result::FINISHED && seconds > 0.0 {
+         // Nothing scheduled: a program with no display link and no source is
+         // waiting to be told to stop, and spinning on that would be a core at a
+@@ -504,7 +535,7 @@ pub(crate) fn check_last_window_closed() {
      }
      let app = shared();
      if app.is_null()
@@ -30,7 +92,7 @@ index 21dff67..063aa4d 100644
              .into_iter()
              .any(crate::window::is_shown)
      {
-@@ -573,7 +579,7 @@ unsafe extern "C" fn window_with_window_number(_receiver: Id, _sel: Sel, number:
+@@ -573,7 +604,7 @@ unsafe extern "C" fn window_with_window_number(_receiver: Id, _sel: Sel, number:
          return std::ptr::null_mut();
      }
      let sel = objc::sel::get("windowNumber");
@@ -39,7 +101,7 @@ index 21dff67..063aa4d 100644
          .into_iter()
          // SAFETY: every entry is a live `NSWindow`, and this is
          // `NSInteger (id, SEL)`.
-@@ -584,9 +590,9 @@ unsafe extern "C" fn window_with_window_number(_receiver: Id, _sel: Sel, number:
+@@ -584,9 +615,9 @@ unsafe extern "C" fn window_with_window_number(_receiver: Id, _sel: Sel, number:
          .unwrap_or(std::ptr::null_mut())
  }
  
@@ -51,7 +113,7 @@ index 21dff67..063aa4d 100644
          .into_iter()
          .map(|w| w as corefoundation::base::CFTypeRef)
          .collect();
-@@ -599,6 +605,27 @@ unsafe extern "C" fn windows(_receiver: Id, _sel: Sel) -> Id {
+@@ -599,6 +630,27 @@ unsafe extern "C" fn windows(_receiver: Id, _sel: Sel) -> Id {
      unsafe { corefoundation::api::CFAutorelease(array) as Id }
  }
  
@@ -79,7 +141,7 @@ index 21dff67..063aa4d 100644
  unsafe extern "C" fn key_window(_receiver: Id, _sel: Sel) -> Id {
      crate::window::key_window()
  }
-@@ -682,6 +709,26 @@ unsafe extern "C" fn current_event(_receiver: Id, _sel: Sel) -> Id {
+@@ -682,6 +734,26 @@ unsafe extern "C" fn current_event(_receiver: Id, _sel: Sel) -> Id {
      CURRENT_EVENT.load(Ordering::Acquire) as Id
  }
  
@@ -106,7 +168,7 @@ index 21dff67..063aa4d 100644
  /// `-sendEvent:`, the entry point a subclass overrides and then calls up into.
  ///
  /// Nothing to route: there is no responder chain here, and the events a window
-@@ -957,6 +1004,7 @@ pub(crate) fn install() {
+@@ -957,6 +1029,7 @@ pub(crate) fn install() {
          "setPresentationOptions:" => set_presentation_options, c"v24@0:8Q16";
          "nextEventMatchingMask:untilDate:inMode:dequeue:" => next_event, c"@48@0:8Q16@24@32B40";
          "windows" => windows, c"@16@0:8";
@@ -114,7 +176,7 @@ index 21dff67..063aa4d 100644
          "windowWithWindowNumber:" => window_with_window_number, c"@24@0:8q16";
          "keyWindow" => key_window, c"@16@0:8";
          "mainWindow" => key_window, c"@16@0:8";
-@@ -1222,6 +1270,40 @@ mod tests {
+@@ -1222,6 +1295,40 @@ mod tests {
          assert!(unsafe { current_event(app, objc::sel::get("currentEvent")) }.is_null());
      }
  
@@ -156,10 +218,124 @@ index 21dff67..063aa4d 100644
      #[test]
      fn run_services_the_run_loop_until_it_is_stopped() {
 diff --git a/crates/appkit/src/backing.rs b/crates/appkit/src/backing.rs
-index 6b2019f..e9d04e6 100644
+index 6b2019f..e5fb215 100644
 --- a/crates/appkit/src/backing.rs
 +++ b/crates/appkit/src/backing.rs
-@@ -1038,7 +1038,12 @@ fn place_view(
+@@ -505,10 +505,39 @@ pub(crate) fn focus_density() -> f64 {
+     current_focus().map_or(1.0, |focus| focus.density)
+ }
+ 
++#[track_caller]
+ fn damage(window: sdl3::Window, rect: Rect) {
+     if rect.is_empty() {
+         return;
+     }
++    let area = rect.width.saturating_mul(rect.height);
++    if area >= 100_000 && corefoundation::perf_trace_enabled() {
++        static LOGGED_DAMAGE_SITES: Mutex<Vec<(&'static str, u32, Rect)>> = Mutex::new(Vec::new());
++        let caller = std::panic::Location::caller();
++        let site = (caller.file(), caller.line(), rect);
++        let first_seen = {
++            let mut logged = LOGGED_DAMAGE_SITES
++                .lock()
++                .unwrap_or_else(|e| e.into_inner());
++            if logged.contains(&site) {
++                false
++            } else {
++                logged.push(site);
++                true
++            }
++        };
++        if first_seen {
++            corefoundation::perf_trace_log(&format!(
++                "stage=appkit.backing_damage source={}:{} rect={},{} {}x{} pixels={area}",
++                caller.file(),
++                caller.line(),
++                rect.x,
++                rect.y,
++                rect.width,
++                rect.height
++            ));
++        }
++    }
+     let mut windows = WINDOWS.lock().unwrap_or_else(|e| e.into_inner());
+     let state = windows
+         .get_or_insert_with(HashMap::new)
+@@ -853,7 +882,11 @@ fn send(receiver: Id, name: &str) {
+ 
+ /// Draw everything marked for display and present every window that changed.
+ pub fn pump() {
++    let decor_started = corefoundation::perf_trace_start();
+     crate::decor::pump();
++    corefoundation::perf_trace_record("appkit.backing_decor_pump", decor_started);
++
++    let resize_scan_started = corefoundation::perf_trace_start();
+     for window in crate::window::all() {
+         if !crate::window::is_shown(window) {
+             continue;
+@@ -875,6 +908,9 @@ pub fn pump() {
+             needs_display_in_tree(crate::window::content_view_of(window), 0);
+         }
+     }
++    corefoundation::perf_trace_record("appkit.backing_resize_scan", resize_scan_started);
++
++    let pending_started = corefoundation::perf_trace_start();
+     let pending = std::mem::take(&mut *NEEDS_DISPLAY.lock().unwrap_or_else(|e| e.into_inner()));
+     let count = pending.len();
+     let depth = {
+@@ -882,25 +918,42 @@ pub fn pump() {
+         drawing.push(pending);
+         drawing.len() - 1
+     };
++    corefoundation::perf_trace_record("appkit.backing_pending_display_collect", pending_started);
++
++    let display_started = corefoundation::perf_trace_start();
+     for at in 0..count {
+         let view = DRAWING.lock().unwrap_or_else(|e| e.into_inner())[depth][at] as Id;
+         if view.is_null() {
+             continue;
+         }
+-        // SAFETY: a view this crate recorded while it was live.
++        // SAFETY: a view this crate recorded while live.
+         let window = unsafe { crate::view::window_of(view) };
+         if crate::window::is_shown(window) && !crate::view::is_hidden_or_has_hidden_ancestor(view) {
++            let view_started = corefoundation::perf_trace_start();
+             display_view(view);
++            corefoundation::perf_trace_record("appkit.backing_display_view", view_started);
+         }
+     }
+     DRAWING.lock().unwrap_or_else(|e| e.into_inner()).pop();
++    corefoundation::perf_trace_record("appkit.backing_display_views", display_started);
++
++    let animation_started = corefoundation::perf_trace_start();
+     damage_animating();
++    corefoundation::perf_trace_record("appkit.backing_damage_animating", animation_started);
++
++    let compose_started = corefoundation::perf_trace_start();
+     for window in crate::window::all() {
+         if crate::window::is_shown(window) {
++            let window_started = corefoundation::perf_trace_start();
+             compose_window(window);
++            corefoundation::perf_trace_record("appkit.backing_compose_window", window_started);
+         }
+     }
++    corefoundation::perf_trace_record("appkit.backing_compose_windows", compose_started);
++
++    let present_started = corefoundation::perf_trace_start();
+     present_dirty();
++    corefoundation::perf_trace_record("appkit.backing_present_dirty", present_started);
+ }
+ 
+ /// Views whose layer trees were still animating when last composed, by window.
+@@ -932,6 +985,7 @@ fn damage_animating() {
+ 
+ /// Have the part of the window `view` covers recomposed at the next pump,
+ /// without asking the view to draw again: its layer tree changed, not it.
++#[track_caller]
+ pub(crate) fn damage_view(view: Id) {
+     // SAFETY: a view this crate made.
+     let Some(frame) = (unsafe { crate::view::presentation_frame(view) }) else {
+@@ -1038,7 +1092,12 @@ fn place_view(
          width: (frame.size.width * density).round() as i64,
          height: (frame.size.height * density).round() as i64,
      };
@@ -173,7 +349,7 @@ index 6b2019f..e9d04e6 100644
      let alpha = crate::view::effective_alpha(view);
      out.push(Placed {
          view,
-@@ -1049,7 +1054,15 @@ fn place_view(
+@@ -1049,7 +1108,15 @@ fn place_view(
      let flipped = crate::view::is_flipped(view);
      // SAFETY: a view this crate made.
      for child in unsafe { crate::view::children(view) } {
@@ -190,7 +366,240 @@ index 6b2019f..e9d04e6 100644
      }
  }
  
-@@ -1942,6 +1955,90 @@ mod tests {
+@@ -1083,21 +1150,29 @@ fn opaque_views(placed: &[Placed]) -> Vec<usize> {
+ /// Bring a window's composite up to date with its views: recompose what was
+ /// drawn over, and everywhere a view appeared, moved or went away.
+ fn compose_window(window: Id) {
++    let compose_started = corefoundation::perf_trace_start();
+     // SAFETY: a window this crate made.
+     let sdl = unsafe { crate::window::sdl_window(window) };
+     let Some((width, height)) = sdl3::video::window_size_in_pixels(sdl) else {
+         return;
+     };
+     let (width, height) = (width.max(1) as u32, height.max(1) as u32);
++    let place_tree_started = corefoundation::perf_trace_start();
+     let placed = place_tree(window, sdl);
++    corefoundation::perf_trace_record("appkit.compose_place_tree", place_tree_started);
+     let now: Vec<(usize, Rect)> = placed.iter().map(|p| (p.view as usize, p.clip)).collect();
++    let overlaid_started = corefoundation::perf_trace_start();
+     let overlaid: Vec<usize> = OVERLAYS
+         .lock()
+         .unwrap_or_else(|e| e.into_inner())
+         .iter()
+         .map(|(view, _)| *view)
+         .collect();
++    corefoundation::perf_trace_record("appkit.compose_collect_overlays", overlaid_started);
++    let opaque_started = corefoundation::perf_trace_start();
+     let opaque = opaque_views(&placed);
++    corefoundation::perf_trace_record("appkit.compose_find_opaque_views", opaque_started);
++    let holes_started = corefoundation::perf_trace_start();
+     let mut holes = Vec::new();
+     let mut covered = Vec::new();
+     for (index, p) in placed.iter().enumerate() {
+@@ -1127,6 +1202,7 @@ fn compose_window(window: Id) {
+             covered.push((layer as usize, above));
+         }
+     }
++    corefoundation::perf_trace_record("appkit.compose_build_holes", holes_started);
+ 
+     let mut stores = STORES.lock().unwrap_or_else(|e| e.into_inner());
+     // A window no view has drawn into has nothing to compose. Composing it
+@@ -1175,16 +1251,24 @@ fn compose_window(window: Id) {
+         .get_or_insert_with(HashMap::new)
+         .entry(sdl as usize)
+         .or_default();
++    let damage_state_started = corefoundation::perf_trace_start();
++    let previous_view_count = state.placed.len();
++    let requested_damage = state.damage;
+     let mut region = std::mem::take(&mut state.damage);
++    let mut removed_view_count = 0;
++    let mut added_view_count = 0;
++    let layout_changed = state.placed != now;
+     if resized {
+         region = whole;
+     }
+     if state.placed != now {
+         // Where each view was and is, for every one that changed.
+         for (_, rect) in state.placed.iter().filter(|entry| !now.contains(entry)) {
++            removed_view_count += 1;
+             region = region.union(rect);
+         }
+         for (_, rect) in now.iter().filter(|entry| !state.placed.contains(entry)) {
++            added_view_count += 1;
+             region = region.union(rect);
+         }
+         state.placed = now;
+@@ -1201,6 +1285,7 @@ fn compose_window(window: Id) {
+     let chrome_changed =
+         std::mem::replace(&mut state.chrome, chrome_generation) != chrome_generation;
+     drop(windows);
++    corefoundation::perf_trace_record("appkit.compose_damage_state", damage_state_started);
+     let region = region.intersection(&whole);
+     if region.is_empty() {
+         if let Some(chrome) = chrome.as_ref().filter(|_| chrome_changed || resized) {
+@@ -1217,7 +1302,23 @@ fn compose_window(window: Id) {
+     // program that draws only a logo and a bar relies on for everything else.
+     // With none set it is `windowBackgroundColor`, AppKit's default; a layer
+     // view's hole is the layer's either way.
++    let region_pixels = region.width.saturating_mul(region.height);
++    if region_pixels >= 100_000 {
++        corefoundation::perf_trace_log(&format!(
++            "stage=appkit.compose_damage_region window_pixels={}x{} region={},{} {}x{} pixels={} placed_views={} holes={}",
++            width,
++            height,
++            region.x,
++            region.y,
++            region.width,
++            region.height,
++            region_pixels,
++            placed.len(),
++            holes_changed as usize
++        ));
++    }
+     let background = crate::window::background_pixel(window).unwrap_or(DEFAULT_BACKGROUND);
++    let background_fill_started = corefoundation::perf_trace_start();
+     for row in region.y..region.y + region.height {
+         let base = (row as usize * width as usize + region.x as usize) * 4;
+         for pixel in store.pixels[base..base + region.width as usize * 4]
+@@ -1227,22 +1328,98 @@ fn compose_window(window: Id) {
+             *pixel = background;
+         }
+     }
++    corefoundation::perf_trace_record("appkit.compose_fill_background", background_fill_started);
+     let views = VIEW_STORES.lock().unwrap_or_else(|e| e.into_inner());
+     let mut animating = Vec::new();
+-    for p in &placed {
++    let mut background_render_total = std::time::Duration::ZERO;
++    let mut view_blend_total = std::time::Duration::ZERO;
++    let mut sublayer_render_total = std::time::Duration::ZERO;
++    let trace_background_views = corefoundation::perf_trace_enabled();
++    let mut background_view_times = Vec::new();
++    for (view_index, p) in placed.iter().enumerate() {
+         let clip = p.clip.intersection(&region);
+         use crate::coreanimation::{Pass, render};
++        let background_render_started = corefoundation::perf_trace_start();
+         render(p.view, store, p.rect, clip, Pass::Background);
++        if let Some(started) = background_render_started {
++            let duration = started.elapsed();
++            background_render_total += duration;
++            corefoundation::perf_trace_duration("appkit.compose_render_background_layer", duration);
++            if trace_background_views {
++                let class_name = unsafe {
++                    let name = objc::api::object_getClassName(p.view);
++                    if name.is_null() {
++                        "nil".to_owned()
++                    } else {
++                        std::ffi::CStr::from_ptr(name)
++                            .to_string_lossy()
++                            .into_owned()
++                    }
++                };
++                background_view_times.push((
++                    duration,
++                    view_index,
++                    p.view as usize,
++                    class_name,
++                    p.rect,
++                    clip,
++                ));
++            }
++        }
++        let blend_started = corefoundation::perf_trace_start();
+         if let Some(source) = views
+             .as_ref()
+             .and_then(|views| views.get(&(p.view as usize)))
+         {
+             blend_at(store, source, p.rect.x, p.rect.y, clip, p.alpha);
+         }
++        if let Some(started) = blend_started {
++            let duration = started.elapsed();
++            view_blend_total += duration;
++            corefoundation::perf_trace_duration("appkit.compose_blend_view_store", duration);
++        }
++        let sublayers_started = corefoundation::perf_trace_start();
+         if render(p.view, store, p.rect, clip, Pass::Sublayers) {
+             animating.push(p.view as usize);
+         }
++        if let Some(started) = sublayers_started {
++            let duration = started.elapsed();
++            sublayer_render_total += duration;
++            corefoundation::perf_trace_duration("appkit.compose_render_sublayers", duration);
++        }
+     }
++    corefoundation::perf_trace_duration(
++        "appkit.compose_render_background_total",
++        background_render_total,
++    );
++    if trace_background_views && background_render_total >= corefoundation::perf_trace_threshold() {
++        background_view_times.sort_by(|left, right| right.0.cmp(&left.0));
++        for (duration, view_index, view_ptr, class_name, rect, clip) in
++            background_view_times.iter().take(8)
++        {
++            corefoundation::perf_trace_log(&format!(
++                "stage=appkit.compose_render_background_view duration_ms={:.3} view_index={} view_ptr={:#x} class={} rect={},{} {}x{} clip={},{} {}x{} clip_pixels={}",
++                duration.as_secs_f64() * 1000.0,
++                view_index,
++                view_ptr,
++                class_name,
++                rect.x,
++                rect.y,
++                rect.width,
++                rect.height,
++                clip.x,
++                clip.y,
++                clip.width,
++                clip.height,
++                clip.width.saturating_mul(clip.height)
++            ));
++        }
++    }
++    corefoundation::perf_trace_duration("appkit.compose_blend_view_stores_total", view_blend_total);
++    corefoundation::perf_trace_duration(
++        "appkit.compose_render_sublayers_total",
++        sublayer_render_total,
++    );
+     drop(views);
+     ANIMATING
+         .lock()
+@@ -1253,9 +1430,37 @@ fn compose_window(window: Id) {
+         .unwrap_or_else(|e| e.into_inner())
+         .extend(animating.into_iter().map(|view| (sdl as usize, view)));
+     if let Some(chrome) = &chrome {
++        let chrome_started = corefoundation::perf_trace_start();
+         copy_chrome(store, chrome);
++        corefoundation::perf_trace_record("appkit.compose_copy_chrome", chrome_started);
+     }
+     store.dirty = true;
++    if let Some(started) = compose_started {
++        let requested_damage_pixels = requested_damage
++            .width
++            .saturating_mul(requested_damage.height);
++        let region_pixels = region.width.saturating_mul(region.height);
++        corefoundation::perf_trace_duration_with_context(
++            "appkit.compose_window_summary",
++            started.elapsed(),
++            &format!(
++                "window_pixels={}x{} region={},{} {}x{} pixels={} requested_damage={}px placed_views={} previous_views={} layout_changed={} removed_views={} added_views={}",
++                width,
++                height,
++                region.x,
++                region.y,
++                region.width,
++                region.height,
++                region_pixels,
++                requested_damage_pixels,
++                placed.len(),
++                previous_view_count,
++                layout_changed,
++                removed_view_count,
++                added_view_count
++            ),
++        );
++    }
+ }
+ 
+ /// Put a window's chrome over the top rows of its store.
+@@ -1942,6 +2147,90 @@ mod tests {
          );
      }
  
@@ -523,6 +932,477 @@ index 7366165..c1638f7 100644
      }
  
      /// The knob takes its proportion of the slot and slides along the rest;
+diff --git a/crates/appkit/src/coreanimation.rs b/crates/appkit/src/coreanimation.rs
+index 314da92..73505f4 100644
+--- a/crates/appkit/src/coreanimation.rs
++++ b/crates/appkit/src/coreanimation.rs
+@@ -206,6 +206,7 @@ fn root_of(layer: Id) -> Id {
+ }
+ 
+ /// Have the view showing `layer`'s tree recomposed.
++#[track_caller]
+ pub(crate) fn changed(layer: Id) {
+     // SAFETY: a layer of this crate's.
+     let view = unsafe { crate::layer::view_of(root_of(layer)) };
+@@ -1326,6 +1327,161 @@ fn place(gravity: Gravity, bounds: Rect, width: f64, height: f64) -> (f64, f64,
+ 
+ /// Draw `layer`'s contents into `store` for a layer at `bounds` in window
+ /// pixels, `scale` window pixels to the point, within `clip`, source-over.
++fn draw_exact_contents(
++    store: &mut Store,
++    source: &Source<'_>,
++    area: Rect,
++    x: f64,
++    y: f64,
++    width: f64,
++    height: f64,
++    fraction: u32,
++) -> Option<ExactContentsStats> {
++    if source.swap
++        || fraction < 256
++        || !x.is_finite()
++        || !y.is_finite()
++        || x.fract() != 0.0
++        || y.fract() != 0.0
++        || x < i64::MIN as f64
++        || x >= i64::MAX as f64
++        || y < i64::MIN as f64
++        || y >= i64::MAX as f64
++        || width != source.width as f64
++        || height != source.height as f64
++        || source.stride < source.width.saturating_mul(4)
++        || area.is_empty()
++    {
++        return None;
++    }
++    let origin_x = x as i64;
++    let origin_y = y as i64;
++    let Some(source_x) = area
++        .x
++        .checked_sub(origin_x)
++        .and_then(|offset| usize::try_from(offset).ok())
++    else {
++        return None;
++    };
++    let Some(source_y) = area
++        .y
++        .checked_sub(origin_y)
++        .and_then(|offset| usize::try_from(offset).ok())
++    else {
++        return None;
++    };
++    let Some(source_right) = source_x.checked_add(area.width as usize) else {
++        return None;
++    };
++    let Some(source_bottom) = source_y.checked_add(area.height as usize) else {
++        return None;
++    };
++    let Some(row_bytes) = (area.width as usize).checked_mul(4) else {
++        return None;
++    };
++    let Some(source_x_bytes) = source_x.checked_mul(4) else {
++        return None;
++    };
++    if source_right > source.width || source_bottom > source.height {
++        return None;
++    }
++
++    let mut stats = ExactContentsStats::default();
++    for row_index in 0..area.height as usize {
++        let Some(source_row) = source_y.checked_add(row_index) else {
++            return None;
++        };
++        let Some(source_start) = source_row
++            .checked_mul(source.stride)
++            .and_then(|start| start.checked_add(source_x_bytes))
++        else {
++            return None;
++        };
++        let Some(source_end) = source_start.checked_add(row_bytes) else {
++            return None;
++        };
++        let Some(from) = source.bytes.get(source_start..source_end) else {
++            return None;
++        };
++        let target_row = (area.y as usize + row_index) * store.width as usize;
++        let Some(target_start) = (target_row + area.x as usize).checked_mul(4) else {
++            return None;
++        };
++        let Some(target_end) = target_start.checked_add(row_bytes) else {
++            return None;
++        };
++        let Some(to) = store.pixels.get_mut(target_start..target_end) else {
++            return None;
++        };
++        if from.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 255) {
++            stats.opaque_rows += 1;
++            stats.opaque_pixels += from.len() / 4;
++            to.copy_from_slice(from);
++            continue;
++        }
++        if from
++            .as_chunks::<4>()
++            .0
++            .iter()
++            .all(|pixel| *pixel == [0, 0, 0, 0])
++        {
++            stats.transparent_rows += 1;
++            stats.transparent_pixels += from.len() / 4;
++            continue;
++        }
++        for (target, texel) in to
++            .as_chunks_mut::<4>()
++            .0
++            .iter_mut()
++            .zip(from.as_chunks::<4>().0)
++        {
++            if texel[3] == 255 {
++                stats.opaque_pixels += 1;
++                *target = *texel;
++                continue;
++            }
++            if *texel == [0, 0, 0, 0] {
++                stats.transparent_pixels += 1;
++                continue;
++            }
++            stats.blended_pixels += 1;
++            let alpha = u32::from(texel[3]) * fraction / 256;
++            for channel in 0..4 {
++                let source = u32::from(texel[channel]) * fraction / 256;
++                let destination = u32::from(target[channel]) * (255 - alpha) / 255;
++                target[channel] = (source + destination).min(255) as u8;
++            }
++        }
++    }
++    Some(stats)
++}
++
++#[derive(Debug, Default, PartialEq, Eq)]
++struct ExactContentsStats {
++    opaque_rows: usize,
++    opaque_pixels: usize,
++    transparent_rows: usize,
++    transparent_pixels: usize,
++    blended_pixels: usize,
++}
++
++#[derive(Default)]
++struct ContentsDrawStats {
++    exact_copy: bool,
++    opaque_rows: usize,
++    opaque_pixels: usize,
++    transparent_rows: usize,
++    transparent_pixels: usize,
++    blended_pixels: usize,
++    source_width: usize,
++    source_height: usize,
++    source_stride: usize,
++    source_swap: bool,
++    placed_width: f64,
++    placed_height: f64,
++    opacity_fraction: u32,
++}
++
+ fn draw_contents(
+     store: &mut Store,
+     layer: Id,
+@@ -1333,15 +1489,20 @@ fn draw_contents(
+     scale: (f64, f64),
+     clip: Rect,
+     opacity: f64,
+-) {
++) -> ContentsDrawStats {
++    let mut stats = ContentsDrawStats::default();
+     if opacity <= 0.0 || bounds.is_empty() {
+-        return;
++        return stats;
+     }
+     let gravity = read_node(layer, |node| {
+         node.map_or(Gravity::Resize, |node| node.gravity)
+     });
+     let contents_scale = crate::layer::contents_scale_of(layer);
+-    with_contents(layer, |source| {
++    let _ = with_contents(layer, |source| {
++        stats.source_width = source.width;
++        stats.source_height = source.height;
++        stats.source_stride = source.stride;
++        stats.source_swap = source.swap;
+         let (x, y, width, height) = place(
+             gravity,
+             bounds,
+@@ -1351,6 +1512,8 @@ fn draw_contents(
+         if width <= 0.0 || height <= 0.0 {
+             return;
+         }
++        stats.placed_width = width;
++        stats.placed_height = height;
+         let area = Rect {
+             x: x.round() as i64,
+             y: y.round() as i64,
+@@ -1367,13 +1530,25 @@ fn draw_contents(
+         if area.is_empty() {
+             return;
+         }
++        let fraction = (opacity.min(1.0) * 256.0).round() as u32;
++        stats.opacity_fraction = fraction;
++        if let Some(copy_stats) =
++            draw_exact_contents(store, &source, area, x, y, width, height, fraction)
++        {
++            stats.exact_copy = true;
++            stats.opaque_rows = copy_stats.opaque_rows;
++            stats.opaque_pixels = copy_stats.opaque_pixels;
++            stats.transparent_rows = copy_stats.transparent_rows;
++            stats.transparent_pixels = copy_stats.transparent_pixels;
++            stats.blended_pixels = copy_stats.blended_pixels;
++            return;
++        }
+         let columns: Vec<usize> = (area.x..area.x + area.width)
+             .map(|column| {
+                 let u = (column as f64 + 0.5 - x) / width;
+                 ((u * source.width as f64) as usize).min(source.width - 1)
+             })
+             .collect();
+-        let fraction = (opacity.min(1.0) * 256.0).round() as u32;
+         for row in area.y..area.y + area.height {
+             let v = (row as f64 + 0.5 - y) / height;
+             let from = ((v * source.height as f64) as usize).min(source.height - 1);
+@@ -1399,6 +1574,7 @@ fn draw_contents(
+             }
+         }
+     });
++    stats
+ }
+ 
+ /// Which part of a view's layer tree [`render`] draws: the root layer's own
+@@ -1409,6 +1585,9 @@ pub(crate) enum Pass {
+     Sublayers,
+ }
+ 
++const PERF_TRACE_BACKGROUND_VIEW_DETAIL_THRESHOLD: std::time::Duration =
++    std::time::Duration::from_millis(5);
++
+ /// Draw `view`'s layer tree into `store`, where the view sits at `rect` and
+ /// may show within `clip`. Whether anything in it is still animating.
+ pub(crate) fn render(view: Id, store: &mut Store, rect: Rect, clip: Rect, pass: Pass) -> bool {
+@@ -1428,13 +1607,32 @@ pub(crate) fn render(view: Id, store: &mut Store, rect: Rect, clip: Rect, pass:
+         flipped: crate::view::is_flipped(view),
+     };
+     let now = darwin::mach::media_time();
++    let trace_background = pass == Pass::Background && corefoundation::perf_trace_enabled();
++    let background_started = if trace_background {
++        corefoundation::perf_trace_start()
++    } else {
++        None
++    };
++    let presentation_started = if trace_background {
++        corefoundation::perf_trace_start()
++    } else {
++        None
++    };
+     let root_presented = presentation(root, now);
++    let presentation_duration =
++        presentation_started.map_or(std::time::Duration::ZERO, |started| started.elapsed());
+     if root_presented.hidden {
+         return false;
+     }
+     match pass {
+         Pass::Background => {
+             let whole = mapping.to_pixels(view_bounds);
++            let has_background = root_presented.background.is_some();
++            let fill_started = if trace_background {
++                corefoundation::perf_trace_start()
++            } else {
++                None
++            };
+             if let Some(color) = root_presented.background {
+                 fill(
+                     store,
+@@ -1443,7 +1641,14 @@ pub(crate) fn render(view: Id, store: &mut Store, rect: Rect, clip: Rect, pass:
+                     root_presented.opacity,
+                 );
+             }
+-            draw_contents(
++            let fill_duration =
++                fill_started.map_or(std::time::Duration::ZERO, |started| started.elapsed());
++            let contents_started = if trace_background {
++                corefoundation::perf_trace_start()
++            } else {
++                None
++            };
++            let contents_stats = draw_contents(
+                 store,
+                 root,
+                 whole,
+@@ -1451,6 +1656,59 @@ pub(crate) fn render(view: Id, store: &mut Store, rect: Rect, clip: Rect, pass:
+                 clip,
+                 root_presented.opacity,
+             );
++            let contents_duration =
++                contents_started.map_or(std::time::Duration::ZERO, |started| started.elapsed());
++            if let Some(started) = background_started {
++                let duration = started.elapsed();
++                if duration >= PERF_TRACE_BACKGROUND_VIEW_DETAIL_THRESHOLD {
++                    let class_name = unsafe {
++                        let name = objc::api::object_getClassName(view);
++                        if name.is_null() {
++                            "nil".to_owned()
++                        } else {
++                            std::ffi::CStr::from_ptr(name)
++                                .to_string_lossy()
++                                .into_owned()
++                        }
++                    };
++                    let has_contents =
++                        read_node(root, |node| node.is_some_and(|node| node.contents != 0));
++                    corefoundation::perf_trace_log(&format!(
++                        "stage=appkit.coreanimation.background_view view_ptr={:#x} root_ptr={:#x} class={} duration_ms={:.3} presentation_ms={:.3} fill_ms={:.3} contents_ms={:.3} has_background={} has_contents={} rect={},{} {}x{} clip={},{} {}x{} clip_pixels={} exact_copy={} opaque_rows={} opaque_pixels={} transparent_rows={} transparent_pixels={} blended_pixels={} source={}x{} stride={} swap={} placed={:.3}x{:.3} opacity_fraction={}",
++                        view as usize,
++                        root as usize,
++                        class_name,
++                        duration.as_secs_f64() * 1000.0,
++                        presentation_duration.as_secs_f64() * 1000.0,
++                        fill_duration.as_secs_f64() * 1000.0,
++                        contents_duration.as_secs_f64() * 1000.0,
++                        has_background,
++                        has_contents,
++                        rect.x,
++                        rect.y,
++                        rect.width,
++                        rect.height,
++                        clip.x,
++                        clip.y,
++                        clip.width,
++                        clip.height,
++                        clip.width.saturating_mul(clip.height),
++                        contents_stats.exact_copy,
++                        contents_stats.opaque_rows,
++                        contents_stats.opaque_pixels,
++                        contents_stats.transparent_rows,
++                        contents_stats.transparent_pixels,
++                        contents_stats.blended_pixels,
++                        contents_stats.source_width,
++                        contents_stats.source_height,
++                        contents_stats.source_stride,
++                        contents_stats.source_swap,
++                        contents_stats.placed_width,
++                        contents_stats.placed_height,
++                        contents_stats.opacity_fraction
++                    ));
++                }
++            }
+             false
+         }
+         Pass::Sublayers => {
+@@ -1926,6 +2184,109 @@ mod tests {
+         objc::arc::pool_pop(pool);
+     }
+ 
++    #[test]
++    fn exact_contents_copy_respects_clipping_and_source_stride() {
++        let pixels = [0, 0, 255, 255, 0, 255, 0, 255, 11, 12, 13, 14];
++        let source = Source {
++            width: 2,
++            height: 1,
++            stride: 12,
++            bytes: &pixels,
++            swap: false,
++        };
++        let mut store = Store::for_tests(2, 1);
++        let area = Rect {
++            x: 0,
++            y: 0,
++            width: 1,
++            height: 1,
++        };
++        assert_eq!(
++            draw_exact_contents(&mut store, &source, area, -1.0, 0.0, 2.0, 1.0, 256),
++            Some(ExactContentsStats {
++                opaque_rows: 1,
++                opaque_pixels: 1,
++                transparent_rows: 0,
++                transparent_pixels: 0,
++                blended_pixels: 0,
++            })
++        );
++        assert_eq!(&store.pixels[0..4], &[0, 255, 0, 255]);
++        assert_eq!(&store.pixels[4..8], &[0; 4]);
++    }
++
++    #[test]
++    fn exact_contents_copy_blends_translucent_pixels() {
++        let pixels = [0, 0, 128, 128];
++        let source = Source {
++            width: 1,
++            height: 1,
++            stride: 4,
++            bytes: &pixels,
++            swap: false,
++        };
++        let mut store = Store::for_tests(1, 1);
++        store.pixels.copy_from_slice(&[0, 0, 10, 255]);
++        let area = Rect {
++            x: 0,
++            y: 0,
++            width: 1,
++            height: 1,
++        };
++        assert_eq!(
++            draw_exact_contents(&mut store, &source, area, 0.0, 0.0, 1.0, 1.0, 256),
++            Some(ExactContentsStats {
++                opaque_rows: 0,
++                opaque_pixels: 0,
++                transparent_rows: 0,
++                transparent_pixels: 0,
++                blended_pixels: 1,
++            })
++        );
++        assert_eq!(&store.pixels, &[0, 0, 132, 255]);
++    }
++
++    #[test]
++    fn exact_contents_copy_skips_transparent_and_copies_opaque_pixels_in_mixed_rows() {
++        let pixels = [
++            3, 4, 5, 255, 0, 0, 0, 0, 0, 0, 128, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++        ];
++        let source = Source {
++            width: 3,
++            height: 2,
++            stride: 12,
++            bytes: &pixels,
++            swap: false,
++        };
++        let mut store = Store::for_tests(3, 2);
++        store.pixels.copy_from_slice(&[
++            9, 8, 7, 255, 6, 5, 4, 255, 0, 0, 10, 255, 1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255,
++        ]);
++        let area = Rect {
++            x: 0,
++            y: 0,
++            width: 3,
++            height: 2,
++        };
++        assert_eq!(
++            draw_exact_contents(&mut store, &source, area, 0.0, 0.0, 3.0, 2.0, 256),
++            Some(ExactContentsStats {
++                opaque_rows: 0,
++                opaque_pixels: 1,
++                transparent_rows: 1,
++                transparent_pixels: 4,
++                blended_pixels: 1,
++            })
++        );
++        assert_eq!(
++            &store.pixels,
++            &[
++                3, 4, 5, 255, 6, 5, 4, 255, 0, 0, 132, 255, 1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9,
++                255,
++            ]
++        );
++    }
++
+     #[test]
+     fn gravity_places_contents_in_the_bounds() {
+         let bounds = Rect {
 diff --git a/crates/appkit/src/decor.rs b/crates/appkit/src/decor.rs
 index 7b15fa7..ff8b1ca 100644
 --- a/crates/appkit/src/decor.rs
@@ -641,17 +1521,94 @@ index 7b15fa7..ff8b1ca 100644
          close_level(level);
      }
 diff --git a/crates/appkit/src/displaylink.rs b/crates/appkit/src/displaylink.rs
-index f395984..2c764ce 100644
+index f395984..3c43a56 100644
 --- a/crates/appkit/src/displaylink.rs
 +++ b/crates/appkit/src/displaylink.rs
-@@ -114,14 +114,22 @@ fn schedule(object: Id) {
+@@ -80,14 +80,26 @@ fn refresh_rate_of(link: &DisplayLink) -> f64 {
+ /// One turn of a link: stamp it and send the selector to the target.
+ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
+     let object = info as Id;
+-    let (target, selector, interval) = {
++    let (target, selector, interval, previous_timestamp) = {
+         let link = link_of(object);
+         if link.paused != 0 || link.target.is_null() {
+             return;
+         }
+-        (link.target, link.selector, interval_of(link))
++        (
++            link.target,
++            link.selector,
++            interval_of(link),
++            link.timestamp,
++        )
+     };
+     let when = now();
++    if previous_timestamp > 0.0 {
++        let lateness = (when - previous_timestamp - interval).max(0.0);
++        corefoundation::perf_trace_duration(
++            "appkit.display_link_lateness",
++            std::time::Duration::from_secs_f64(lateness),
++        );
++    }
+     {
+         let link = link_of(object);
+         link.timestamp = when;
+@@ -101,10 +113,12 @@ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
+         objc::fail!("-[CADisplayLink]: the target does not respond to its selector");
+     };
+     // SAFETY: a display link action is `void (id, SEL, CADisplayLink *)`.
++    let callback_started = corefoundation::perf_trace_start();
+     unsafe {
+         let f: unsafe extern "C" fn(Id, Sel, Id) = std::mem::transmute(method.implementation());
+         f(target, selector, object);
+     }
++    corefoundation::perf_trace_record("appkit.display_link_callback", callback_started);
+ }
+ 
+ /// Put the link on the main loop at its current interval.
+@@ -113,15 +127,56 @@ fn schedule(object: Id) {
+     if !link.timer.is_null() || link.invalidated != 0 {
          return;
      }
-     let interval = std::time::Duration::from_secs_f64(interval_of(link));
+-    let interval = std::time::Duration::from_secs_f64(interval_of(link));
 -    let timer =
 -        corefoundation::runloop::new_timer(interval, Some(interval), Some(fire), object as usize);
 -    corefoundation::runloop::main().add_timer(&timer, corefoundation::runloop::DEFAULT_MODE);
 -    // The run loop's own reference, given back by `unschedule`.
++    let refresh_rate = refresh_rate_of(link);
++    let interval_seconds = interval_of(link);
++    if corefoundation::perf_trace_enabled() {
++        static LAST_LOGGED_SCHEDULE: std::sync::Mutex<Option<(usize, u64, isize, isize, u64)>> =
++            std::sync::Mutex::new(None);
++        let schedule = (
++            link.display,
++            refresh_rate.to_bits(),
++            link.frame_interval,
++            link.preferred_fps,
++            interval_seconds.to_bits(),
++        );
++        let should_log = {
++            let mut last = LAST_LOGGED_SCHEDULE
++                .lock()
++                .unwrap_or_else(|error| error.into_inner());
++            if *last == Some(schedule) {
++                false
++            } else {
++                *last = Some(schedule);
++                true
++            }
++        };
++        if should_log {
++            corefoundation::perf_trace_log(&format!(
++                "stage=appkit.display_link_schedule display={} refresh_hz={refresh_rate:.3} frame_interval={} preferred_fps={} interval_ms={:.3}",
++                link.display,
++                link.frame_interval,
++                link.preferred_fps,
++                interval_seconds * 1000.0
++            ));
++        }
++    }
++    let interval = std::time::Duration::from_secs_f64(interval_seconds);
      objc::arc::retain(object);
 +    let timer = corefoundation::runloop::new_timer_with_info_release(
 +        interval,
@@ -671,7 +1628,7 @@ index f395984..2c764ce 100644
  /// Take the link off the loop; true if it was on one.
  fn unschedule(object: Id) -> bool {
      let link = link_of(object);
-@@ -134,7 +142,6 @@ fn unschedule(object: Id) -> bool {
+@@ -134,7 +189,6 @@ fn unschedule(object: Id) -> bool {
      link.timer = std::ptr::null();
      corefoundation::runloop::main().remove_timer(&timer, corefoundation::runloop::DEFAULT_MODE);
      timer.invalidate();
@@ -680,10 +1637,10 @@ index f395984..2c764ce 100644
  }
  
 diff --git a/crates/appkit/src/event.rs b/crates/appkit/src/event.rs
-index 663570d..507c12a 100644
+index 663570d..5fac82a 100644
 --- a/crates/appkit/src/event.rs
 +++ b/crates/appkit/src/event.rs
-@@ -1,9 +1,23 @@
+@@ -1,14 +1,29 @@
  use foundation::geometry::NSPoint;
  use objc::object::Id;
 +use std::collections::VecDeque;
@@ -707,7 +1664,42 @@ index 663570d..507c12a 100644
  /// Drain SDL's queue once, delivering what this tree can deliver.
  ///
  /// `app` is the application, which is the object a window notification is posted
-@@ -205,10 +219,16 @@ fn trace_views() {
+ /// about when the event names no window this crate made.
+ pub fn pump(app: Id) {
++    let pump_started = corefoundation::perf_trace_start();
+     let _ = app;
+     // Before anything else: a thread waiting for a GL context this one holds is
+     // a thread that is not drawing, and reaching here is what says this one has
+@@ -17,19 +32,28 @@ pub fn pump(app: Id) {
+     gamecontroller::pump();
+     debug_resize();
+     debug_key();
++    let scripts_started = corefoundation::perf_trace_start();
+     crate::script::run();
++    corefoundation::perf_trace_record("appkit.script_run", scripts_started);
+     trace_views();
++    let event_delivery_started = corefoundation::perf_trace_start();
+     while let Some(event) = sdl3::video::poll() {
+         deliver(event);
+     }
++    corefoundation::perf_trace_record("appkit.sdl_event_delivery", event_delivery_started);
+     // Copied out first: a guard in the loop's head would be held across every
+     // hook, and a hook that runs guest code can turn this pump again.
+     let hooks = PUMP_HOOKS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+     for hook in hooks {
++        let hook_started = corefoundation::perf_trace_start();
+         hook();
++        corefoundation::perf_trace_record("appkit.event_pump_hook", hook_started);
+     }
+     crate::application::check_last_window_closed();
++    let backing_started = corefoundation::perf_trace_start();
+     crate::backing::pump();
++    corefoundation::perf_trace_record("appkit.backing_pump", backing_started);
++    corefoundation::perf_trace_record("appkit.event_pump_total", pump_started);
+ }
+ 
+ static PUMP_HOOKS: std::sync::Mutex<Vec<fn()>> = std::sync::Mutex::new(Vec::new());
+@@ -205,10 +229,16 @@ fn trace_views() {
      for object in window::all() {
          // SAFETY: a window this crate made.
          let sdl = unsafe { window::sdl_window(object) };
@@ -727,7 +1719,7 @@ index 663570d..507c12a 100644
          ));
          // SAFETY: null or a view this runtime allocated.
          unsafe { crate::view::describe(window::content_view_of(object), 1, &mut out) };
-@@ -251,6 +271,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -251,6 +281,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
          // title bar's close button is on a Mac: `-performClose:`, so the
          // delegate may refuse and `-close` does the rest.
          Event::WindowClosed { window } => {
@@ -736,7 +1728,7 @@ index 663570d..507c12a 100644
              if crate::decor::window_closed(window) {
                  return;
              }
-@@ -341,6 +363,10 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -341,6 +373,10 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              }
          }
          Event::WindowFocus { window, gained } => {
@@ -747,7 +1739,7 @@ index 663570d..507c12a 100644
              crate::decor::focus_changed(window, gained);
              let object = object_for(window);
              if !object.is_null() && gained {
-@@ -366,7 +392,14 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -366,7 +402,14 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              down,
              repeat,
          } => {
@@ -762,7 +1754,7 @@ index 663570d..507c12a 100644
                  return;
              }
              let text = crate::keymap::characters(
-@@ -393,10 +426,14 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -393,10 +436,14 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              };
              // A key equivalent is the menu's, offered before the key reaches
              // the first responder, as `-[NSApplication sendEvent:]` does.
@@ -780,7 +1772,7 @@ index 663570d..507c12a 100644
                  return;
              }
              // A modifier is `-flagsChanged:`, not a key down: AppKit has no
-@@ -441,11 +478,54 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -441,11 +488,54 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              buttons,
          } => {
              crate::cursor::mouse_moved();
@@ -837,7 +1829,7 @@ index 663570d..507c12a 100644
              // SDL's position keeps integrating the deltas of a disassociated
              // pointer, so it wanders over the chrome while the cursor the
              // program sees sits still. The chrome is for a pointer that moves.
-@@ -454,21 +534,21 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -454,21 +544,21 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
                  false => false,
              };
              crate::cursor::set_over_chrome(on_chrome);
@@ -864,7 +1856,7 @@ index 663570d..507c12a 100644
              // Before the drop below: a cursor rectangle applies whether or not
              // anything asked for `-mouseMoved:`, and AppKit re-decides the
              // pointer on every move rather than only when a rectangle changes.
-@@ -479,8 +559,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -479,8 +569,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
                  modifiers: current_modifiers(),
                  location,
                  delta: NSPoint {
@@ -875,7 +1867,7 @@ index 663570d..507c12a 100644
                  },
                  button: held.map_or(0, crate::button::number),
                  window,
-@@ -488,32 +568,12 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -488,32 +578,12 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
                  ..Fields::default()
              };
              if held.is_none() {
@@ -913,7 +1905,7 @@ index 663570d..507c12a 100644
          }
          Event::MouseButton {
              window: id,
-@@ -523,20 +583,36 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -523,20 +593,36 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              x,
              y,
          } => {
@@ -957,7 +1949,7 @@ index 663570d..507c12a 100644
              let (x, y) = track_pointer(id, x, y);
              send(id, Some((x, y)), |window, location| Fields {
                  kind,
-@@ -655,7 +731,7 @@ fn key_equivalent(window: Id, fields: Fields, text: &str) -> bool {
+@@ -655,7 +741,7 @@ fn key_equivalent(window: Id, fields: Fields, text: &str) -> bool {
  ///
  /// The base coordinate system is the whole frame, so a titlebar this runtime
  /// draws is above the content view's top.
@@ -966,7 +1958,7 @@ index 663570d..507c12a 100644
      let content = window::content_view_of(window);
      let height = match content.is_null() {
          true => 0.0,
-@@ -669,7 +745,7 @@ fn location(window: Id, x: f32, y: f32) -> NSPoint {
+@@ -669,7 +755,7 @@ fn location(window: Id, x: f32, y: f32) -> NSPoint {
          },
      };
      let height = height + window::content_inset(window);
@@ -975,7 +1967,7 @@ index 663570d..507c12a 100644
  }
  
  /// Hand one input event to its window, as `-[NSApplication sendEvent:]` does.
-@@ -678,10 +754,37 @@ fn send(id: u32, at: Option<(f32, f32)>, fields: impl FnOnce(Id, NSPoint) -> Fie
+@@ -678,10 +764,37 @@ fn send(id: u32, at: Option<(f32, f32)>, fields: impl FnOnce(Id, NSPoint) -> Fie
      if window.is_null() {
          return;
      }
@@ -1014,7 +2006,7 @@ index 663570d..507c12a 100644
  /// Hand a built event to its window's `-sendEvent:`, after the local monitors.
  pub(crate) fn dispatch(window: Id, event: Id) {
      // Before the window sees it, which is where AppKit runs a local monitor: a
-@@ -699,7 +802,25 @@ pub(crate) fn dispatch(window: Id, event: Id) {
+@@ -699,7 +812,25 @@ pub(crate) fn dispatch(window: Id, event: Id) {
      unsafe {
          let f: unsafe extern "C" fn(Id, objc::sel::Sel, Id) =
              std::mem::transmute(objc::msg::entry());
@@ -1041,7 +2033,7 @@ index 663570d..507c12a 100644
      }
  }
  
-@@ -716,6 +837,94 @@ pub(crate) fn dispatch(window: Id, event: Id) {
+@@ -716,6 +847,94 @@ pub(crate) fn dispatch(window: Id, event: Id) {
  /// log file once it is running - takes every later trace line with it, and
  /// input arrives long after that.
  pub const LOG_ENV: &str = "ROSEMARY_EVENT_LOG";
@@ -1136,7 +2128,7 @@ index 663570d..507c12a 100644
  
  fn log_path() -> Option<&'static std::path::Path> {
      static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-@@ -737,10 +946,69 @@ pub fn debug_log(line: &str) {
+@@ -737,10 +956,69 @@ pub fn debug_log(line: &str) {
      }
  }
  
@@ -1207,7 +2199,7 @@ index 663570d..507c12a 100644
          return;
      }
      let at = nsevent::location_of(event);
-@@ -763,6 +1031,45 @@ fn log_route(window: Id, event: Id, kind: u64) {
+@@ -763,6 +1041,45 @@ fn log_route(window: Id, event: Id, kind: u64) {
          local.x,
          local.y,
      ));
@@ -1253,7 +2245,7 @@ index 663570d..507c12a 100644
  }
  
  pub fn route(window: Id, event: Id) {
-@@ -790,12 +1097,37 @@ pub fn route(window: Id, event: Id) {
+@@ -790,12 +1107,37 @@ pub fn route(window: Id, event: Id) {
              );
          }
          if let Some(method) = method {
@@ -1291,7 +2283,7 @@ index 663570d..507c12a 100644
          }
          return;
      }
-@@ -807,11 +1139,43 @@ pub fn route(window: Id, event: Id) {
+@@ -807,11 +1149,43 @@ pub fn route(window: Id, event: Id) {
          false => responder_of(window),
      };
      let Some((responder, method)) = chain(start, sel) else {
@@ -1335,7 +2327,7 @@ index 663570d..507c12a 100644
      if tracing() {
          // SAFETY: a live object this runtime allocated.
          let class = unsafe { objc::object::class_of(responder) };
-@@ -820,12 +1184,32 @@ pub fn route(window: Id, event: Id) {
+@@ -820,12 +1194,32 @@ pub fn route(window: Id, event: Id) {
              class.map_or("no class", |c| c.name_str()),
          );
      }
@@ -1368,7 +2360,7 @@ index 663570d..507c12a 100644
  }
  
  /// The responder method an event type is delivered through.
-@@ -910,23 +1294,131 @@ pub(crate) fn warp_pointer(x: f32, y: f32) {
+@@ -910,23 +1304,131 @@ pub(crate) fn warp_pointer(x: f32, y: f32) {
  /// synchronously, X11 reports the server's MotionNotify), with a delta of
  /// `target - previous`. A game that recentres the cursor after every
  /// `-mouseMoved:` would read that delta as the player undoing their own motion.
@@ -1508,7 +2500,7 @@ index 663570d..507c12a 100644
  }
  
  /// Within half a pixel: SDL converts between desktop and window coordinates.
-@@ -950,25 +1442,35 @@ pub(crate) fn pointer_position() -> (f32, f32) {
+@@ -950,25 +1452,35 @@ pub(crate) fn pointer_position() -> (f32, f32) {
  /// cursor never was - which is a hit test, and so a first responder, against the
  /// wrong view.
  fn track_pointer(window: u32, x: f32, y: f32) -> (f32, f32) {
@@ -1552,7 +2544,7 @@ index 663570d..507c12a 100644
  }
  
  /// The SDL id of the window the last pointer event came from; `0` before any.
-@@ -1129,6 +1631,77 @@ fn delegate_selector(name: &str) -> &'static str {
+@@ -1129,6 +1641,77 @@ fn delegate_selector(name: &str) -> &'static str {
  mod tests {
      use super::*;
  
@@ -1630,7 +2622,7 @@ index 663570d..507c12a 100644
      #[test]
      fn a_programmatic_warp_updates_the_reported_pointer() {
          let previous = pointer_position();
-@@ -1141,12 +1714,74 @@ mod tests {
+@@ -1141,12 +1724,74 @@ mod tests {
  
      #[test]
      fn a_warp_echo_is_taken_once() {
@@ -2646,10 +3638,68 @@ index b34a9da..17c463b 100644
      }) as CFTypeRef
  }
 diff --git a/crates/corefoundation/src/lib.rs b/crates/corefoundation/src/lib.rs
-index da2f3cf..3a3f9dc 100644
+index da2f3cf..1ab8b6a 100644
 --- a/crates/corefoundation/src/lib.rs
 +++ b/crates/corefoundation/src/lib.rs
-@@ -1240,6 +1240,22 @@ mod collection_tests {
+@@ -30,6 +30,57 @@ pub mod url;
+ pub mod urlresource;
+ pub mod uuid;
+ 
++const PERF_TRACE_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(25);
++
++pub fn perf_trace_threshold() -> std::time::Duration {
++    PERF_TRACE_THRESHOLD
++}
++
++pub fn perf_trace_enabled() -> bool {
++    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ENABLED.get_or_init(|| std::env::var("ROSEMARY_PERF_TRACE").ok().as_deref() == Some("1"))
++}
++
++pub fn perf_trace_start() -> Option<std::time::Instant> {
++    perf_trace_enabled().then(std::time::Instant::now)
++}
++
++pub fn perf_trace_log(message: &str) {
++    if perf_trace_enabled() {
++        static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
++        let elapsed_ms = ORIGIN
++            .get_or_init(std::time::Instant::now)
++            .elapsed()
++            .as_secs_f64()
++            * 1000.0;
++        eprintln!("rosemary: perf: at_ms={elapsed_ms:.3} {message}");
++    }
++}
++
++pub fn perf_trace_duration(stage: &str, duration: std::time::Duration) {
++    if perf_trace_enabled() && duration >= PERF_TRACE_THRESHOLD {
++        perf_trace_log(&format!(
++            "stage={stage} duration_ms={:.3}",
++            duration.as_secs_f64() * 1000.0
++        ));
++    }
++}
++
++pub fn perf_trace_duration_with_context(stage: &str, duration: std::time::Duration, context: &str) {
++    if perf_trace_enabled() && duration >= PERF_TRACE_THRESHOLD {
++        perf_trace_log(&format!(
++            "stage={stage} duration_ms={:.3} {context}",
++            duration.as_secs_f64() * 1000.0
++        ));
++    }
++}
++
++pub fn perf_trace_record(stage: &str, start: Option<std::time::Instant>) {
++    if let Some(start) = start {
++        perf_trace_duration(stage, start.elapsed());
++    }
++}
++
+ /// Install the classes this crate owns. Idempotent.
+ pub fn bootstrap() {
+     objc::bootstrap();
+@@ -1240,6 +1291,22 @@ mod collection_tests {
          }
      }
  
@@ -2673,7 +3723,7 @@ index da2f3cf..3a3f9dc 100644
      /// and an integer's encoding gives its type.
      #[test]
 diff --git a/crates/corefoundation/src/runloop.rs b/crates/corefoundation/src/runloop.rs
-index 10b24ac..a54be77 100644
+index 10b24ac..668a83e 100644
 --- a/crates/corefoundation/src/runloop.rs
 +++ b/crates/corefoundation/src/runloop.rs
 @@ -14,6 +14,7 @@ use crate::base::CFTypeRef;
@@ -2684,7 +3734,17 @@ index 10b24ac..a54be77 100644
  
  /// A version-0 source: a flag, and what to do when it is set.
  pub struct Source {
-@@ -66,6 +67,7 @@ pub struct Timer {
+@@ -56,7 +57,9 @@ impl Source {
+         };
+         // SAFETY: `perform` is a `void (*)(void *)` the creator supplied, and
+         // `info` is the pointer it asked to be given back.
++        let callback_started = crate::perf_trace_start();
+         unsafe { perform(self.info as *mut c_void) };
++        crate::perf_trace_record("corefoundation.source_callback", callback_started);
+         true
+     }
+ }
+@@ -66,6 +69,7 @@ pub struct Timer {
      interval: Option<Duration>,
      callback: Option<TimerCallback>,
      info: usize,
@@ -2692,7 +3752,14 @@ index 10b24ac..a54be77 100644
      valid: AtomicBool,
  }
  
-@@ -136,6 +138,14 @@ impl Timer {
+@@ -131,11 +135,21 @@ impl Timer {
+         let handle = Arc::as_ptr(self) as CFTypeRef;
+         // SAFETY: `callback` is a `void (*)(CFRunLoopTimerRef, void *)` the
+         // creator supplied, and `info` is the pointer it asked for.
++        let callback_started = crate::perf_trace_start();
+         unsafe { callback(handle, self.info as *mut c_void) };
++        crate::perf_trace_record("corefoundation.timer_callback", callback_started);
+         true
      }
  }
  
@@ -2707,7 +3774,17 @@ index 10b24ac..a54be77 100644
  /// `CFRunLoopObserverCallBack`.
  pub type ObserverCallback = unsafe extern "C" fn(CFTypeRef, u32, *mut c_void);
  
-@@ -661,12 +671,23 @@ pub fn new_timer(
+@@ -203,7 +217,9 @@ impl Observer {
+         // SAFETY: `callback` is a
+         // `void (*)(CFRunLoopObserverRef, CFRunLoopActivity, void *)` the creator
+         // supplied, and `info` is the pointer it asked to be given back.
++        let callback_started = crate::perf_trace_start();
+         unsafe { callback(handle, what, self.info as *mut c_void) };
++        crate::perf_trace_record("corefoundation.observer_callback", callback_started);
+     }
+ }
+ 
+@@ -661,12 +677,23 @@ pub fn new_timer(
      interval: Option<Duration>,
      callback: Option<TimerCallback>,
      info: usize,
@@ -2731,7 +3808,7 @@ index 10b24ac..a54be77 100644
          valid: AtomicBool::new(true),
      });
      note(Arc::as_ptr(&timer));
-@@ -777,6 +798,26 @@ mod tests {
+@@ -777,6 +804,26 @@ mod tests {
          assert_eq!(calls(), 1);
      }
  
@@ -2758,6 +3835,51 @@ index 10b24ac..a54be77 100644
      #[test]
      fn the_next_timer_is_the_soonest_valid_one_in_the_mode() {
          let (_, _, tick) = counter!();
+diff --git a/crates/corevideo/src/lib.rs b/crates/corevideo/src/lib.rs
+index 6f8ab70..78ccb37 100644
+--- a/crates/corevideo/src/lib.rs
++++ b/crates/corevideo/src/lib.rs
+@@ -96,7 +96,29 @@ fn display_period(display: u32) -> f64 {
+         display => display,
+     };
+     let refresh_rate = sdl3::video::display_refresh_rate(display).unwrap_or(60.0);
+-    1.0 / f64::from(refresh_rate)
++    let period = 1.0 / f64::from(refresh_rate);
++    if corefoundation::perf_trace_enabled() {
++        static LAST_LOGGED_SCHEDULE: Mutex<Option<(u32, u32, u64)>> = Mutex::new(None);
++        let schedule = (display, refresh_rate.to_bits(), period.to_bits());
++        let should_log = {
++            let mut last = LAST_LOGGED_SCHEDULE
++                .lock()
++                .unwrap_or_else(|error| error.into_inner());
++            if *last == Some(schedule) {
++                false
++            } else {
++                *last = Some(schedule);
++                true
++            }
++        };
++        if should_log {
++            corefoundation::perf_trace_log(&format!(
++                "stage=corevideo.display_link_schedule display={display} refresh_hz={refresh_rate:.3} period_ms={:.3}",
++                period * 1000.0
++            ));
++        }
++    }
++    period
+ }
+ 
+ /// `CVReturn CVDisplayLinkCreateWithCGDisplay(CGDirectDisplayID, CVDisplayLinkRef *)`.
+@@ -344,7 +366,9 @@ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
+     let mut flags_out = 0u64;
+     // SAFETY: `callback` is the thunk the guest's function was registered
+     // through, and the two timestamps outlive the call.
++    let callback_started = corefoundation::perf_trace_start();
+     unsafe { callback(info, &now, &output, 0, &mut flags_out, context) };
++    corefoundation::perf_trace_record("corevideo.display_link_callback", callback_started);
+ }
+ 
+ exports::exports! {
 diff --git a/crates/metal_translate/src/spirv/half.rs b/crates/metal_translate/src/spirv/half.rs
 index 358b043..8c2ffa1 100644
 --- a/crates/metal_translate/src/spirv/half.rs

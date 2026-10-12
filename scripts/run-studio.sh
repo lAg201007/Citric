@@ -67,6 +67,8 @@ SOURCE_LC_ALL="${LC_ALL-<unset>}"
 SOURCE_LC_NUMERIC="${LC_NUMERIC-<unset>}"
 unset LC_ALL
 export LC_NUMERIC=C
+ROSEMARY_PERF_TRACE="${ROSEMARY_PERF_TRACE:-1}"
+export ROSEMARY_PERF_TRACE
 PLUGIN_PATCH_RESULT="$(python3 "$EXPERIMENT_DIR/scripts/patch_plugin_compatibility.py" "$ROSEMARY_PREFIX")" || exit 2
 LOG_NAME="${STUDIO_LOG_NAME:-run-$(date +%Y%m%dT%H%M%S)-$$}"
 if [[ ! "$LOG_NAME" =~ ^[a-zA-Z0-9_.-]+$ ]]; then exit 2; fi
@@ -87,7 +89,7 @@ fi
 {
     printf 'date='; date --iso-8601=seconds
     printf 'prefix=%s\napp=%s\nrosemary=%s\n' "$ROSEMARY_PREFIX" "$STUDIO_APP" "$ROSEMARY_BIN"
-    printf 'sdl_video_driver=%s\n' "${SDL_VIDEODRIVER:-auto}"
+    printf 'sdl_video_driver=%s\nperf_trace=%s\n' "${SDL_VIDEODRIVER:-auto}" "$ROSEMARY_PERF_TRACE"
     printf 'locale_source_lc_all=%s\nlocale_source_lc_numeric=%s\n' "$SOURCE_LC_ALL" "$SOURCE_LC_NUMERIC"
     printf 'locale_lc_all=%s\nlocale_lc_numeric=%s\n' "${LC_ALL-<unset>}" "$LC_NUMERIC"
     printf 'plugin_compatibility_patch=%s\n' "$PLUGIN_PATCH_RESULT"

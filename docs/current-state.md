@@ -4,7 +4,7 @@ Data do snapshot: 12 de outubro de 2026, horário local America/Recife.
 
 ## Ponto de partida
 
-Citric começou como um clone local da árvore Rosemary em /home/lag/rosemary-studio/source. O commit-base continua sendo c14275b4197e97d08c068acee79a016dcb5c5f6d; o patch canônico registra 18 arquivos Rust, com 1.646 linhas adicionadas e 120 removidas. Nesta migração, a ponta atual da branch passou a guardar launcher, scripts, documentação e patches, sem os crates Rosemary. scripts/build-studio.sh busca a base fixada, aplica patches/series numa cópia temporária e compila bin/rosemary. O histórico Git foi mantido, sem reescrita, portanto commits anteriores ainda contêm o source Rosemary. Os remotes locais são origin=https://github.com/lAg201007/Citric.git e upstream=https://github.com/microlift/rosemary.git. O GitHub ainda trata Citric como repositório independente, não como fork formal da rede Rosemary.
+Citric começou como um clone local da árvore Rosemary em /home/lag/rosemary-studio/source. O commit-base continua sendo c14275b4197e97d08c068acee79a016dcb5c5f6d; o patch canônico registra 19 arquivos Rust, com 1.987 linhas adicionadas e 151 removidas. Nesta migração, a ponta atual da branch passou a guardar launcher, scripts, documentação e patches, sem os crates Rosemary. scripts/build-studio.sh busca a base fixada, aplica patches/series numa cópia temporária e compila bin/rosemary. O histórico Git foi mantido, sem reescrita, portanto commits anteriores ainda contêm o source Rosemary. Os remotes locais são origin=https://github.com/lAg201007/Citric.git e upstream=https://github.com/microlift/rosemary.git. O GitHub ainda trata Citric como repositório independente, não como fork formal da rede Rosemary.
 
 A solicitação original de execução no Linux está fora do repositório CaseSolved. Nenhum código, place ou asset do jogo CaseSolved foi copiado para Citric. O nome Citric foi escolhido pelo usuário para este novo repositório.
 
@@ -19,6 +19,7 @@ A solicitação original de execução no Linux está fora do repositório CaseS
 - A janela de escolher FillColor, que antes não aparecia e deixava a interface bloqueada, foi confirmada funcionando pelo usuário depois de uma correção do fallback de QColorDialog no plugin Qt Cocoa.
 - Os botões do menu Roblox, Settings e Exit da UI do Rank Office foram reportados funcionando numa build posterior. Os sintomas voltaram em builds diagnósticas anteriores ao diagnóstico do View Selector.
 - Mouse position in Play now updates immediately without holding a button. The user confirmed the hover fix manually; the focused regression test also passes.
+- The user-visible periodic Play stutter was confirmed resolved on the latest build: after restarting through Citric, the user ran an empty Baseplate in Play for about 10 seconds and reported that the stutter disappeared. The trace still records full-window damage roughly every 500 ms, without the previously visible stutter.
 
 ## Ainda não resolvido
 
@@ -33,6 +34,6 @@ A solicitação original de execução no Linux está fora do repositório CaseS
 
 ## Próximo passo sugerido
 
-Reproduzir a falha atual da place uma vez com o launcher normal e um log novo, sem iniciar o aplicativo diretamente sob GDB. Registrar se o Studio termina de carregar, a última linha do log e o exit code. Depois isolar o erro require bit em uma place mínima ou por plugin, antes de retomar ajuste de câmera. O usuário disse que, após organizar Citric, quer continuar consertando os problemas.
+The visible Play stutter is currently confirmed resolved. If it returns, inspect transparent-row counts and the caller locations in a fresh damage trace. The separate camera and docking issues remain deferred.
 
 Não repetir testes complexos de mouse automaticamente. Para qualquer novo teste de arraste, perguntar ao usuário e deixar que ele interaja na janela.

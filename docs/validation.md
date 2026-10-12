@@ -19,6 +19,23 @@ A suíte de câmera prova apenas a multiplicação condicional do delta. Ela nã
 
 ## Verificações concluídas no checkout Citric
 
+- The AppKit event-test filter passed all 10 matching tests after adding the diagnostic timing hooks.
+- `cargo fmt --all -- --check` passed on the patched Rosemary source checkout.
+- The Citric `--check-only` build applied the regenerated canonical patch to the pinned base.
+- The offline release build completed and installed the local diagnostic `bin/rosemary`.
+- `bash -n scripts/run-studio.sh` passed with the performance-trace metadata change.
+- The user confirmed the periodic Play stutter also occurs on an empty Baseplate.
+- The first diagnostic session recorded 145 backing-pump events and 147 main-loop gaps longer than 100 ms. Because those records had no elapsed timestamps and the log contained 9,972 repeated display-link schedule lines, this capture did not establish the reported 0.5-second cadence.
+- The regenerated patch applies and the Release build completed. The trace adds elapsed timestamps, deduplicates refresh schedules, and measures window-composition sub-stages and damaged-region dimensions.
+- In the user's retest, 91 `appkit.backing_compose_window` events over the sustained portion of the session had a median duration of 120.6 ms (range 101.9–168.7 ms) and a median interval of 499.7 ms. `appkit.backing_pump` and `appkit.main_loop_gap` show the same cadence. The display-link schedule reports 179.9 Hz, so that refresh setting does not account for the half-second pattern. The exact expensive operation inside `compose_window` is still unknown.
+
+- The user retested the instrumented build and confirmed the visible stutter persists. The new diagnostic Release build adds contextual slow-compose summaries, aggregate background/view-blend/sublayer timings, and deduplicated call sites for large damage rectangles. All 10 filtered AppKit event tests passed; format and source diff checks passed; Citric's patch check and Release build passed. A full AppKit test run passed 281/283 tests in both parallel and serial runs; the same two named-color tests expected black `textColor` but received white, a separate issue that remains unresolved. Binary SHA-256: `93036b8ce937b8eeee8c54a2138b37af4a906e7e8fdac7f15d4d90fa6f7765c4`; ELF build ID: `d798b08f443477345d551025181a9a62c3cc645b`. Manual retest of this latest build remains pending.
+
+- On that retest, the user confirmed the stutter persisted. The trace recorded 379 slow window-composition calls at a median 499.8 ms interval and 126.2 ms median duration. Aggregate background-layer rendering accounted for 125.5 ms; other aggregate stages did not cross the 25 ms logging threshold. The latest build adds the top eight per-view background-render timings with class and clipped pixel area. Its SHA-256 is `3a17056d160cdc849c5c7b221a0ab3fd708cb66688c26c9f9c75f7f4f6a1574f`; ELF build ID `54be230ea92f821f5d6ee60c24384350943c97b4`. Manual retest of this latest build remains pending.
+
+- The user confirmed the top-view profile build still stutters. Its trace showed 123.8 ms median slow composition every 494.7 ms. The eight slowest views were all `QNSView`, with an 8.2 ms median and 38.6 ms maximum; clips commonly exceeded 1.4 million pixels. The next diagnostic build separates layer presentation, fill, and contents-copy time per slow view. SHA-256: `5b679fe3c20ff326f28d5bf5760c2f6bb157219dc19e760135672ac69ae54737`; ELF build ID `849233ff8a8e5808d6e10f6dff540b3c1334c068`. Manual retest of this latest build remains pending.
+- `cargo fmt --all -- --check`, `git diff --check` on the patched source, and all 10 tests matched by `cargo test --locked -p appkit event::tests` passed. The installed diagnostic binary SHA-256 is `d8292335747b6c596321d799ff1f74806d5b2618fb472e250099cc9815b329ac`.
+
 - The focused AppKit regression `event::tests::hover_motion_reaches_a_view_without_window_mouse_move_opt_in` passed; it verifies a hover event reaches its view when the window did not opt into mouse-move events.
 - All 10 tests matched by `cargo test --locked -p appkit event::tests` passed.
 - Citric build-script check-only applied the updated canonical patch to the pinned base, and the offline Release build completed and installed the local executable.
@@ -53,12 +70,26 @@ Esses resultados substituem os números menores registrados no histórico da
 árvore de origem. A suíte de câmera continua provando apenas a multiplicação
 condicional do delta; ela não mede a sensação de movimento em hardware real.
 
+## Play stutter optimization candidate
+
+The latest trace measured a 110.71 ms median `compose_window` duration every 499.69 ms. `compose_render_background_total` accounted for 109.78 ms. Across 3,658 slow view records, `contents_ms` had a 7.16 ms median and 25,773.7 ms cumulative time; presentation and fill were negligible. Every slow view had contents and no background.
+
+A row-copy fast path was added for clipped, exact-size, opaque BGRA images. It checks alpha before copying and retains per-pixel source-over blending for translucent rows; scaled and RGBA content remains on the generic path. The clipping/stride and translucent-pixel regressions pass, as do all 10 Core Animation tests. `cargo fmt --all -- --check`, source `git diff --check`, Citric `--check-only`, and a full Release build/install also passed. Binary SHA-256: `98be7f615cfb512c2311775e2d9af32c4b51d0aeefda76e76c483fe202ec2f11`; ELF build ID: `75193546c80d6c9189a6d6857285d22d9cb45750`.
+
+The user retested the optimized build and confirmed the stutter remained. The trace measured a median composition duration of 101.887 ms every 471.264 ms, with median per-view contents time of 6.265 ms. This was only a modest improvement over the previous trace. A follow-up trace showed all 95 slow views using `exact_copy`; source/placed dimensions matched, channel swap was false, and opacity was 256. However, 82 images had only one fully opaque row. The mixed rows were still blending fully opaque pixels and not skipping fully transparent zero pixels.
+
+The user retested that build and reported the cadence was unchanged, but the stutter was much lighter. Its trace measured a 28.73 ms median composition, 64.08 ms p95, and a 499.91 ms median interval across 712 compositions. The latest implementation adds a fast path for completely transparent rows and propagates the original Core Animation setter call site into damage logs. This should show which property continues to request full-window recomposition.
+
+The transparent-row regression, clipping/stride, translucent blending, and mixed-row tests pass; all 11 focused Core Animation tests pass. The canonical patch check, formatting, source diff check, and Release build/install passed. Latest binary SHA-256: `1c81b0f81f3483c4eb6ccbfe15437f5634b275fc574e380d4f7b7e0f710a2513`; ELF build ID: `df984a5c36cf72f68b3704b10ee7c8b5a5ad7cb0`.
+
+On 2026-10-12, the user restarted this build through Citric, ran an empty Baseplate in Play for about 10 seconds, and reported that the visible stutter disappeared. The captured run still logged full-window damage for a 1920x1052 region at a median interval of about 499.9 ms. This confirms the reported visual symptom is resolved in the tested session; it does not show that the periodic invalidation itself stopped.
+
 ## Verificações ainda pendentes
 
-1. Reproduzir o crash da place em uma execução normal, com um nome de log novo. Não testar arraste complexo sem perguntar ao usuário.
-2. Quando a abertura estiver estável, testar Edit e Play com o usuário validando câmera e controles. A escala 0,003 ainda não tem resultado manual.
-3. Confirmar que scripts/patch-color-dialog.py aceita o bundle já patchado e não modifica binários quando o patch já está presente.
-4. Conferir hashes de RobloxStudio.app e Rosemary contra docs/bundle.md e validar o manifesto completo.
+1. Reproduce the large-place crash in a normal launcher session with a fresh log. Do not perform complex mouse drags without asking the user.
+2. Once place opening is stable, test Edit and Play with the user validating camera and controls; the 0.003 scale still lacks a manual result.
+3. Confirm `scripts/patch-color-dialog.py` accepts an already-patched bundle without modifying it.
+4. Check the RobloxStudio.app and Rosemary hashes against `docs/bundle.md` and validate the full manifest.
 
 
 ## Migração para patches

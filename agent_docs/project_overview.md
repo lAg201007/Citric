@@ -34,3 +34,9 @@ cached plugin models that contain the known legacy `bit` fallback declaration.
 It changes only that exact signature to use Roblox's built-in `bit32`, with a
 verified local backup. The user confirmed that the Baseplate which previously
 failed now opens. Other unknown module imports remain untouched.
+
+The diagnostic workflow supports `ROSEMARY_PERF_TRACE`. When enabled by the
+launcher, it records main-loop gaps, script/event/backing pumps,
+CoreFoundation callbacks, and AppKit/CoreVideo display-link scheduling and
+callback times. This helps investigate periodic Play stalls without assuming
+that the cause is a fixed timer.

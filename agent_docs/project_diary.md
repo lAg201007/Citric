@@ -53,3 +53,31 @@ different early selector failure.
   declaration and changes only that signature. It preserves the original RBXM
   by hash and leaves unknown module imports untouched. The user confirmed the
   formerly failing Baseplate opens with the plugin enabled.
+
+- On 2026-10-12 the user reported a periodic Play stutter at approximately
+  0.5-second intervals and confirmed the same behavior in an empty Baseplate,
+  which makes place scripts an insufficient explanation. A source audit found
+  no fixed 500 ms timer in AppKit, CoreFoundation, or SDL. The launcher now
+  enables `ROSEMARY_PERF_TRACE` and records main-loop, script/event/backing
+  pump, CoreFoundation callback, and AppKit/CoreVideo display-link timing so a
+  fresh reproduction can identify the stalled layer. This is diagnostic work;
+  no behavior fix has been established yet.
+- The follow-up per-view trace isolated image-content copying: the aggregate
+  operation consumed about 110 ms of each 500 ms composition, with a 7.16 ms
+  median per view. The fast path is restricted to exact-size, opaque BGRA
+  contents; transparency, scaling, and RGBA keep the existing behavior. The
+  release build is installed and awaits a manual Baseplate retest.
+- The user tested the fast-path telemetry build and reported the stutter
+  remains. All 95 slow-view records selected the exact-size BGRA path, while
+  82 images had only one fully opaque row. This showed that mixed rows still
+  blended opaque pixels and visited fully transparent zeros. The follow-up
+  optimization copies opaque pixels, skips exactly transparent pixels, and
+  blends only remaining pixels. The user reported the cadence remains but the
+  stutter is much lighter; the measured median composition fell to 28.73 ms.
+  The latest build also skips completely transparent rows and keeps the
+  original Core Animation setter call site when reporting window damage.
+- The user restarted that latest build through Citric and ran an empty
+  Baseplate in Play for about 10 seconds. On 2026-10-12 they reported that the
+  visible stutter disappeared. The latest run log still records full-window
+  damage at roughly 500 ms intervals, so only the visual symptom is confirmed
+  resolved; the recurring invalidation remains observable but is not blocking.

@@ -32,3 +32,7 @@ The patch series is the owner of Citric's Rust behavior; the temporary
 Rosemary checkout owns upstream source during a build. The scripts own local
 launch composition. docs/ owns the user-facing record; agent_docs/ owns the
 workflow handoff state.
+
+The periodic-stutter diagnostic path is owned by `scripts/run-studio.sh` and
+runtime hooks in the patch. Its output is session metadata and raw logs outside
+Git; no standalone diagnostic module was introduced.
