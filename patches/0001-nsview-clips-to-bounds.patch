@@ -1,0 +1,305 @@
+diff --git a/crates/appkit/src/backing.rs b/crates/appkit/src/backing.rs
+index 6b2019f..e9d04e6 100644
+--- a/crates/appkit/src/backing.rs
++++ b/crates/appkit/src/backing.rs
+@@ -1038,7 +1038,12 @@ fn place_view(
+         width: (frame.size.width * density).round() as i64,
+         height: (frame.size.height * density).round() as i64,
+     };
+-    let clip = clip.intersection(&rect);
++    let child_clip = if crate::view::clips_to_bounds_of(view) {
++        clip.intersection(&rect)
++    } else {
++        clip
++    };
++    let clip = child_clip.intersection(&rect);
+     let alpha = crate::view::effective_alpha(view);
+     out.push(Placed {
+         view,
+@@ -1049,7 +1054,15 @@ fn place_view(
+     let flipped = crate::view::is_flipped(view);
+     // SAFETY: a view this crate made.
+     for child in unsafe { crate::view::children(view) } {
+-        place_view(child, in_window, flipped, clip, geometry, depth + 1, out);
++        place_view(
++            child,
++            in_window,
++            flipped,
++            child_clip,
++            geometry,
++            depth + 1,
++            out,
++        );
+     }
+ }
+ 
+@@ -1942,6 +1955,90 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn clipping_controls_overhanging_subviews_without_escaping_the_window() {
++        let content = view(rect(0.0, 0.0, 100.0, 100.0), true);
++        let parent = view(rect(10.0, 10.0, 20.0, 20.0), true);
++        let child = view(rect(15.0, 0.0, 30.0, 10.0), true);
++        add(content, parent);
++        add(parent, child);
++        let whole = Rect {
++            x: 0,
++            y: 0,
++            width: 100,
++            height: 100,
++        };
++        for (enabled, expected_width) in [(1, 5), (0, 30), (1, 5)] {
++            unsafe {
++                let set: unsafe extern "C" fn(Id, Sel, u8) =
++                    std::mem::transmute(objc::msg::entry());
++                set(parent, objc::sel::get("setClipsToBounds:"), enabled);
++            }
++            let mut placed = Vec::new();
++            place_view(
++                content,
++                rect(0.0, 0.0, 100.0, 100.0),
++                false,
++                whole,
++                Geometry {
++                    window_height: 100.0,
++                    density: 1.0,
++                },
++                0,
++                &mut placed,
++            );
++            assert_eq!(
++                placed[2].clip,
++                Rect {
++                    x: 25,
++                    y: 10,
++                    width: expected_width,
++                    height: 10
++                }
++            );
++        }
++        objc::arc::release(child);
++        objc::arc::release(parent);
++        objc::arc::release(content);
++    }
++
++    #[test]
++    fn a_clip_view_clips_its_document_by_default() {
++        crate::bootstrap();
++        let class = objc::class::lookup(c"NSClipView").unwrap();
++        let parent = objc::object::create_instance(class, 0);
++        unsafe {
++            crate::view::init_with_frame(
++                parent,
++                objc::sel::get("initWithFrame:"),
++                rect(0.0, 0.0, 20.0, 20.0),
++            );
++        }
++        let child = view(rect(15.0, 0.0, 30.0, 10.0), false);
++        add(parent, child);
++        let mut placed = Vec::new();
++        place_view(
++            parent,
++            rect(0.0, 0.0, 100.0, 100.0),
++            false,
++            Rect {
++                x: 0,
++                y: 0,
++                width: 100,
++                height: 100,
++            },
++            Geometry {
++                window_height: 100.0,
++                density: 1.0,
++            },
++            0,
++            &mut placed,
++        );
++        assert_eq!(placed[1].clip.width, 5);
++        objc::arc::release(child);
++        objc::arc::release(parent);
++    }
++
+     /// A hidden view is placed nowhere, and takes its subviews with it.
+     #[test]
+     fn a_hidden_view_is_not_placed() {
+diff --git a/crates/appkit/src/view.rs b/crates/appkit/src/view.rs
+index 7040a80..c6d1a55 100644
+--- a/crates/appkit/src/view.rs
++++ b/crates/appkit/src/view.rs
+@@ -50,6 +50,7 @@ pub struct View {
+     /// [`WANTS_LAYER`] and [`BACKING_LAYER`], and `-setLayerContentsPlacement:`
+     /// from [`PLACEMENT_SHIFT`] up.
+     layer_backing: usize,
++    clipping: u8,
+ }
+ 
+ /// The bits of [`View::layer_backing`]: the view asked for a layer, and the
+@@ -58,6 +59,8 @@ pub struct View {
+ const WANTS_LAYER: usize = 1;
+ const BACKING_LAYER: usize = 2;
+ const PLACEMENT_SHIFT: u32 = 8;
++const CLIPPING_ENABLED: u8 = 1;
++const CLIPPING_EXPLICIT: u8 = 2;
+ 
+ /// The bits of [`View::posts`].
+ const POSTS_FRAME: usize = 1;
+@@ -1160,15 +1163,80 @@ unsafe extern "C" fn set_bounds(receiver: Id, _sel: Sel, bounds: NSRect) {
+     note_geometry_change(receiver, before);
+ }
+ 
+-/// `-visibleRect`: the part of the view not clipped away by an ancestor.
+-///
+-/// The bounds, because nothing in this tree clips: there is no scroll view and
+-/// no clip view with a smaller frame, so every view is wholly visible. A guest
+-/// sizing a viewport from this gets the same answer it would from `-bounds`,
+-/// which is what it would get from AppKit for a view that fills its window.
+-unsafe extern "C" fn visible_rect(receiver: Id, sel: Sel) -> NSRect {
+-    // SAFETY: `-bounds` is `NSRect (id, SEL)`.
+-    unsafe { bounds(receiver, sel) }
++pub(crate) fn clips_to_bounds_of(receiver: Id) -> bool {
++    let clipping = view_of(receiver).clipping;
++    if clipping & CLIPPING_EXPLICIT != 0 {
++        return clipping & CLIPPING_ENABLED != 0;
++    }
++    unsafe { objc::object::class_of(receiver) }.is_some_and(|class| {
++        class
++            .chain()
++            .any(|ancestor| ancestor.name_str() == "NSClipView")
++    })
++}
++
++unsafe extern "C" fn clips_to_bounds(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(clips_to_bounds_of(receiver))
++}
++
++unsafe extern "C" fn set_clips_to_bounds(receiver: Id, _sel: Sel, clips: u8) {
++    view_of(receiver).clipping = CLIPPING_EXPLICIT | u8::from(clips != 0);
++    crate::backing::needs_display(receiver);
++}
++
++fn intersect_rects(first: NSRect, second: NSRect) -> NSRect {
++    let x = first.origin.x.max(second.origin.x);
++    let y = first.origin.y.max(second.origin.y);
++    let right = (first.origin.x + first.size.width).min(second.origin.x + second.size.width);
++    let top = (first.origin.y + first.size.height).min(second.origin.y + second.size.height);
++    NSRect {
++        origin: NSPoint { x, y },
++        size: NSSize {
++            width: (right - x).max(0.0),
++            height: (top - y).max(0.0),
++        },
++    }
++}
++
++unsafe extern "C" fn visible_rect(receiver: Id, _sel: Sel) -> NSRect {
++    if is_hidden_or_has_hidden_ancestor(receiver) {
++        return NSRect::default();
++    }
++    let mut chain = Vec::new();
++    let mut current = receiver;
++    for _ in 0..64 {
++        if !is_view(current) {
++            break;
++        }
++        chain.push(current);
++        current = view_of(current).superview;
++    }
++    let root = chain.last().copied().unwrap_or(receiver);
++    let window = unsafe { window_of(receiver) };
++    let sdl = unsafe { crate::window::sdl_window(window) };
++    let mut visible = if let Some((width, height)) = sdl3::video::window_size(sdl) {
++        rect_between(
++            NSRect {
++                origin: NSPoint::default(),
++                size: NSSize {
++                    width: f64::from(width),
++                    height: (f64::from(height) - crate::window::content_inset(window)).max(0.0),
++                },
++            },
++            |point| point_from_window(receiver, point),
++        )
++    } else {
++        convert_rect(bounds_of(root), root, receiver)
++    };
++    for ancestor in chain {
++        if clips_to_bounds_of(ancestor) {
++            visible = intersect_rects(
++                visible,
++                convert_rect(bounds_of(ancestor), ancestor, receiver),
++            );
++        }
++    }
++    visible
+ }
+ 
+ /// `-convertRectToBacking:`, which is the whole reason a Retina program asks a
+@@ -1846,6 +1914,8 @@ pub(crate) fn install() {
+         "setFrameSize:" => set_frame_size, c"v32@0:8{CGSize=dd}16";
+         "setFrameOrigin:" => set_frame_origin, c"v32@0:8{CGPoint=dd}16";
+         "bounds" => bounds, c"{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8";
++        "clipsToBounds" => clips_to_bounds, c"c16@0:8";
++        "setClipsToBounds:" => set_clips_to_bounds, c"v20@0:8c16";
+         "visibleRect" => visible_rect, c"{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8";
+         "setBounds:" => set_bounds, c"v48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16";
+         "convertRectToBacking:" => convert_rect_to_backing,
+@@ -1986,6 +2056,58 @@ mod tests {
+         (superview, subview)
+     }
+ 
++    #[test]
++    fn clipping_selectors_are_inherited_and_control_visible_rect() {
++        crate::bootstrap();
++        let class = corefoundation::base::register(
++            c"RosemaryClippingRegressionView",
++            objc::class::lookup(c"NSView"),
++            INSTANCE_SIZE,
++            false,
++        );
++        let parent = view(rect(0.0, 0.0, 100.0, 100.0));
++        let child = objc::object::create_instance(class, 0);
++        unsafe {
++            init_with_frame(
++                child,
++                objc::sel::get("initWithFrame:"),
++                rect(80.0, 10.0, 40.0, 30.0),
++            );
++            add_subview(parent, objc::sel::get("addSubview:"), child);
++            let get: unsafe extern "C" fn(Id, Sel) -> u8 = std::mem::transmute(objc::msg::entry());
++            let set: unsafe extern "C" fn(Id, Sel, u8) = std::mem::transmute(objc::msg::entry());
++            assert_eq!(get(child, objc::sel::get("clipsToBounds")), 0);
++            set(child, objc::sel::get("setClipsToBounds:"), 1);
++            assert_eq!(get(child, objc::sel::get("clipsToBounds")), 1);
++            assert_eq!(
++                visible_rect(child, objc::sel::get("visibleRect")),
++                rect(0.0, 0.0, 20.0, 30.0)
++            );
++            set(child, objc::sel::get("setClipsToBounds:"), 0);
++            assert_eq!(get(child, objc::sel::get("clipsToBounds")), 0);
++            assert_eq!(
++                visible_rect(child, objc::sel::get("visibleRect")),
++                rect(-80.0, -10.0, 100.0, 100.0)
++            );
++            assert!(hit_base(parent, NSPoint { x: 110.0, y: 20.0 }, 0).is_null());
++        }
++        objc::arc::release(child);
++        objc::arc::release(parent);
++    }
++
++    #[test]
++    fn clip_views_clip_by_default_and_allow_explicit_changes() {
++        crate::bootstrap();
++        let class = objc::class::lookup(c"NSClipView").unwrap();
++        let clip = objc::object::create_instance(class, 0);
++        assert!(clips_to_bounds_of(clip));
++        unsafe {
++            set_clips_to_bounds(clip, objc::sel::get("setClipsToBounds:"), 0);
++        }
++        assert!(!clips_to_bounds_of(clip));
++        objc::arc::release(clip);
++    }
++
+     /// A view starts opaque, reads back the clamped alpha it was given, and
+     /// fades its subviews with it.
+     #[test]

@@ -1,0 +1,10 @@
+/target
+/.cargo
+.DS_Store
+/vendor
+/result*
+/app/full/RobloxStudio.app/
+/bin/rosemary
+/downloads/darwin-cache/
+/logs/
+*.core

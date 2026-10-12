@@ -1,0 +1,405 @@
+use std::ffi::c_void;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use corefoundation::api as cf;
+use corefoundation::base::CFTypeRef;
+use iokit::api;
+use iokit::hid::{element_type, page, usage};
+
+static MATCHED: AtomicUsize = AtomicUsize::new(0);
+static REMOVED: AtomicUsize = AtomicUsize::new(0);
+static DEVICE: Mutex<usize> = Mutex::new(0);
+static VALUES: Mutex<Vec<(u32, i64)>> = Mutex::new(Vec::new());
+static REPORTS: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+static EFFECTS: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+
+unsafe extern "C" fn matched(
+    _context: *mut c_void,
+    _result: i32,
+    _sender: *mut c_void,
+    device: CFTypeRef,
+) {
+    MATCHED.fetch_add(1, Ordering::SeqCst);
+    *DEVICE.lock().unwrap_or_else(|e| e.into_inner()) = device as usize;
+}
+
+unsafe extern "C" fn changed(
+    _context: *mut c_void,
+    _result: i32,
+    _sender: *mut c_void,
+    value: CFTypeRef,
+) {
+    // SAFETY: a value the manager made for this call and releases after it.
+    unsafe {
+        let element = api::IOHIDValueGetElement(value);
+        let cookie = api::IOHIDElementGetCookie(element);
+        let integer = api::IOHIDValueGetIntegerValue(value) as i64;
+        VALUES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((cookie, integer));
+    }
+}
+
+unsafe extern "C" fn removed(_context: *mut c_void, _result: i32, _sender: *mut c_void) {
+    REMOVED.fetch_add(1, Ordering::SeqCst);
+}
+
+unsafe extern "C" fn reported(
+    _context: *mut c_void,
+    _result: i32,
+    _sender: *mut c_void,
+    report_type: u32,
+    report_id: u32,
+    report: *mut u8,
+    length: isize,
+) {
+    assert_eq!(report_type, 0);
+    assert_eq!(report_id, 0);
+    // SAFETY: IOKit supplies this callback with `length` readable bytes.
+    let bytes = unsafe { std::slice::from_raw_parts(report, length as usize) };
+    REPORTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(bytes.to_vec());
+}
+
+unsafe extern "C" fn effect(_userdata: *mut c_void, data: *const c_void, length: i32) -> bool {
+    // SAFETY: SDL supplies the virtual-device callback with `length` bytes.
+    let bytes = unsafe { std::slice::from_raw_parts(data.cast(), length as usize) };
+    EFFECTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(bytes.to_vec());
+    true
+}
+
+fn string(text: &[u8]) -> CFTypeRef {
+    corefoundation::string::from_bytes(text, false)
+}
+
+/// Turn the run loop until `done`, or give up.
+fn pump_until(done: impl Fn() -> bool) {
+    for _ in 0..100 {
+        if done() {
+            return;
+        }
+        // SAFETY: a mode name and a timeout.
+        unsafe { cf::CFRunLoopRunInMode(string(b"kCFRunLoopDefaultMode"), 0.02, 0) };
+    }
+}
+
+/// "A gamepad on the generic-desktop page", built the way a guest builds one.
+fn gamepad_criteria() -> CFTypeRef {
+    let number = |v: i64| {
+        corefoundation::collections::new_number(corefoundation::collections::Number::Integer(v))
+    };
+    let keys = [string(b"DeviceUsagePage"), string(b"DeviceUsage")];
+    let values = [
+        number(page::GENERIC_DESKTOP as i64),
+        number(usage::GAMEPAD as i64),
+    ];
+    // SAFETY: real objects and this tree's own type callbacks.
+    unsafe {
+        let dictionary = cf::CFDictionaryCreate(
+            std::ptr::null(),
+            keys.as_ptr(),
+            values.as_ptr(),
+            2,
+            &corefoundation::callbacks::TYPE_KEY_CALLBACKS,
+            &corefoundation::callbacks::TYPE_VALUE_CALLBACKS,
+        );
+        cf::CFArrayCreate(
+            std::ptr::null(),
+            [dictionary].as_ptr(),
+            1,
+            &corefoundation::callbacks::TYPE_VALUE_CALLBACKS,
+        )
+    }
+}
+
+#[test]
+fn a_guest_reads_a_gamepad_through_the_run_loop() {
+    if !sdl3::available() || !sdl3::virtual_joystick::available() {
+        eprintln!("skipped: this host has no SDL3 with a virtual joystick");
+        return;
+    }
+    corefoundation::bootstrap();
+    let pool = unsafe { objc::api::objc_autoreleasePoolPush() };
+
+    let label = c"rosemary test pad";
+    let desc = sdl3::virtual_joystick::Desc {
+        // `SDL_JOYSTICK_TYPE_GAMEPAD`, so SDL reports it as one.
+        kind: 1,
+        vendor_id: sdl3::usb_vendor::MICROSOFT,
+        product_id: sdl3::usb_product::XBOX_360_CONTROLLER,
+        naxes: 6,
+        nbuttons: 15,
+        nhats: 1,
+        name: label.as_ptr(),
+        send_effect: Some(effect),
+        ..Default::default()
+    };
+    sdl3::init(sdl3::init::JOYSTICK).expect("the joystick subsystem");
+    let Some(id) = sdl3::virtual_joystick::attach(&desc) else {
+        panic!("SDL declined a virtual joystick: {}", sdl3::error());
+    };
+
+    // The guest's sequence, in the guest's order.
+    // SAFETY: every argument is an object built just above, and the callbacks
+    // are this file's own.
+    let manager;
+    unsafe {
+        manager = api::IOHIDManagerCreate(std::ptr::null(), 0);
+        api::IOHIDManagerSetDeviceMatchingMultiple(manager, gamepad_criteria());
+        api::IOHIDManagerRegisterDeviceMatchingCallback(
+            manager,
+            Some(matched),
+            std::ptr::null_mut(),
+        );
+        api::IOHIDManagerRegisterInputValueCallback(manager, Some(changed), std::ptr::null_mut());
+        api::IOHIDManagerScheduleWithRunLoop(
+            manager,
+            cf::CFRunLoopGetCurrent(),
+            string(b"kCFRunLoopDefaultMode"),
+        );
+        let early = api::IOHIDManagerCopyDevices(manager);
+        assert!(!early.is_null(), "scheduling activates device discovery");
+        assert_eq!(cf::CFSetGetCount(early), 1);
+        cf::CFRelease(early);
+        assert_eq!(api::IOHIDManagerOpen(manager, 0), 0, "open is idempotent");
+    }
+
+    pump_until(|| MATCHED.load(Ordering::SeqCst) > 0);
+    assert_eq!(
+        MATCHED.load(Ordering::SeqCst),
+        1,
+        "the matching callback did not see the device"
+    );
+    let device = *DEVICE.lock().unwrap_or_else(|e| e.into_inner()) as CFTypeRef;
+    assert!(!device.is_null());
+    unsafe {
+        let devices = api::IOHIDManagerCopyDevices(manager);
+        assert_eq!(cf::CFGetTypeID(devices), cf::CFSetGetTypeID());
+        assert_eq!(cf::CFSetGetCount(devices), 1);
+        let mut copied = std::ptr::null();
+        cf::CFSetGetValues(devices, &mut copied);
+        assert_eq!(copied, device);
+        cf::CFRelease(devices);
+    }
+    unsafe {
+        api::IOHIDDeviceRegisterRemovalCallback(device, Some(removed), std::ptr::null_mut());
+    }
+
+    // The properties the runner builds its GUID from, which is what
+    // `SGamepadMapping::FindFromGUID` matches on.
+    // SAFETY: a device the manager just reported.
+    unsafe {
+        let read = |key: &[u8]| {
+            corefoundation::collections::number(api::IOHIDDeviceGetProperty(device, string(key)))
+                .map(|v| v.as_i64())
+                .unwrap_or(-1)
+        };
+        assert_eq!(
+            read(b"VendorID"),
+            i64::from(sdl3::usb_vendor::MICROSOFT),
+            "the vendor id is SDL's own"
+        );
+        assert_eq!(
+            read(b"ProductID"),
+            i64::from(sdl3::usb_product::XBOX_360_CONTROLLER)
+        );
+        assert_eq!(read(b"MaxInputReportSize"), 14);
+
+        let descriptor = api::IOHIDDeviceGetProperty(device, string(b"ReportDescriptor"));
+        assert_eq!(cf::CFGetTypeID(descriptor), cf::CFDataGetTypeID());
+        assert!(cf::CFDataGetLength(descriptor) > 0);
+
+        let service = api::IOHIDDeviceGetService(device);
+        assert_eq!(service, id);
+        let matching = iokit::registry::IORegistryEntryIDMatching(service as u64);
+        let reopened_service = iokit::registry::IOServiceGetMatchingService(0, matching);
+        assert_eq!(reopened_service, service);
+        assert_eq!(api::IOHIDDeviceCreate(std::ptr::null(), service), device);
+
+        let class = c"IOHIDDevice";
+        let matching = iokit::registry::IOServiceMatching(class.as_ptr());
+        let mut iterator = 0;
+        assert_eq!(
+            iokit::registry::IOServiceGetMatchingServices(0, matching, &mut iterator),
+            0
+        );
+        assert_ne!(iterator, 0, "the HID service is visible through IORegistry");
+        assert_eq!(iokit::registry::IOIteratorNext(iterator), service);
+        assert_eq!(iokit::registry::IOIteratorNext(iterator), 0);
+        let mut properties: CFTypeRef = std::ptr::null();
+        assert_eq!(
+            iokit::registry::IORegistryEntryCreateCFProperties(
+                service,
+                &mut properties,
+                std::ptr::null_mut(),
+                0,
+            ),
+            0
+        );
+        assert_eq!(
+            corefoundation::collections::number(cf::CFDictionaryGetValue(
+                properties,
+                string(b"ProductID"),
+            ))
+            .map(|value| value.as_i64()),
+            Some(i64::from(sdl3::usb_product::XBOX_360_CONTROLLER))
+        );
+        let usage_pairs = cf::CFDictionaryGetValue(properties, string(b"DeviceUsagePairs"));
+        assert_eq!(cf::CFGetTypeID(usage_pairs), cf::CFArrayGetTypeID());
+        assert_eq!(cf::CFArrayGetCount(usage_pairs), 1);
+        let usage_pair = cf::CFArrayGetValueAtIndex(usage_pairs, 0);
+        assert_eq!(
+            corefoundation::collections::number(cf::CFDictionaryGetValue(
+                usage_pair,
+                string(b"DeviceUsage"),
+            ))
+            .map(|value| value.as_i64()),
+            Some(i64::from(usage::GAMEPAD))
+        );
+        assert_eq!(
+            corefoundation::collections::number(cf::CFDictionaryGetValue(
+                properties,
+                string(b"bInterfaceNumber"),
+            ))
+            .map(|value| value.as_i64()),
+            Some(0)
+        );
+        cf::CFRelease(properties);
+        assert_eq!(iokit::registry::IOObjectRelease(iterator), 0);
+    }
+
+    // The element tree, walked the way a guest walks it.
+    unsafe {
+        let elements = api::IOHIDDeviceCopyMatchingElements(device, std::ptr::null(), 0);
+        let count = cf::CFArrayGetCount(elements);
+        assert_eq!(count, 1 + 6 + 15, "the element tree is the wrong shape");
+
+        // Apps can reject every array member whose general CF type does not
+        // equal IOKit's element type before it reads any HID fields.
+        for i in 0..count {
+            let element = cf::CFArrayGetValueAtIndex(elements, i);
+            assert_eq!(cf::CFGetTypeID(element), api::IOHIDElementGetTypeID());
+        }
+
+        // The first axis is X on the generic-desktop page, over SDL's own range.
+        let first_axis = cf::CFArrayGetValueAtIndex(elements, 1);
+        assert_eq!(
+            api::IOHIDElementGetUsagePage(first_axis),
+            page::GENERIC_DESKTOP
+        );
+        assert_eq!(api::IOHIDElementGetUsage(first_axis), usage::X);
+        assert_eq!(
+            api::IOHIDElementGetType(first_axis),
+            element_type::INPUT_AXIS
+        );
+        assert_eq!(api::IOHIDElementGetLogicalMin(first_axis), -32768);
+        assert_eq!(api::IOHIDElementGetLogicalMax(first_axis), 32767);
+
+        // Apps may poll mapped controls with IOHIDDeviceGetValue rather than
+        // registering the manager-level value callback.
+        let mut value = std::ptr::null();
+        assert_eq!(api::IOHIDDeviceGetValue(device, first_axis, &mut value), 0);
+        assert!(!value.is_null());
+        assert_eq!(cf::CFGetTypeID(value), api::IOHIDValueGetTypeID());
+        assert_eq!(api::IOHIDValueGetElement(value), first_axis);
+        assert_eq!(api::IOHIDValueGetLength(value), 2);
+
+        let first_button = cf::CFArrayGetValueAtIndex(elements, 7);
+        assert_eq!(
+            api::IOHIDDeviceGetValue(device, first_button, &mut value),
+            0
+        );
+        assert_eq!(api::IOHIDValueGetLength(value), 1);
+
+        // And the root collection's children are everything else.
+        let root = cf::CFArrayGetValueAtIndex(elements, 0);
+        assert_eq!(
+            cf::CFArrayGetCount(api::IOHIDElementGetChildren(root)),
+            count - 1
+        );
+    }
+
+    // Move it, and see the same state arrive through both IOKit input APIs.
+    let joystick = sdl3::open(id).expect("the joystick opens");
+    VALUES.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    REPORTS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    let mut report_buffer = [0u8; 14];
+    // SAFETY: the device remains alive and the buffer remains in scope through
+    // the callback registration below.
+    unsafe {
+        api::IOHIDDeviceRegisterInputReportCallback(
+            device,
+            report_buffer.as_mut_ptr(),
+            report_buffer.len() as isize,
+            Some(reported),
+            std::ptr::null_mut(),
+        );
+    }
+    // SAFETY: an open virtual joystick.
+    unsafe {
+        assert!(sdl3::virtual_joystick::set_axis(joystick, 0, 20_000));
+        assert!(sdl3::virtual_joystick::set_button(joystick, 2, true));
+    }
+    pump_until(|| {
+        VALUES.lock().unwrap_or_else(|e| e.into_inner()).len() >= 2
+            && !REPORTS.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+    });
+
+    let values = VALUES.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    assert!(
+        values.contains(&(1, 20_000)),
+        "the axis did not arrive as element 1: {values:?}"
+    );
+    // Element 0 is the collection, 1..=6 the axes and 7.. the buttons, so
+    // SDL's semantic X button is element 9.
+    assert!(
+        values.contains(&(9, 1)),
+        "the button did not arrive as element 9: {values:?}"
+    );
+    let reports = REPORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let report = reports
+        .last()
+        .expect("the input report callback did not run");
+    assert_eq!(i16::from_le_bytes([report[0], report[1]]), 20_000);
+    assert_eq!(report[12] & 0x04, 0x04, "button 2 was not packed");
+    drop(reports);
+
+    let mut polled = [0u8; 14];
+    let mut polled_length = polled.len() as isize;
+    // SAFETY: the device and output buffer remain valid for the call.
+    unsafe {
+        assert_eq!(
+            api::IOHIDDeviceGetReport(device, 0, 0, polled.as_mut_ptr(), &mut polled_length,),
+            0
+        );
+    }
+    assert_eq!(polled_length, 14);
+    assert_eq!(polled, report_buffer);
+
+    let output = [0x05, 0xaa, 0x55];
+    // SAFETY: a live device and one readable output report.
+    unsafe {
+        assert_eq!(
+            api::IOHIDDeviceSetReport(device, 1, 5, output.as_ptr(), output.len() as isize),
+            0
+        );
+    }
+    assert_eq!(
+        EFFECTS.lock().unwrap_or_else(|e| e.into_inner()).as_slice(),
+        &[output.to_vec()]
+    );
+
+    // SAFETY: a joystick this test opened.
+    unsafe { sdl3::close(joystick) };
+    sdl3::virtual_joystick::detach(id);
+    pump_until(|| REMOVED.load(Ordering::SeqCst) > 0);
+    assert_eq!(REMOVED.load(Ordering::SeqCst), 1);
+    unsafe { objc::api::objc_autoreleasePoolPop(pool) };
+}

@@ -1,0 +1,179 @@
+#![cfg(not(target_os = "macos"))]
+
+use std::ffi::c_int;
+
+/// Darwin's `struct rlimit`. The same layout as this host's, and named here so
+/// the guest's is never confused for it.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct Rlimit {
+    pub cur: u64,
+    pub max: u64,
+}
+
+const _: () = assert!(size_of::<Rlimit>() == size_of::<libc::rlimit>());
+
+/// Darwin's `RLIM_INFINITY`.
+const DARWIN_INFINITY: u64 = (1 << 63) - 1;
+
+#[cfg(any(target_env = "musl", target_os = "freebsd"))]
+type HostResource = c_int;
+#[cfg(not(any(target_env = "musl", target_os = "freebsd")))]
+type HostResource = u32;
+
+/// The host resource `darwin` is naming, or `None` for one this host has no
+/// counterpart for.
+///
+/// `RLIMIT_CPU` through `RLIMIT_CORE` agree; everything above them does not.
+/// Darwin's `RLIMIT_AS` and `RLIMIT_RSS` are the same number, and it is the
+/// address space that is enforced there, so it maps to this host's
+/// `RLIMIT_AS`.
+fn resource(darwin: c_int) -> Option<HostResource> {
+    Some(match darwin {
+        0..=4 => darwin as HostResource,
+        5 => libc::RLIMIT_AS as HostResource,
+        6 => libc::RLIMIT_MEMLOCK as HostResource,
+        7 => libc::RLIMIT_NPROC as HostResource,
+        8 => libc::RLIMIT_NOFILE as HostResource,
+        _ => return None,
+    })
+}
+
+// `rlim_t` is unsigned on Linux and signed on the BSDs, so the guest's `u64`
+// crosses through `libc::rlim_t` rather than being assumed to match it.
+fn to_guest(host: libc::rlim_t) -> u64 {
+    match host == libc::RLIM_INFINITY {
+        true => DARWIN_INFINITY,
+        false => host as u64,
+    }
+}
+
+fn to_host(guest: u64) -> libc::rlim_t {
+    match guest >= DARWIN_INFINITY {
+        true => libc::RLIM_INFINITY,
+        false => guest as libc::rlim_t,
+    }
+}
+
+/// `int getrlimit(int, struct rlimit *)`
+///
+/// # Safety
+///
+/// `out` is null or a writable `struct rlimit`.
+pub unsafe extern "C" fn getrlimit(darwin: c_int, out: *mut Rlimit) -> c_int {
+    if out.is_null() {
+        crate::errno::set(libc::EFAULT);
+        return -1;
+    }
+    let Some(resource) = resource(darwin) else {
+        crate::errno::set(libc::EINVAL);
+        return -1;
+    };
+    let mut host = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: a live `struct rlimit` and a resource this host knows.
+    if unsafe { libc::getrlimit(resource, &raw mut host) } != 0 {
+        return -1;
+    }
+    // SAFETY: the caller states `out` is writable.
+    unsafe {
+        *out = Rlimit {
+            cur: to_guest(host.rlim_cur),
+            max: to_guest(host.rlim_max),
+        }
+    };
+    0
+}
+
+/// `int setrlimit(int, const struct rlimit *)`
+///
+/// # Safety
+///
+/// `value` is null or a readable `struct rlimit`.
+pub unsafe extern "C" fn setrlimit(darwin: c_int, value: *const Rlimit) -> c_int {
+    if value.is_null() {
+        crate::errno::set(libc::EFAULT);
+        return -1;
+    }
+    let Some(resource) = resource(darwin) else {
+        crate::errno::set(libc::EINVAL);
+        return -1;
+    };
+    // SAFETY: the caller states `value` is readable.
+    let value = unsafe { *value };
+    let host = libc::rlimit {
+        rlim_cur: to_host(value.cur),
+        rlim_max: to_host(value.max),
+    };
+    // SAFETY: a live `struct rlimit` and a resource this host knows.
+    unsafe { libc::setrlimit(resource, &raw const host) }
+}
+
+exports::exports! {
+    functions {
+        "getrlimit" => getrlimit,
+        "setrlimit" => setrlimit,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Darwin's `RLIMIT_NOFILE`, which is this host's `RLIMIT_MEMLOCK` if the
+    /// number is passed through.
+    const DARWIN_NOFILE: c_int = 8;
+
+    #[test]
+    fn the_descriptor_limit_is_the_descriptor_limit_and_not_the_lock_limit() {
+        let mut guest = Rlimit::default();
+        // SAFETY: a live `struct rlimit`.
+        assert_eq!(unsafe { getrlimit(DARWIN_NOFILE, &raw mut guest) }, 0);
+
+        let mut host = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: as above, asked of this host directly.
+        assert_eq!(
+            unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut host) },
+            0
+        );
+        assert_eq!(guest.cur, to_guest(host.rlim_cur));
+        assert!(guest.cur > 0, "a process can open a file");
+    }
+
+    /// The sentinel is the trap: an unlimited resource must come back as the
+    /// number the guest spells `RLIM_INFINITY`, not as this host's.
+    #[test]
+    fn no_limit_is_reported_in_the_guests_spelling() {
+        assert_eq!(to_guest(libc::RLIM_INFINITY), DARWIN_INFINITY);
+        assert_eq!(to_host(DARWIN_INFINITY), libc::RLIM_INFINITY);
+        // FreeBSD's sentinel *is* Darwin's, so there is nothing to differ from
+        // there; this is the Linux `~0` the module exists for.
+        #[cfg(not(target_os = "freebsd"))]
+        assert_ne!(DARWIN_INFINITY, libc::RLIM_INFINITY);
+        // A real one, read through the entry point: core dumps are unlimited
+        // on most hosts, and `RLIMIT_CORE` is 4 on both.
+        let mut guest = Rlimit::default();
+        // SAFETY: a live `struct rlimit`.
+        assert_eq!(unsafe { getrlimit(4, &raw mut guest) }, 0);
+        assert!(guest.max <= DARWIN_INFINITY, "never this host's sentinel");
+    }
+
+    #[test]
+    fn a_resource_this_host_has_no_counterpart_for_is_refused() {
+        let mut guest = Rlimit::default();
+        // SAFETY: a live `struct rlimit`, and a resource number Darwin does
+        // not define either.
+        assert_eq!(unsafe { getrlimit(64, &raw mut guest) }, -1);
+        assert_eq!(crate::errno::get(), libc::EINVAL);
+        // SAFETY: a null buffer is what this checks.
+        assert_eq!(
+            unsafe { getrlimit(DARWIN_NOFILE, std::ptr::null_mut()) },
+            -1
+        );
+    }
+}
