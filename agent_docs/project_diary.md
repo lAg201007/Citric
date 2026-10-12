@@ -16,6 +16,14 @@
 - Camera scaling was reduced repeatedly, ultimately to 0.003 for captured/right
   drag input, but manual validation still found excessive speed and abrupt
   rotations. This remains an investigation item.
+- Citric was kept as a full Rosemary checkout after comparing the Vinegar and
+  Kombucha layout: the canonical patch series is tracked for reproducibility,
+  while a patch-only distribution is postponed until preparation and builds are
+  automated and validated. The local `upstream` remote is the update path.
+- A GTK 4 launcher was added around `scripts/run-studio.sh`, with XDG
+  configuration, place selection, diagnostics, and an optional application-menu
+  entry. The launcher was verified through its CLI and non-Studio checks; a
+  full GUI smoke test is limited by the available display session.
 
 Reusable lesson: keep raw account-bearing logs outside the repository and use
 the normal launcher for crash reproduction; direct GDB startup produced a

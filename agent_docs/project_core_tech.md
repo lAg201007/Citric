@@ -14,5 +14,11 @@ CoreFoundation lifetime handling, Objective-C autorelease safety, keyboard/font
 compatibility, and diagnostic logging. The source is authoritative; patches/
 are historical snapshots.
 
+The current canonical patch is `patches/0001-citric-runtime-compat.patch`,
+applied to the pinned base in `patches/base-commit` and ordered by
+`patches/series`. The older patch files remain historical snapshots. Citric's
+GTK 4 Python launcher delegates execution to `scripts/run-studio.sh`; it does
+not download or modify the proprietary Studio bundle.
+
 Do not copy the authenticated prefix or raw logs into Git. Do not publish the
 proprietary app bundle without an explicit later decision.

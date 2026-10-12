@@ -8,3 +8,5 @@
 /downloads/darwin-cache/
 /logs/
 *.core
+__pycache__/
+*.py[cod]

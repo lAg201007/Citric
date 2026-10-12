@@ -2,11 +2,23 @@
 
 This checkout continues the local Roblox Studio compatibility work on Rosemary. The exact current state, migration boundaries, known crashes, and test status are recorded in [docs/current-state.md](docs/current-state.md), [docs/compatibility.md](docs/compatibility.md), and [docs/session-history.md](docs/session-history.md). The original Rosemary README follows below.
 
-The local Studio app, Rosemary release binary, and Darwin cache are available in this working tree but excluded from Git. No remote is configured. Do not publish the proprietary bundle; see [docs/bundle.md](docs/bundle.md).
+The local Studio app, Rosemary release binary, and Darwin cache are available in this working tree but excluded from Git. The GitHub repository is a standalone Citric repository, not a GitHub-network fork of Rosemary. Its local remotes are origin for Citric and upstream for Rosemary; use `git fetch upstream` to inspect new Rosemary commits. Do not publish the proprietary bundle; see [docs/bundle.md](docs/bundle.md).
 
 ## Citric local launch
 
-Use the copied release binary and app bundle with:
+The GTK launcher starts the same wrapper used for direct launches:
+
+    ./scripts/citric
+
+For CLI use:
+
+    ./scripts/citric launch
+    ./scripts/citric launch "/path/to/place.rbxl"
+    ./scripts/citric diagnose
+
+See [docs/launcher.md](docs/launcher.md) for configuration and the application menu entry.
+
+To launch directly without the GTK interface:
 
     ./scripts/run-studio.sh
 

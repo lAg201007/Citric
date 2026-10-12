@@ -1,0 +1,2682 @@
+diff --git a/crates/appkit/src/application.rs b/crates/appkit/src/application.rs
+index 21dff67..063aa4d 100644
+--- a/crates/appkit/src/application.rs
++++ b/crates/appkit/src/application.rs
+@@ -143,10 +143,16 @@ unsafe extern "C" fn main_menu(receiver: Id, _sel: Sel) -> Id {
+ unsafe extern "C" fn set_main_menu(receiver: Id, _sel: Sel, value: Id) {
+     // SAFETY: an application.
+     let slot = unsafe { &mut (*(receiver as *mut Application)).main_menu };
++    let previous = *slot;
+     let old = std::mem::replace(slot, objc::arc::retain(value));
+     objc::arc::release(old);
+-    // The menu bar shows the menus of the one it is given now.
+-    crate::decor::close_menus();
++    crate::event::input_trace(&format!(
++        "stage=set_main_menu previous={previous:p} current={value:p} changed={}",
++        previous != value
++    ));
++    if previous != value {
++        crate::decor::close_menus();
++    }
+ }
+ 
+ /// The icon the program set on `NSApp`, or nil when it set none or there is no
+@@ -504,7 +510,7 @@ pub(crate) fn check_last_window_closed() {
+     }
+     let app = shared();
+     if app.is_null()
+-        || crate::window::all()
++        || crate::window::open_windows()
+             .into_iter()
+             .any(crate::window::is_shown)
+     {
+@@ -573,7 +579,7 @@ unsafe extern "C" fn window_with_window_number(_receiver: Id, _sel: Sel, number:
+         return std::ptr::null_mut();
+     }
+     let sel = objc::sel::get("windowNumber");
+-    crate::window::all()
++    crate::window::open_windows()
+         .into_iter()
+         // SAFETY: every entry is a live `NSWindow`, and this is
+         // `NSInteger (id, SEL)`.
+@@ -584,9 +590,9 @@ unsafe extern "C" fn window_with_window_number(_receiver: Id, _sel: Sel, number:
+         .unwrap_or(std::ptr::null_mut())
+ }
+ 
+-/// The windows this runtime has made, in the order they were made.
++/// The open windows this runtime has made, in the order they were made.
+ unsafe extern "C" fn windows(_receiver: Id, _sel: Sel) -> Id {
+-    let objects: Vec<corefoundation::base::CFTypeRef> = crate::window::all()
++    let objects: Vec<corefoundation::base::CFTypeRef> = crate::window::open_windows()
+         .into_iter()
+         .map(|w| w as corefoundation::base::CFTypeRef)
+         .collect();
+@@ -599,6 +605,27 @@ unsafe extern "C" fn windows(_receiver: Id, _sel: Sel) -> Id {
+     unsafe { corefoundation::api::CFAutorelease(array) as Id }
+ }
+ 
++unsafe extern "C" fn enumerate_windows_with_options(
++    _receiver: Id,
++    _sel: Sel,
++    _options: isize,
++    block: Id,
++) {
++    let Some(invoke) = (unsafe { crate::animation::invoke(block) }) else {
++        return;
++    };
++    let call: unsafe extern "C" fn(Id, Id, *mut i8) = unsafe { std::mem::transmute(invoke) };
++    let mut stop = 0i8;
++    for window in crate::window::open_windows() {
++        // SAFETY: the method's `@?` encoding makes this a callable
++        // `void (^)(NSWindow *, BOOL *)` block, and `stop` lives through each call.
++        unsafe { call(block, window, &mut stop) };
++        if stop != 0 {
++            break;
++        }
++    }
++}
++
+ unsafe extern "C" fn key_window(_receiver: Id, _sel: Sel) -> Id {
+     crate::window::key_window()
+ }
+@@ -682,6 +709,26 @@ unsafe extern "C" fn current_event(_receiver: Id, _sel: Sel) -> Id {
+     CURRENT_EVENT.load(Ordering::Acquire) as Id
+ }
+ 
++pub(crate) fn current_event_id() -> Id {
++    CURRENT_EVENT.load(Ordering::Acquire) as Id
++}
++
++pub(crate) fn with_current_event<R>(event: Id, body: impl FnOnce() -> R) -> R {
++    struct Restore(Id);
++
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            CURRENT_EVENT.store(self.0 as usize, Ordering::Release);
++        }
++    }
++
++    let previous = CURRENT_EVENT.swap(event as usize, Ordering::AcqRel) as Id;
++    let restore = Restore(previous);
++    let result = body();
++    drop(restore);
++    result
++}
++
+ /// `-sendEvent:`, the entry point a subclass overrides and then calls up into.
+ ///
+ /// Nothing to route: there is no responder chain here, and the events a window
+@@ -957,6 +1004,7 @@ pub(crate) fn install() {
+         "setPresentationOptions:" => set_presentation_options, c"v24@0:8Q16";
+         "nextEventMatchingMask:untilDate:inMode:dequeue:" => next_event, c"@48@0:8Q16@24@32B40";
+         "windows" => windows, c"@16@0:8";
++        "enumerateWindowsWithOptions:usingBlock:" => enumerate_windows_with_options, c"v32@0:8q16@?24";
+         "windowWithWindowNumber:" => window_with_window_number, c"@24@0:8q16";
+         "keyWindow" => key_window, c"@16@0:8";
+         "mainWindow" => key_window, c"@16@0:8";
+@@ -1222,6 +1270,40 @@ mod tests {
+         assert!(unsafe { current_event(app, objc::sel::get("currentEvent")) }.is_null());
+     }
+ 
++    #[test]
++    fn current_event_is_scoped_and_restored_after_nested_dispatch() {
++        crate::bootstrap();
++        let app = shared();
++        let first = crate::nsevent::make(crate::nsevent::Fields {
++            kind: crate::nsevent::kind::LEFT_MOUSE_DOWN,
++            ..Default::default()
++        });
++        let second = crate::nsevent::make(crate::nsevent::Fields {
++            kind: crate::nsevent::kind::LEFT_MOUSE_UP,
++            ..Default::default()
++        });
++        assert!(unsafe { current_event(app, objc::sel::get("currentEvent")) }.is_null());
++
++        with_current_event(first, || {
++            assert_eq!(
++                unsafe { current_event(app, objc::sel::get("currentEvent")) },
++                first
++            );
++            with_current_event(second, || {
++                assert_eq!(
++                    unsafe { current_event(app, objc::sel::get("currentEvent")) },
++                    second
++                );
++            });
++            assert_eq!(
++                unsafe { current_event(app, objc::sel::get("currentEvent")) },
++                first
++            );
++        });
++
++        assert!(unsafe { current_event(app, objc::sel::get("currentEvent")) }.is_null());
++    }
++
+     /// `-run` turns the run loop, and `-stop:` ends it.
+     #[test]
+     fn run_services_the_run_loop_until_it_is_stopped() {
+diff --git a/crates/appkit/src/backing.rs b/crates/appkit/src/backing.rs
+index 6b2019f..e9d04e6 100644
+--- a/crates/appkit/src/backing.rs
++++ b/crates/appkit/src/backing.rs
+@@ -1038,7 +1038,12 @@ fn place_view(
+         width: (frame.size.width * density).round() as i64,
+         height: (frame.size.height * density).round() as i64,
+     };
+-    let clip = clip.intersection(&rect);
++    let child_clip = if crate::view::clips_to_bounds_of(view) {
++        clip.intersection(&rect)
++    } else {
++        clip
++    };
++    let clip = child_clip.intersection(&rect);
+     let alpha = crate::view::effective_alpha(view);
+     out.push(Placed {
+         view,
+@@ -1049,7 +1054,15 @@ fn place_view(
+     let flipped = crate::view::is_flipped(view);
+     // SAFETY: a view this crate made.
+     for child in unsafe { crate::view::children(view) } {
+-        place_view(child, in_window, flipped, clip, geometry, depth + 1, out);
++        place_view(
++            child,
++            in_window,
++            flipped,
++            child_clip,
++            geometry,
++            depth + 1,
++            out,
++        );
+     }
+ }
+ 
+@@ -1942,6 +1955,90 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn clipping_controls_overhanging_subviews_without_escaping_the_window() {
++        let content = view(rect(0.0, 0.0, 100.0, 100.0), true);
++        let parent = view(rect(10.0, 10.0, 20.0, 20.0), true);
++        let child = view(rect(15.0, 0.0, 30.0, 10.0), true);
++        add(content, parent);
++        add(parent, child);
++        let whole = Rect {
++            x: 0,
++            y: 0,
++            width: 100,
++            height: 100,
++        };
++        for (enabled, expected_width) in [(1, 5), (0, 30), (1, 5)] {
++            unsafe {
++                let set: unsafe extern "C" fn(Id, Sel, u8) =
++                    std::mem::transmute(objc::msg::entry());
++                set(parent, objc::sel::get("setClipsToBounds:"), enabled);
++            }
++            let mut placed = Vec::new();
++            place_view(
++                content,
++                rect(0.0, 0.0, 100.0, 100.0),
++                false,
++                whole,
++                Geometry {
++                    window_height: 100.0,
++                    density: 1.0,
++                },
++                0,
++                &mut placed,
++            );
++            assert_eq!(
++                placed[2].clip,
++                Rect {
++                    x: 25,
++                    y: 10,
++                    width: expected_width,
++                    height: 10
++                }
++            );
++        }
++        objc::arc::release(child);
++        objc::arc::release(parent);
++        objc::arc::release(content);
++    }
++
++    #[test]
++    fn a_clip_view_clips_its_document_by_default() {
++        crate::bootstrap();
++        let class = objc::class::lookup(c"NSClipView").unwrap();
++        let parent = objc::object::create_instance(class, 0);
++        unsafe {
++            crate::view::init_with_frame(
++                parent,
++                objc::sel::get("initWithFrame:"),
++                rect(0.0, 0.0, 20.0, 20.0),
++            );
++        }
++        let child = view(rect(15.0, 0.0, 30.0, 10.0), false);
++        add(parent, child);
++        let mut placed = Vec::new();
++        place_view(
++            parent,
++            rect(0.0, 0.0, 100.0, 100.0),
++            false,
++            Rect {
++                x: 0,
++                y: 0,
++                width: 100,
++                height: 100,
++            },
++            Geometry {
++                window_height: 100.0,
++                density: 1.0,
++            },
++            0,
++            &mut placed,
++        );
++        assert_eq!(placed[1].clip.width, 5);
++        objc::arc::release(child);
++        objc::arc::release(parent);
++    }
++
+     /// A hidden view is placed nowhere, and takes its subviews with it.
+     #[test]
+     fn a_hidden_view_is_not_placed() {
+diff --git a/crates/appkit/src/cgevent.rs b/crates/appkit/src/cgevent.rs
+index 701b53a..6249778 100644
+--- a/crates/appkit/src/cgevent.rs
++++ b/crates/appkit/src/cgevent.rs
+@@ -48,6 +48,7 @@ struct Body {
+     location: NSPoint,
+     /// `CGEventType`.
+     kind: u32,
++    button: u32,
+ }
+ 
+ fn class() -> &'static Class {
+@@ -62,7 +63,7 @@ fn class() -> &'static Class {
+ }
+ 
+ /// An event object the caller owns and releases with `CFRelease`.
+-fn new(location: NSPoint, kind: u32) -> CFTypeRef {
++fn new(location: NSPoint, kind: u32, button: u32) -> CFTypeRef {
+     // SAFETY: `Body` begins with `isa` and is the layout `class` was registered
+     // with.
+     let body: *mut Body = unsafe { corefoundation::base::allocate(class()) };
+@@ -73,6 +74,7 @@ fn new(location: NSPoint, kind: u32) -> CFTypeRef {
+     unsafe {
+         (*body).location = location;
+         (*body).kind = kind;
++        (*body).button = button;
+     }
+     body as CFTypeRef
+ }
+@@ -101,7 +103,7 @@ pub fn global_pointer() -> NSPoint {
+ /// one input state - so the answer is the same either way.
+ #[allow(non_snake_case)]
+ pub unsafe extern "C" fn CGEventCreate(_source: *const c_void) -> CFTypeRef {
+-    new(global_pointer(), kind::NULL)
++    new(global_pointer(), kind::NULL, 0)
+ }
+ 
+ /// `CGPoint CGEventGetLocation(CGEventRef)`.
+@@ -131,7 +133,45 @@ pub unsafe extern "C" fn CGEventCreateMouseEvent(
+     location: NSPoint,
+     _button: u32,
+ ) -> CFTypeRef {
+-    new(location, kind)
++    new(location, kind, _button)
++}
++
++pub(crate) fn event_fields(event: CFTypeRef) -> Option<crate::nsevent::Fields> {
++    if !unsafe { corefoundation::base::is_kind_of(event, class()) } {
++        return None;
++    }
++    let body = unsafe { &*(event as *const Body) };
++    let event_kind = match body.kind {
++        kind::LEFT_MOUSE_DOWN => crate::nsevent::kind::LEFT_MOUSE_DOWN,
++        kind::LEFT_MOUSE_UP => crate::nsevent::kind::LEFT_MOUSE_UP,
++        kind::RIGHT_MOUSE_DOWN => crate::nsevent::kind::RIGHT_MOUSE_DOWN,
++        kind::RIGHT_MOUSE_UP => crate::nsevent::kind::RIGHT_MOUSE_UP,
++        kind::MOUSE_MOVED => crate::nsevent::kind::MOUSE_MOVED,
++        kind::LEFT_MOUSE_DRAGGED => crate::nsevent::kind::LEFT_MOUSE_DRAGGED,
++        kind::RIGHT_MOUSE_DRAGGED => crate::nsevent::kind::RIGHT_MOUSE_DRAGGED,
++        kind::OTHER_MOUSE_DOWN => crate::nsevent::kind::OTHER_MOUSE_DOWN,
++        kind::OTHER_MOUSE_UP => crate::nsevent::kind::OTHER_MOUSE_UP,
++        kind::OTHER_MOUSE_DRAGGED => crate::nsevent::kind::OTHER_MOUSE_DRAGGED,
++        _ => return None,
++    };
++    let sdl = crate::event::pointer_window()?;
++    let window = crate::window::window_for(sdl);
++    if window.is_null() {
++        return None;
++    }
++    let (origin_x, origin_y) = crate::window::global_position(sdl)?;
++    Some(crate::nsevent::Fields {
++        kind: event_kind,
++        modifiers: crate::keymap::modifiers(sdl3::video::keyboard_modifiers()),
++        location: crate::event::location(
++            window,
++            body.location.x - origin_x as f64,
++            body.location.y - origin_y as f64,
++        ),
++        window,
++        button: i64::from(body.button),
++        ..crate::nsevent::Fields::default()
++    })
+ }
+ 
+ /// `void CGEventSetType(CGEventRef, CGEventType)`.
+@@ -184,12 +224,24 @@ pub unsafe extern "C" fn CGEventPost(_tap: u32, event: CFTypeRef) {
+ 
+ /// Pointer motion since `CGGetLastMouseDelta` last read it, in whole points.
+ static DELTA: std::sync::Mutex<(f32, f32)> = std::sync::Mutex::new((0.0, 0.0));
++static LAST_DELTA_TRACE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+ 
+ /// Record a host motion event's relative movement.
+ pub fn note_mouse_delta(dx: f32, dy: f32) {
+     let mut delta = DELTA.lock().unwrap_or_else(|e| e.into_inner());
++    let before = *delta;
+     delta.0 += dx;
+     delta.1 += dy;
++    let total = *delta;
++    let trace_id = crate::event::current_input_trace_id();
++    if trace_id != 0 {
++        LAST_DELTA_TRACE_ID.store(trace_id, std::sync::atomic::Ordering::Release);
++        crate::event::input_trace(&format!(
++            "stage=delta_accumulate before=({:.3},{:.3}) add=({dx:.3},{dy:.3}) total=({:.3},{:.3})",
++            before.0, before.1, total.0, total.1,
++        ));
++    }
++    drop(delta);
+ }
+ 
+ /// `void CGGetLastMouseDelta(int32_t *deltaX, int32_t *deltaY)`
+@@ -206,9 +258,29 @@ pub fn note_mouse_delta(dx: f32, dy: f32) {
+ #[allow(non_snake_case)]
+ pub unsafe extern "C" fn CGGetLastMouseDelta(dx: *mut i32, dy: *mut i32) {
+     let mut delta = DELTA.lock().unwrap_or_else(|e| e.into_inner());
++    let before = *delta;
+     let (x, y) = (delta.0.trunc(), delta.1.trunc());
+     delta.0 -= x;
+     delta.1 -= y;
++    let remainder = *delta;
++    drop(delta);
++    let associated = crate::screen::mouse_is_associated();
++    if x != 0.0 || y != 0.0 {
++        crate::event::debug_log(&format!(
++            "CGGetLastMouseDelta returned ({x:.0},{y:.0}) remainder ({:.2},{:.2}) associated {}",
++            remainder.0, remainder.1, associated,
++        ));
++    }
++    if before != (0.0, 0.0) || x != 0.0 || y != 0.0 || !associated {
++        let source_trace_id = LAST_DELTA_TRACE_ID.load(std::sync::atomic::Ordering::Acquire);
++        crate::event::input_trace_with_id(
++            source_trace_id,
++            &format!(
++                "stage=CGGetLastMouseDelta delta_source_id={source_trace_id} pending_before=({:.3},{:.3}) returned=({x:.0},{y:.0}) remainder=({:.3},{:.3}) associated={associated}",
++                before.0, before.1, remainder.0, remainder.1,
++            ),
++        );
++    }
+     // SAFETY: the caller's out-parameters.
+     unsafe {
+         if !dx.is_null() {
+diff --git a/crates/appkit/src/controls.rs b/crates/appkit/src/controls.rs
+index 7366165..c1638f7 100644
+--- a/crates/appkit/src/controls.rs
++++ b/crates/appkit/src/controls.rs
+@@ -1487,6 +1487,12 @@ const SCROLLER_WIDTH: f64 = 15.0;
+ /// The small control size's scroller, which is the one size that differs.
+ const SMALL_SCROLLER_WIDTH: f64 = 11.0;
+ 
++const LEGACY_SCROLLER_STYLE: isize = 0;
++
++unsafe extern "C" fn scroller_preferred_style(_class: Id, _sel: Sel) -> isize {
++    LEGACY_SCROLLER_STYLE
++}
++
+ unsafe extern "C" fn scroller_width(_class: Id, _sel: Sel) -> f64 {
+     SCROLLER_WIDTH
+ }
+@@ -1499,6 +1505,18 @@ unsafe extern "C" fn scroller_width_for_control_size(_class: Id, _sel: Sel, size
+     }
+ }
+ 
++unsafe extern "C" fn scroller_width_for_control_size_and_style(
++    _receiver: Id,
++    _sel: Sel,
++    size: usize,
++    _style: isize,
++) -> f64 {
++    match size {
++        0 => SCROLLER_WIDTH,
++        _ => SMALL_SCROLLER_WIDTH,
++    }
++}
++
+ /// `-[NSScroller initWithFrame:]`, which is not the inherited one: a scroller
+ /// constrains the frame it is given.
+ ///
+@@ -1770,14 +1788,23 @@ pub(crate) fn install() {
+         "labelWithString:" => label_with_string, c"@24@0:8@16";
+     });
+ 
++    let class = objc::class::lookup(c"NSButtonCell").expect("declared before its methods");
++    methods!(class, {
++        "setButtonType:" => button_set_type, c"v24@0:8Q16";
++        "buttonType" => button_type, c"Q16@0:8";
++    });
++
+     let class = objc::class::lookup(c"NSScroller").expect("declared before its methods");
+     class_methods!(class, {
++        "preferredScrollerStyle" => scroller_preferred_style, c"q16@0:8";
+         "scrollerWidth" => scroller_width, c"d16@0:8";
+         "scrollerWidthForControlSize:" => scroller_width_for_control_size, c"d24@0:8Q16";
++        "scrollerWidthForControlSize:scrollerStyle:" => scroller_width_for_control_size_and_style, c"d32@0:8Q16q24";
+     });
+     methods!(class, {
+         "initWithFrame:" => scroller_init_with_frame,
+             c"@48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16";
++        "scrollerWidthForControlSize:scrollerStyle:" => scroller_width_for_control_size_and_style, c"d32@0:8Q16q24";
+         "setDoubleValue:" => scroller_set_double_value, c"v24@0:8d16";
+         "doubleValue" => scroller_double_value, c"d16@0:8";
+         "setFloatValue:" => scroller_set_float_value, c"v20@0:8f16";
+@@ -1951,7 +1978,41 @@ mod tests {
+                 scroller_width_for_control_size(std::ptr::null_mut(), sel, 1),
+                 SMALL_SCROLLER_WIDTH
+             );
++            let sel = objc::sel::get("scrollerWidthForControlSize:scrollerStyle:");
++            let instance = scroller(NSRect {
++                origin: NSPoint::default(),
++                size: NSSize {
++                    width: 100.0,
++                    height: 200.0,
++                },
++            });
++            assert_eq!(
++                scroller_width_for_control_size_and_style(instance, sel, 0, LEGACY_SCROLLER_STYLE),
++                SCROLLER_WIDTH
++            );
++            assert_eq!(
++                scroller_width_for_control_size_and_style(instance, sel, 1, LEGACY_SCROLLER_STYLE),
++                SMALL_SCROLLER_WIDTH
++            );
++            objc::arc::release(instance);
++        }
++    }
++
++    #[test]
++    fn button_cells_keep_their_button_type() {
++        crate::bootstrap();
++        let class = objc::class::lookup(c"NSButtonCell").expect("NSButtonCell");
++        let cell = objc::object::create_instance(class, 0);
++        let setter = objc::sel::get("setButtonType:");
++        let getter = objc::sel::get("buttonType");
++        assert!(class.method(setter).is_some());
++        assert!(class.method(getter).is_some());
++        // SAFETY: the selectors are the NSButtonCell accessors registered above.
++        unsafe {
++            button_set_type(cell, setter, 3);
++            assert_eq!(button_type(cell, getter), 3);
+         }
++        objc::arc::release(cell);
+     }
+ 
+     /// The knob takes its proportion of the slot and slides along the rest;
+diff --git a/crates/appkit/src/decor.rs b/crates/appkit/src/decor.rs
+index 7b15fa7..ff8b1ca 100644
+--- a/crates/appkit/src/decor.rs
++++ b/crates/appkit/src/decor.rs
+@@ -898,6 +898,9 @@ pub(crate) fn pointer_button(id: u32, button: u8, down: bool, clicks: u8, x: f32
+     if down && tracking_window().is_some() {
+         let on_title = matches!(located, Some((_, Some(Part::Menu(_) | Part::Overflow(_)))));
+         if !on_title {
++            crate::event::input_trace(&format!(
++                "stage=menu_dismiss_cause=outside_click window_id={id} button={button} point=({x:.1},{y:.1})"
++            ));
+             close_menus();
+             return true;
+         }
+@@ -912,8 +915,18 @@ pub(crate) fn pointer_button(id: u32, button: u8, down: bool, clicks: u8, x: f32
+         }
+         (true, Some(Part::Menu(title))) if button == LEFT => {
+             match tracking_title() == Some((row, title)) && tracking_window() == Some(window) {
+-                true => close_menus(),
+-                false => open_menu(window, row, title),
++                true => {
++                    crate::event::input_trace(&format!(
++                        "stage=menu_dismiss_cause=title_toggle window={window:p} title={title}"
++                    ));
++                    close_menus();
++                }
++                false => {
++                    crate::event::input_trace(&format!(
++                        "stage=menu_open_request window={window:p} title={title}"
++                    ));
++                    open_menu(window, row, title);
++                }
+             }
+         }
+         (true, Some(Part::Overflow(first))) if button == LEFT => {
+@@ -984,6 +997,9 @@ pub(crate) fn key(scancode: u32, down: bool) -> bool {
+ /// A window was asked to close; true when it was one of the menus'.
+ pub(crate) fn window_closed(id: u32) -> bool {
+     if tracking_popup(id) {
++        crate::event::input_trace(&format!(
++            "stage=menu_dismiss_cause=popup_window_closed window_id={id}"
++        ));
+         close_menus();
+         return true;
+     }
+@@ -998,11 +1014,19 @@ pub(crate) fn window_closed(id: u32) -> bool {
+ /// Focus moved to a window of the program's other than the one tracking a
+ /// menu, which is the program being used elsewhere.
+ pub(crate) fn focus_changed(id: u32, gained: bool) {
+-    if !gained || tracking_popup(id) {
++    let popup = tracking_popup(id);
++    let tracked_window = tracking_window();
++    crate::event::input_trace(&format!(
++        "stage=menu_focus_change window_id={id} gained={gained} popup={popup} tracked_window={tracked_window:?}"
++    ));
++    if !gained || popup {
+         return;
+     }
+     let window = crate::event::object_for(id);
+-    if !window.is_null() && tracking_window().is_some_and(|tracking| tracking != window) {
++    if !window.is_null() && tracked_window.is_some_and(|tracking| tracking != window) {
++        crate::event::input_trace(&format!(
++            "stage=menu_dismiss_cause=focus_change window_id={id} window={window:p}"
++        ));
+         close_menus();
+     }
+ }
+@@ -1353,8 +1377,12 @@ fn begin(window: Id, row: Row, title: usize, anchor: Rect, menu: Id, items: Vec<
+     // SAFETY: a window this crate made.
+     let parent = unsafe { crate::window::sdl_window(window) };
+     let Some(level) = make_level(parent, anchor.x, anchor.bottom(), menu, items) else {
++        crate::event::input_trace(&format!(
++            "stage=menu_open_failed window={window:p} title={title}"
++        ));
+         return;
+     };
++    let popup_id = level.popup_id;
+     TRACKING.with(|t| {
+         *t.borrow_mut() = Some(Tracking {
+             window,
+@@ -1365,6 +1393,9 @@ fn begin(window: Id, row: Row, title: usize, anchor: Rect, menu: Id, items: Vec<
+             chooser: 0,
+         })
+     });
++    crate::event::input_trace(&format!(
++        "stage=menu_opened window={window:p} title={title} popup_id={popup_id}"
++    ));
+ }
+ 
+ /// Build a panel for `items` and show it in a popup of `parent` at the given
+@@ -1490,10 +1521,26 @@ fn dump_popup(kind: &str, id: u32, surface: &sdl3::video::Presentation, pixels:
+ }
+ 
+ /// Tear down every open panel, telling each menu's delegate.
++#[track_caller]
+ pub(crate) fn close_menus() {
+     let Some(tracking) = TRACKING.with(|t| t.borrow_mut().take()) else {
+         return;
+     };
++    let caller = std::panic::Location::caller();
++    crate::event::input_trace(&format!(
++        "stage=menu_closed window={:p} title={} focus={} popup_ids={:?} caller={}:{}:{}",
++        tracking.window,
++        tracking.title,
++        tracking.focus,
++        tracking
++            .levels
++            .iter()
++            .map(|level| level.popup_id)
++            .collect::<Vec<_>>(),
++        caller.file(),
++        caller.line(),
++        caller.column(),
++    ));
+     for level in tracking.levels.into_iter().rev() {
+         close_level(level);
+     }
+diff --git a/crates/appkit/src/displaylink.rs b/crates/appkit/src/displaylink.rs
+index f395984..2c764ce 100644
+--- a/crates/appkit/src/displaylink.rs
++++ b/crates/appkit/src/displaylink.rs
+@@ -114,14 +114,22 @@ fn schedule(object: Id) {
+         return;
+     }
+     let interval = std::time::Duration::from_secs_f64(interval_of(link));
+-    let timer =
+-        corefoundation::runloop::new_timer(interval, Some(interval), Some(fire), object as usize);
+-    corefoundation::runloop::main().add_timer(&timer, corefoundation::runloop::DEFAULT_MODE);
+-    // The run loop's own reference, given back by `unschedule`.
+     objc::arc::retain(object);
++    let timer = corefoundation::runloop::new_timer_with_info_release(
++        interval,
++        Some(interval),
++        Some(fire),
++        object as usize,
++        Some(release_display_link),
++    );
++    corefoundation::runloop::main().add_timer(&timer, corefoundation::runloop::DEFAULT_MODE);
+     link.timer = Arc::into_raw(timer) as *const c_void;
+ }
+ 
++unsafe extern "C" fn release_display_link(info: *mut c_void) {
++    objc::arc::release(info as Id);
++}
++
+ /// Take the link off the loop; true if it was on one.
+ fn unschedule(object: Id) -> bool {
+     let link = link_of(object);
+@@ -134,7 +142,6 @@ fn unschedule(object: Id) -> bool {
+     link.timer = std::ptr::null();
+     corefoundation::runloop::main().remove_timer(&timer, corefoundation::runloop::DEFAULT_MODE);
+     timer.invalidate();
+-    objc::arc::release(object);
+     true
+ }
+ 
+diff --git a/crates/appkit/src/event.rs b/crates/appkit/src/event.rs
+index 663570d..e13c195 100644
+--- a/crates/appkit/src/event.rs
++++ b/crates/appkit/src/event.rs
+@@ -1,9 +1,23 @@
+ use foundation::geometry::NSPoint;
+ use objc::object::Id;
++use std::collections::VecDeque;
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::time::{Duration, Instant};
+ 
+ use crate::nsevent::{self, Fields, kind};
+ use crate::window;
+ 
++const MOUSE_LOOK_DELTA_SCALE: f32 = 0.003;
++
++fn mouse_look_delta_scale(buttons: u32, associated: bool) -> f32 {
++    let right_button = sdl3::mouse::mask(sdl3::mouse::RIGHT);
++    if !associated || buttons & right_button != 0 {
++        MOUSE_LOOK_DELTA_SCALE
++    } else {
++        1.0
++    }
++}
++
+ /// Drain SDL's queue once, delivering what this tree can deliver.
+ ///
+ /// `app` is the application, which is the object a window notification is posted
+@@ -205,10 +219,16 @@ fn trace_views() {
+     for object in window::all() {
+         // SAFETY: a window this crate made.
+         let sdl = unsafe { window::sdl_window(object) };
+-        let size = sdl3::video::window_size(sdl).unwrap_or((0, 0));
++        let title = sdl3::video::window_title(sdl)
++            .to_string_lossy()
++            .into_owned();
++        let position = window::global_position(sdl);
++        let size = sdl3::video::window_size(sdl);
++        let id = sdl3::video::window_id(sdl);
++        let flags = sdl3::video::window_flags(sdl);
+         out.push_str(&format!(
+-            "rosemary: appkit: window {object:p} sdl {}x{}\n",
+-            size.0, size.1
++            "rosemary: appkit: window {object:p} id={id} title={title:?} shown={} position={position:?} size={size:?} flags={flags:#x}\n",
++            window::is_shown(object),
+         ));
+         // SAFETY: null or a view this runtime allocated.
+         unsafe { crate::view::describe(window::content_view_of(object), 1, &mut out) };
+@@ -251,6 +271,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+         // title bar's close button is on a Mac: `-performClose:`, so the
+         // delegate may refuse and `-close` does the rest.
+         Event::WindowClosed { window } => {
++            let _trace_scope = InputTraceScope::begin();
++            input_trace(&format!("stage=window_closed window_id={window}"));
+             if crate::decor::window_closed(window) {
+                 return;
+             }
+@@ -341,6 +363,10 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+             }
+         }
+         Event::WindowFocus { window, gained } => {
++            let _trace_scope = InputTraceScope::begin();
++            input_trace(&format!(
++                "stage=window_focus window_id={window} gained={gained}"
++            ));
+             crate::decor::focus_changed(window, gained);
+             let object = object_for(window);
+             if !object.is_null() && gained {
+@@ -366,7 +392,14 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+             down,
+             repeat,
+         } => {
++            let _trace_scope = InputTraceScope::begin();
++            input_trace(&format!(
++                "stage=sdl_key window_id={id} scancode={scancode} key_sym={key:#x} down={down} repeat={repeat} modifiers={modifiers:#x}"
++            ));
+             if crate::decor::key(scancode, down) {
++                input_trace(&format!(
++                    "stage=key_decoration_consumed window_id={id} scancode={scancode} down={down}"
++                ));
+                 return;
+             }
+             let text = crate::keymap::characters(
+@@ -393,10 +426,14 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+             };
+             // A key equivalent is the menu's, offered before the key reaches
+             // the first responder, as `-[NSApplication sendEvent:]` does.
+-            if down
++            let equivalent_handled = down
+                 && !crate::keymap::is_modifier(scancode)
+-                && key_equivalent(object_for(id), fields(object_for(id)), &text)
+-            {
++                && key_equivalent(object_for(id), fields(object_for(id)), &text);
++            input_trace(&format!(
++                "stage=key_equivalent window_id={id} scancode={scancode} virtual_key={code} down={down} repeat={repeat} text_length={} handled={equivalent_handled}",
++                text.len(),
++            ));
++            if equivalent_handled {
+                 return;
+             }
+             // A modifier is `-flagsChanged:`, not a key down: AppKit has no
+@@ -441,11 +478,54 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+             buttons,
+         } => {
+             crate::cursor::mouse_moved();
+-            if take_warp_echo(x, y) {
++            let associated = crate::screen::mouse_is_associated();
++            let _trace_scope = (buttons != 0 || !associated).then(InputTraceScope::begin);
++            let expected_echo = pending_warp_target();
++            let (dx, dy, warp_echo, adjusted_echo) = match take_warp_echo(x, y, dx, dy) {
++                WarpEchoResult::None => (dx, dy, false, None),
++                WarpEchoResult::Consumed { target } => (dx, dy, true, Some((target, None))),
++                WarpEchoResult::Adjusted { target, delta } => {
++                    (delta.0, delta.1, false, Some((target, Some(delta))))
++                }
++            };
++            if buttons != 0 || !associated || warp_echo || adjusted_echo.is_some() {
++                input_trace(&format!(
++                    "stage=warp_echo_check window_id={id} expected={expected_echo:?} event=({x:.3},{y:.3}) consumed={warp_echo} adjusted={adjusted_echo:?}"
++                ));
++            }
++            if warp_echo {
+                 return;
+             }
+-            crate::cgevent::note_mouse_delta(dx, dy);
++            let delta_scale = mouse_look_delta_scale(buttons, associated);
++            let (camera_dx, camera_dy) = (dx * delta_scale, dy * delta_scale);
++            if buttons != 0 || !associated {
++                let previous = pointer_position();
++                let relative = crate::window::sdl_windows()
++                    .into_iter()
++                    .find(|window| sdl3::video::window_id(*window) == id)
++                    .is_some_and(sdl3::video::relative_mouse_mode);
++                debug_log(&format!(
++                    "mouse motion id {id} raw ({x:.2},{y:.2}) delta ({dx:.2},{dy:.2}) buttons {buttons:#x} associated {associated} relative {relative} pointer ({:.2},{:.2})",
++                    previous.0, previous.1,
++                ));
++                input_trace(&format!(
++                    "stage=sdl_motion window_id={id} raw=({x:.3},{y:.3}) delta=({dx:.3},{dy:.3}) camera_delta=({camera_dx:.3},{camera_dy:.3}) scale={delta_scale:.2} buttons={buttons:#x} associated={associated} relative={relative} pointer_before=({:.3},{:.3})",
++                    previous.0, previous.1,
++                ));
++            }
++            crate::cgevent::note_mouse_delta(camera_dx, camera_dy);
+             crate::screen::hold_at_edge(id, x, y, dx, dy);
++            // Update the coordinate frame before a window drag reads the global
++            // pointer: on Wayland SDL reports the pointer relative to this event's
++            // window, which may differ from the one that sent the last event.
++            let (x, y) = track_pointer(id, x, y);
++            if buttons != 0 || !associated {
++                input_trace(&format!(
++                    "stage=sdl_motion_mapped window_id={id} location_delivered=({x:.3},{y:.3}) frozen_pointer={:?} buttons={buttons:#x} associated={}",
++                    pointer_position(),
++                    crate::screen::mouse_is_associated(),
++                ));
++            }
+             // SDL's position keeps integrating the deltas of a disassociated
+             // pointer, so it wanders over the chrome while the cursor the
+             // program sees sits still. The chrome is for a pointer that moves.
+@@ -454,21 +534,21 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+                 false => false,
+             };
+             crate::cursor::set_over_chrome(on_chrome);
+-            if on_chrome {
+-                return;
+-            }
+             // A window being dragged by `-performWindowDragWithEvent:` consumes
+             // the move: it moved the window, and AppKit does not also report it
+-            // as a drag inside the window it just moved.
++            // as a drag inside the window it just moved. Do this before returning
++            // for chrome, because the drag can carry the pointer across it.
+             if crate::window::drag_moved() {
+                 return;
+             }
++            if on_chrome {
++                return;
++            }
+             let held = crate::button::held(buttons);
+             // A disassociated pointer reports the deltas and none of the
+             // movement: the location a guest reads back is where the cursor was
+             // when it broke the link, which is what CoreGraphics does and what
+             // SDL, still tracking a position inside the window, does not.
+-            let (x, y) = track_pointer(id, x, y);
+             // Before the drop below: a cursor rectangle applies whether or not
+             // anything asked for `-mouseMoved:`, and AppKit re-decides the
+             // pointer on every move rather than only when a rectangle changes.
+@@ -479,8 +559,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+                 modifiers: current_modifiers(),
+                 location,
+                 delta: NSPoint {
+-                    x: dx as f64,
+-                    y: dy as f64,
++                    x: camera_dx as f64,
++                    y: camera_dy as f64,
+                 },
+                 button: held.map_or(0, crate::button::number),
+                 window,
+@@ -494,7 +574,7 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+                 let window = object_for(id);
+                 let areas = crate::cursor::mouse_moved_areas(window);
+                 if !areas.is_empty() {
+-                    let location = location(window, x, y);
++                    let location = location(window, x as f64, y as f64);
+                     for area in &areas {
+                         dispatch(window, nsevent::make(fields(window, location, *area)));
+                     }
+@@ -523,20 +603,36 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+             x,
+             y,
+         } => {
++            let _trace_scope = InputTraceScope::begin();
++            // End the drag even when the decoration consumes this button event.
++            if !down {
++                crate::window::end_drag();
++            }
++            let associated = crate::screen::mouse_is_associated();
++            let relative = crate::window::sdl_windows()
++                .into_iter()
++                .find(|window| sdl3::video::window_id(*window) == id)
++                .is_some_and(sdl3::video::relative_mouse_mode);
++            let previous = pointer_position();
++            debug_log(&format!(
++                "mouse button id {id} button {button} down {down} clicks {clicks} raw ({x:.2},{y:.2}) associated {associated} relative {relative} pointer ({:.2},{:.2})",
++                previous.0, previous.1,
++            ));
++            input_trace(&format!(
++                "stage=sdl_button window_id={id} button={button} down={down} clicks={clicks} raw=({x:.3},{y:.3}) associated={associated} relative={relative} pointer_before=({:.3},{:.3})",
++                previous.0, previous.1,
++            ));
+             // The point the guest sees: a disassociated pointer's click lands
+             // where its cursor froze, not where SDL's integrated position is.
+             let (cx, cy) = track_pointer(id, x, y);
++            input_trace(&format!(
++                "stage=sdl_button_mapped window_id={id} raw=({x:.3},{y:.3}) mapped=({cx:.3},{cy:.3}) associated={}",
++                crate::screen::mouse_is_associated(),
++            ));
+             if crate::decor::pointer_button(id, button, down, clicks, cx, cy) {
+                 return;
+             }
+             let kind = crate::button::event_kind(button, down);
+-            // The release ends a window drag. The event is still delivered: a
+-            // guest that started the drag from its own `-mouseDown:` is holding
+-            // a button as far as it knows, and swallowing the up would leave it
+-            // there.
+-            if !down {
+-                crate::window::end_drag();
+-            }
+             let (x, y) = track_pointer(id, x, y);
+             send(id, Some((x, y)), |window, location| Fields {
+                 kind,
+@@ -655,7 +751,7 @@ fn key_equivalent(window: Id, fields: Fields, text: &str) -> bool {
+ ///
+ /// The base coordinate system is the whole frame, so a titlebar this runtime
+ /// draws is above the content view's top.
+-fn location(window: Id, x: f32, y: f32) -> NSPoint {
++pub(crate) fn location(window: Id, x: f64, y: f64) -> NSPoint {
+     let content = window::content_view_of(window);
+     let height = match content.is_null() {
+         true => 0.0,
+@@ -669,7 +765,7 @@ fn location(window: Id, x: f32, y: f32) -> NSPoint {
+         },
+     };
+     let height = height + window::content_inset(window);
+-    crate::geometry::point_in_window(x as f64, y as f64, height)
++    crate::geometry::point_in_window(x, y, height)
+ }
+ 
+ /// Hand one input event to its window, as `-[NSApplication sendEvent:]` does.
+@@ -678,7 +774,9 @@ fn send(id: u32, at: Option<(f32, f32)>, fields: impl FnOnce(Id, NSPoint) -> Fie
+     if window.is_null() {
+         return;
+     }
+-    let point = at.map(|(x, y)| location(window, x, y)).unwrap_or_default();
++    let point = at
++        .map(|(x, y)| location(window, x as f64, y as f64))
++        .unwrap_or_default();
+     dispatch(window, nsevent::make(fields(window, point)));
+ }
+ 
+@@ -699,7 +797,25 @@ pub(crate) fn dispatch(window: Id, event: Id) {
+     unsafe {
+         let f: unsafe extern "C" fn(Id, objc::sel::Sel, Id) =
+             std::mem::transmute(objc::msg::entry());
+-        f(window, sel, event);
++        trace_event("dispatch.before", window, event);
++        crate::application::with_current_event(event, || {
++            input_trace(&format!(
++                "stage=dispatch.enter event={event:p} current={:p} current_matches={}",
++                crate::application::current_event_id(),
++                crate::application::current_event_id() == event,
++            ));
++            f(window, sel, event);
++            input_trace(&format!(
++                "stage=dispatch.return event={event:p} current={:p} current_matches={}",
++                crate::application::current_event_id(),
++                crate::application::current_event_id() == event,
++            ));
++        });
++        input_trace(&format!(
++            "stage=dispatch.restored event={event:p} current={:p} current_matches={}",
++            crate::application::current_event_id(),
++            crate::application::current_event_id() == event,
++        ));
+     }
+ }
+ 
+@@ -716,6 +832,94 @@ pub(crate) fn dispatch(window: Id, event: Id) {
+ /// log file once it is running - takes every later trace line with it, and
+ /// input arrives long after that.
+ pub const LOG_ENV: &str = "ROSEMARY_EVENT_LOG";
++const INPUT_TRACE_ENV: &str = "ROSEMARY_INPUT_TRACE";
++
++static NEXT_INPUT_TRACE_ID: AtomicU64 = AtomicU64::new(1);
++static LAST_INPUT_TRACE_ID: AtomicU64 = AtomicU64::new(0);
++static LAST_INPUT_TRACE_TIME_US: AtomicU64 = AtomicU64::new(0);
++const RECENT_INPUT_TRACE_WINDOW_US: u64 = 250_000;
++
++thread_local! {
++    static INPUT_TRACE_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
++}
++
++struct InputTraceScope {
++    previous: u64,
++}
++
++impl InputTraceScope {
++    fn begin() -> Self {
++        let previous = INPUT_TRACE_ID.with(std::cell::Cell::get);
++        if !input_trace_enabled() {
++            return Self { previous };
++        }
++        let id = NEXT_INPUT_TRACE_ID.fetch_add(1, Ordering::Relaxed);
++        LAST_INPUT_TRACE_ID.store(id, Ordering::Relaxed);
++        LAST_INPUT_TRACE_TIME_US.store(trace_elapsed_us(), Ordering::Relaxed);
++        INPUT_TRACE_ID.with(|active| active.set(id));
++        Self { previous }
++    }
++}
++
++impl Drop for InputTraceScope {
++    fn drop(&mut self) {
++        INPUT_TRACE_ID.with(|active| active.set(self.previous));
++    }
++}
++
++fn input_trace_enabled() -> bool {
++    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ENABLED.get_or_init(|| {
++        std::env::var(INPUT_TRACE_ENV)
++            .map(|value| value != "" && value != "0")
++            .unwrap_or(false)
++    })
++}
++
++pub(crate) fn input_trace(line: &str) {
++    if !input_trace_enabled() {
++        return;
++    }
++    let id = INPUT_TRACE_ID.with(std::cell::Cell::get);
++    if id == 0 {
++        return;
++    }
++    input_trace_with_id(id, line);
++}
++
++pub(crate) fn input_trace_with_id(id: u64, line: &str) {
++    if !input_trace_enabled() || id == 0 {
++        return;
++    }
++    let elapsed_us = trace_elapsed_us();
++    debug_log(&format!("input_trace t_us={elapsed_us} id={id} {line}"));
++}
++
++fn trace_elapsed_us() -> u64 {
++    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
++    START
++        .get_or_init(std::time::Instant::now)
++        .elapsed()
++        .as_micros()
++        .min(u64::MAX as u128) as u64
++}
++
++pub(crate) fn recent_input_trace_id() -> u64 {
++    if !input_trace_enabled() {
++        return 0;
++    }
++    let now = trace_elapsed_us();
++    let last = LAST_INPUT_TRACE_TIME_US.load(Ordering::Relaxed);
++    if now.saturating_sub(last) <= RECENT_INPUT_TRACE_WINDOW_US {
++        LAST_INPUT_TRACE_ID.load(Ordering::Relaxed)
++    } else {
++        0
++    }
++}
++
++pub(crate) fn current_input_trace_id() -> u64 {
++    INPUT_TRACE_ID.with(std::cell::Cell::get)
++}
+ 
+ fn log_path() -> Option<&'static std::path::Path> {
+     static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+@@ -737,10 +941,69 @@ pub fn debug_log(line: &str) {
+     }
+ }
+ 
++fn trace_event(stage: &str, window: Id, event: Id) {
++    if !input_trace_enabled() {
++        return;
++    }
++    let Some(fields) = nsevent::fields_of(event) else {
++        input_trace(&format!("stage={stage} event={event:p} fields=unavailable"));
++        return;
++    };
++    let content = window::content_view_of(window);
++    let (bounds, frame) = match content.is_null() {
++        true => (
++            foundation::geometry::NSRect::default(),
++            foundation::geometry::NSRect::default(),
++        ),
++        false => (
++            crate::view::bounds_of(content),
++            crate::view::frame_of(content),
++        ),
++    };
++    let sdl = window::sdl_windows()
++        .into_iter()
++        .find(|sdl| window::window_for(*sdl) == window);
++    let (window_id, position, size) = sdl.map_or((0, None, None), |sdl| {
++        (
++            sdl3::video::window_id(sdl),
++            window::global_position(sdl),
++            sdl3::video::window_size(sdl),
++        )
++    });
++    let scale = window::backing_scale_factor_of(window);
++    let current = crate::application::current_event_id();
++    input_trace(&format!(
++        "stage={stage} event={event:p} current={current:p} current_matches={} window={window:p} sdl_id={window_id} sdl_origin={position:?} sdl_size={size:?} kind={} button={} clicks={} key_code={} repeat={} modifiers={:#x} location_window=({:.3},{:.3}) location_backing=({:.3},{:.3}) delta=({:.3},{:.3}) delta_backing=({:.3},{:.3}) backing_scale={scale:.3} content_frame=({:.3},{:.3},{:.3},{:.3}) content_bounds=({:.3},{:.3},{:.3},{:.3})",
++        current == event,
++        fields.kind,
++        fields.button,
++        fields.clicks,
++        fields.key_code,
++        fields.repeat,
++        fields.modifiers,
++        fields.location.x,
++        fields.location.y,
++        fields.location.x * scale,
++        fields.location.y * scale,
++        fields.delta.x,
++        fields.delta.y,
++        fields.delta.x * scale,
++        fields.delta.y * scale,
++        frame.origin.x,
++        frame.origin.y,
++        frame.size.width,
++        frame.size.height,
++        bounds.origin.x,
++        bounds.origin.y,
++        bounds.size.width,
++        bounds.size.height,
++    ));
++}
++
+ /// What [`route`] is about to do with an event, for [`LOG_ENV`]: where it is,
+ /// which tracking area it came from, and the view under it.
+ fn log_route(window: Id, event: Id, kind: u64) {
+-    if log_path().is_none() {
++    if log_path().is_none() || current_input_trace_id() == 0 {
+         return;
+     }
+     let at = nsevent::location_of(event);
+@@ -763,6 +1026,45 @@ fn log_route(window: Id, event: Id, kind: u64) {
+         local.x,
+         local.y,
+     ));
++    input_trace(&format!(
++        "stage=route_location event={event:p} kind={kind} window={window:p} location_window=({:.3},{:.3}) tracking_area={:p} hit={hit:p} hit_class={class} hit_frame=({:.3},{:.3},{:.3},{:.3}) hit_local=({:.3},{:.3})",
++        at.x,
++        at.y,
++        nsevent::tracking_area_of(event),
++        rect.origin.x,
++        rect.origin.y,
++        rect.size.width,
++        rect.size.height,
++        local.x,
++        local.y,
++    ));
++    if matches!(
++        kind,
++        kind::LEFT_MOUSE_DOWN | kind::RIGHT_MOUSE_DOWN | kind::OTHER_MOUSE_DOWN
++    ) {
++        let mut ancestor = hit;
++        for depth in 0..12 {
++            if ancestor.is_null() {
++                break;
++            }
++            let ancestor_class = unsafe { objc::object::class_of(ancestor) }
++                .map_or("-", objc::class::Class::name_str);
++            let ancestor_frame = crate::view::rect_in_window(ancestor);
++            let ancestor_bounds = crate::view::bounds_of(ancestor);
++            debug_log(&format!(
++                "route_ancestor depth={depth} view={ancestor:p} class={ancestor_class} frame=({:.1},{:.1},{:.1},{:.1}) bounds=({:.1},{:.1},{:.1},{:.1})",
++                ancestor_frame.origin.x,
++                ancestor_frame.origin.y,
++                ancestor_frame.size.width,
++                ancestor_frame.size.height,
++                ancestor_bounds.origin.x,
++                ancestor_bounds.origin.y,
++                ancestor_bounds.size.width,
++                ancestor_bounds.size.height,
++            ));
++            ancestor = unsafe { crate::view::superview_of(ancestor) };
++        }
++    }
+ }
+ 
+ pub fn route(window: Id, event: Id) {
+@@ -790,12 +1092,37 @@ pub fn route(window: Id, event: Id) {
+             );
+         }
+         if let Some(method) = method {
++            let receiver_class = unsafe { objc::object::class_of(owner) };
++            let method_owner = receiver_class.and_then(|class| {
++                class.chain().find(|class| {
++                    class
++                        .own_method(sel)
++                        .is_some_and(|candidate| std::ptr::eq(candidate, method))
++                })
++            });
++            input_trace(&format!(
++                "stage=route_call selector={selector} receiver={owner:p} receiver_class={} method_owner={} imp={:p} event={event:p} current_matches={}",
++                receiver_class.map_or("none", objc::class::Class::name_str),
++                method_owner.map_or("none", objc::class::Class::name_str),
++                method.implementation(),
++                crate::application::current_event_id() == event,
++            ));
++            let started = std::time::Instant::now();
+             // SAFETY: every tracking method is `void (id, SEL, NSEvent *)`.
+             unsafe {
+                 let f: unsafe extern "C" fn(Id, objc::sel::Sel, Id) =
+                     std::mem::transmute(method.implementation());
+                 f(owner, sel, event);
+             }
++            input_trace(&format!(
++                "stage=route_return selector={selector} receiver={owner:p} event={event:p} elapsed_us={}",
++                started.elapsed().as_micros(),
++            ));
++        } else {
++            input_trace(&format!(
++                "stage=route_target selector={selector} receiver={owner:p} result=unhandled event={event:p} current_matches={}",
++                crate::application::current_event_id() == event,
++            ));
+         }
+         return;
+     }
+@@ -807,11 +1134,43 @@ pub fn route(window: Id, event: Id) {
+         false => responder_of(window),
+     };
+     let Some((responder, method)) = chain(start, sel) else {
++        if matches!(
++            kind,
++            kind::LEFT_MOUSE_DOWN
++                | kind::LEFT_MOUSE_UP
++                | kind::RIGHT_MOUSE_DOWN
++                | kind::RIGHT_MOUSE_UP
++                | kind::OTHER_MOUSE_DOWN
++                | kind::OTHER_MOUSE_UP
++        ) {
++            debug_log(&format!(
++                "route target kind {kind} selector {selector} start {start:p} none"
++            ));
++        }
+         if tracing() {
+             eprintln!("rosemary: appkit: -{selector}: nothing from {start:p} up implements it");
+         }
++        input_trace(&format!(
++            "stage=route_target selector={selector} start={start:p} result=unhandled event={event:p} current_matches={}",
++            crate::application::current_event_id() == event,
++        ));
+         return;
+     };
++    if matches!(
++        kind,
++        kind::LEFT_MOUSE_DOWN
++            | kind::LEFT_MOUSE_UP
++            | kind::RIGHT_MOUSE_DOWN
++            | kind::RIGHT_MOUSE_UP
++            | kind::OTHER_MOUSE_DOWN
++            | kind::OTHER_MOUSE_UP
++    ) {
++        let class = unsafe { objc::object::class_of(responder) };
++        debug_log(&format!(
++            "route target kind {kind} selector {selector} responder {responder:p} class {}",
++            class.map_or("no class", |class| class.name_str()),
++        ));
++    }
+     if tracing() {
+         // SAFETY: a live object this runtime allocated.
+         let class = unsafe { objc::object::class_of(responder) };
+@@ -820,12 +1179,32 @@ pub fn route(window: Id, event: Id) {
+             class.map_or("no class", |c| c.name_str()),
+         );
+     }
++    let receiver_class = unsafe { objc::object::class_of(responder) };
++    let method_owner = receiver_class.and_then(|class| {
++        class.chain().find(|class| {
++            class
++                .own_method(sel)
++                .is_some_and(|candidate| std::ptr::eq(candidate, method))
++        })
++    });
++    input_trace(&format!(
++        "stage=route_call selector={selector} start={start:p} receiver={responder:p} receiver_class={} method_owner={} imp={:p} event={event:p} current_matches={}",
++        receiver_class.map_or("none", objc::class::Class::name_str),
++        method_owner.map_or("none", objc::class::Class::name_str),
++        method.implementation(),
++        crate::application::current_event_id() == event,
++    ));
++    let started = std::time::Instant::now();
+     // SAFETY: every responder method here is `void (id, SEL, NSEvent *)`.
+     unsafe {
+         let f: unsafe extern "C" fn(Id, objc::sel::Sel, Id) =
+             std::mem::transmute(method.implementation());
+         f(responder, sel, event);
+     }
++    input_trace(&format!(
++        "stage=route_return selector={selector} receiver={responder:p} event={event:p} elapsed_us={}",
++        started.elapsed().as_micros(),
++    ));
+ }
+ 
+ /// The responder method an event type is delivered through.
+@@ -910,23 +1289,131 @@ pub(crate) fn warp_pointer(x: f32, y: f32) {
+ /// synchronously, X11 reports the server's MotionNotify), with a delta of
+ /// `target - previous`. A game that recentres the cursor after every
+ /// `-mouseMoved:` would read that delta as the player undoing their own motion.
+-static WARP_ECHO: std::sync::Mutex<Option<(f32, f32)>> = std::sync::Mutex::new(None);
++#[derive(Clone, Copy)]
++struct WarpEcho {
++    from: (f32, f32),
++    to: (f32, f32),
++    armed_at: Instant,
++}
++
++#[derive(Clone, Copy, Debug, PartialEq)]
++enum WarpEchoResult {
++    None,
++    Consumed {
++        target: (f32, f32),
++    },
++    Adjusted {
++        target: (f32, f32),
++        delta: (f32, f32),
++    },
++}
++
++const WARP_ECHO_LIFETIME: Duration = Duration::from_millis(50);
++const WARP_ECHO_RESIDUAL_LIMIT: f32 = 32.0;
++const WARP_ECHO_DELTA_TOLERANCE: f32 = 2.0;
++const MAX_PENDING_WARP_ECHOES: usize = 32;
++
++static WARP_ECHOES: std::sync::Mutex<VecDeque<WarpEcho>> = std::sync::Mutex::new(VecDeque::new());
+ 
+ /// Swallow the next motion event that lands on `to`, in window coordinates.
+ /// Nothing is armed when `from` is already there: SDL drops a warp that moves
+ /// nothing, and a stale echo would eat the next real motion to reach `to`.
+ pub(crate) fn expect_warp_echo(from: (f32, f32), to: (f32, f32)) {
+     let echo = (!lands_on(from, to)).then_some(to);
+-    *WARP_ECHO.lock().unwrap_or_else(|e| e.into_inner()) = echo;
++    let trace_id = match current_input_trace_id() {
++        0 => recent_input_trace_id(),
++        id => id,
++    };
++    input_trace_with_id(
++        trace_id,
++        &format!("stage=warp_echo_armed from={from:?} to={to:?} expected={echo:?}"),
++    );
++    if echo.is_some() {
++        enqueue_warp_echo(
++            &mut WARP_ECHOES.lock().unwrap_or_else(|e| e.into_inner()),
++            from,
++            to,
++            Instant::now(),
++        );
++    }
++}
++
++fn pending_warp_target() -> Option<(f32, f32)> {
++    WARP_ECHOES
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .back()
++        .map(|echo| echo.to)
+ }
+ 
+-fn take_warp_echo(x: f32, y: f32) -> bool {
+-    let mut echo = WARP_ECHO.lock().unwrap_or_else(|e| e.into_inner());
+-    let hit = echo.is_some_and(|target| lands_on(target, (x, y)));
+-    if hit {
+-        *echo = None;
++fn take_warp_echo(x: f32, y: f32, dx: f32, dy: f32) -> WarpEchoResult {
++    let now = Instant::now();
++    let mut echoes = WARP_ECHOES.lock().unwrap_or_else(|e| e.into_inner());
++    take_warp_echo_from_queue(&mut echoes, x, y, dx, dy, now)
++}
++
++fn enqueue_warp_echo(
++    echoes: &mut VecDeque<WarpEcho>,
++    from: (f32, f32),
++    to: (f32, f32),
++    now: Instant,
++) {
++    discard_expired_warp_echoes(echoes, now);
++    echoes.push_back(WarpEcho {
++        from,
++        to,
++        armed_at: now,
++    });
++    while echoes.len() > MAX_PENDING_WARP_ECHOES {
++        echoes.pop_front();
+     }
+-    hit
++}
++
++fn take_warp_echo_from_queue(
++    echoes: &mut VecDeque<WarpEcho>,
++    x: f32,
++    y: f32,
++    dx: f32,
++    dy: f32,
++    now: Instant,
++) -> WarpEchoResult {
++    discard_expired_warp_echoes(echoes, now);
++
++    if let Some(index) = echoes.iter().position(|echo| lands_on(echo.to, (x, y))) {
++        let echo = echoes
++            .remove(index)
++            .expect("warp echo index came from this queue");
++        return WarpEchoResult::Consumed { target: echo.to };
++    }
++
++    let adjusted = echoes.iter().enumerate().find_map(|(index, echo)| {
++        let residual = (x - echo.to.0, y - echo.to.1);
++        let expected_delta = (echo.to.0 - echo.from.0, echo.to.1 - echo.from.1);
++        let observed_from_warp = (x - echo.from.0, y - echo.from.1);
++        let delta_matches_warp = (dx - observed_from_warp.0).abs() <= WARP_ECHO_DELTA_TOLERANCE
++            && (dy - observed_from_warp.1).abs() <= WARP_ECHO_DELTA_TOLERANCE;
++        let residual_is_small = residual.0.abs() <= WARP_ECHO_RESIDUAL_LIMIT
++            && residual.1.abs() <= WARP_ECHO_RESIDUAL_LIMIT;
++
++        (residual_is_small && delta_matches_warp).then_some((index, echo.to, expected_delta))
++    });
++
++    if let Some((index, target, expected_delta)) = adjusted {
++        echoes.remove(index);
++        return WarpEchoResult::Adjusted {
++            target,
++            delta: (dx - expected_delta.0, dy - expected_delta.1),
++        };
++    }
++
++    WarpEchoResult::None
++}
++
++fn discard_expired_warp_echoes(echoes: &mut VecDeque<WarpEcho>, now: Instant) {
++    echoes.retain(|echo| {
++        now.checked_duration_since(echo.armed_at)
++            .is_some_and(|age| age <= WARP_ECHO_LIFETIME)
++    });
+ }
+ 
+ /// Within half a pixel: SDL converts between desktop and window coordinates.
+@@ -950,25 +1437,35 @@ pub(crate) fn pointer_position() -> (f32, f32) {
+ /// cursor never was - which is a hit test, and so a first responder, against the
+ /// wrong view.
+ fn track_pointer(window: u32, x: f32, y: f32) -> (f32, f32) {
++    if !crate::screen::mouse_is_associated() {
++        return pointer_position();
++    }
+     POINTER_WINDOW.store(window, std::sync::atomic::Ordering::Relaxed);
+     let mut pointer = POINTER.lock().unwrap_or_else(|e| e.into_inner());
+-    if crate::screen::mouse_is_associated() {
+-        *pointer = (x, y);
+-    }
++    *pointer = (x, y);
+     *pointer
+ }
+ 
+ /// Where the guest is to be told the pointer is on the desktop, for the calls
+ /// that ask the window system rather than reading an event.
++pub(crate) fn desktop_pointer() -> Option<(f32, f32)> {
++    let id = POINTER_WINDOW.load(std::sync::atomic::Ordering::Relaxed);
++    if id == 0 {
++        return None;
++    }
++    let sdl = window::sdl_windows()
++        .into_iter()
++        .find(|window| sdl3::video::window_id(*window) == id)?;
++    let (origin_x, origin_y) = window::global_position(sdl)?;
++    let (x, y) = pointer_position();
++    Some((x + origin_x as f32, y + origin_y as f32))
++}
++
+ pub(crate) fn frozen_pointer() -> Option<(f32, f32)> {
+     if crate::screen::mouse_is_associated() {
+         return None;
+     }
+-    let (x, y) = *POINTER.lock().unwrap_or_else(|e| e.into_inner());
+-    let origin = pointer_window()
+-        .and_then(window::global_position)
+-        .unwrap_or((0, 0));
+-    Some((x + origin.0 as f32, y + origin.1 as f32))
++    desktop_pointer()
+ }
+ 
+ /// The SDL id of the window the last pointer event came from; `0` before any.
+@@ -1141,12 +1638,74 @@ mod tests {
+ 
+     #[test]
+     fn a_warp_echo_is_taken_once() {
+-        expect_warp_echo((400.0, 300.0), (400.0, 300.0));
+-        assert!(!take_warp_echo(400.0, 300.0));
+-        expect_warp_echo((0.0, 0.0), (400.0, 300.0));
+-        assert!(!take_warp_echo(405.0, 300.0));
+-        assert!(take_warp_echo(400.2, 299.9));
+-        assert!(!take_warp_echo(400.0, 300.0));
++        let mut echoes = VecDeque::new();
++        let now = Instant::now();
++        assert_eq!(
++            take_warp_echo_from_queue(&mut echoes, 400.0, 300.0, 0.0, 0.0, now),
++            WarpEchoResult::None
++        );
++        enqueue_warp_echo(&mut echoes, (0.0, 0.0), (400.0, 300.0), now);
++        assert_eq!(
++            take_warp_echo_from_queue(&mut echoes, 435.0, 300.0, 435.0, 300.0, now),
++            WarpEchoResult::None
++        );
++        assert_eq!(
++            take_warp_echo_from_queue(&mut echoes, 400.2, 299.9, 400.2, 299.9, now),
++            WarpEchoResult::Consumed {
++                target: (400.0, 300.0)
++            }
++        );
++        assert_eq!(
++            take_warp_echo_from_queue(&mut echoes, 400.0, 300.0, 0.0, 0.0, now),
++            WarpEchoResult::None
++        );
++    }
++
++    #[test]
++    fn a_warp_echo_with_late_pointer_motion_only_delivers_the_real_motion() {
++        let mut echoes = VecDeque::new();
++        let now = Instant::now();
++        let from = (1320.973, 392.012);
++        let target = (1416.0, 369.0);
++        enqueue_warp_echo(&mut echoes, from, target, now);
++
++        let event = (1429.0, 365.0);
++        let result =
++            take_warp_echo_from_queue(&mut echoes, event.0, event.1, 108.027, -27.012, now);
++        match result {
++            WarpEchoResult::Adjusted {
++                target: adjusted_target,
++                delta,
++            } => {
++                assert_eq!(adjusted_target, target);
++                assert!((delta.0 - (event.0 - target.0)).abs() < 0.001);
++                assert!((delta.1 - (event.1 - target.1)).abs() < 0.001);
++            }
++            other => panic!("unexpected warp result: {other:?}"),
++        }
++    }
++
++    #[test]
++    fn a_real_move_near_an_old_warp_target_is_not_reduced() {
++        let mut echoes = VecDeque::new();
++        let now = Instant::now();
++        enqueue_warp_echo(&mut echoes, (1330.0, 375.0), (1416.0, 369.0), now);
++        assert_eq!(
++            take_warp_echo_from_queue(&mut echoes, 1385.785, 375.805, -5.398, 0.0, now,),
++            WarpEchoResult::None
++        );
++    }
++
++    #[test]
++    fn camera_motion_is_scaled_only_while_captured_or_right_dragging() {
++        let right = sdl3::mouse::mask(sdl3::mouse::RIGHT);
++        assert_eq!(mouse_look_delta_scale(right, true), 0.003);
++        assert_eq!(mouse_look_delta_scale(0, false), 0.003);
++        assert_eq!(mouse_look_delta_scale(0, true), 1.0);
++        assert_eq!(
++            mouse_look_delta_scale(sdl3::mouse::mask(sdl3::mouse::LEFT), true),
++            1.0
++        );
+     }
+ 
+     /// Every name this crate publishes has a delegate method, so a notification
+diff --git a/crates/appkit/src/font.rs b/crates/appkit/src/font.rs
+index 5457954..321ec93 100644
+--- a/crates/appkit/src/font.rs
++++ b/crates/appkit/src/font.rs
+@@ -102,6 +102,18 @@ unsafe extern "C" fn system_font_size(_class: Id, _sel: Sel) -> f64 {
+     13.0
+ }
+ 
++unsafe extern "C" fn system_font_size_for_control_size(
++    _class: Id,
++    _sel: Sel,
++    control_size: isize,
++) -> f64 {
++    match control_size {
++        1 => 11.0,
++        2 => 9.0,
++        _ => 13.0,
++    }
++}
++
+ unsafe fn autorelease(font: *const std::ffi::c_void) -> Id {
+     if font.is_null() {
+         return std::ptr::null_mut();
+@@ -159,6 +171,7 @@ pub(crate) fn install() {
+         "monospacedSystemFontOfSize:weight:" => monospaced_system_font_of_size, c"@32@0:8d16d24";
+         "userFixedPitchFontOfSize:" => user_fixed_pitch_font_of_size, c"@24@0:8d16";
+         "systemFontSize" => system_font_size, c"d16@0:8";
++        "systemFontSizeForControlSize:" => system_font_size_for_control_size, c"d24@0:8q16";
+     });
+ 
+     let class = objc::class::lookup(c"NSFontManager").expect("declared before its methods");
+@@ -207,4 +220,28 @@ mod tests {
+             corefoundation::api::CFRelease(face.cast());
+         }
+     }
++
++    #[test]
++    fn system_font_size_matches_control_size() {
++        crate::bootstrap();
++        let selector = objc::sel::get("systemFontSizeForControlSize:");
++        let class = objc::class::lookup(c"NSFont").unwrap();
++        assert!(class.metaclass().method(selector).is_some());
++        assert_eq!(
++            unsafe { system_font_size_for_control_size(std::ptr::null_mut(), selector, 0) },
++            13.0
++        );
++        assert_eq!(
++            unsafe { system_font_size_for_control_size(std::ptr::null_mut(), selector, 1) },
++            11.0
++        );
++        assert_eq!(
++            unsafe { system_font_size_for_control_size(std::ptr::null_mut(), selector, 2) },
++            9.0
++        );
++        assert_eq!(
++            unsafe { system_font_size_for_control_size(std::ptr::null_mut(), selector, 99) },
++            13.0
++        );
++    }
+ }
+diff --git a/crates/appkit/src/keymap.rs b/crates/appkit/src/keymap.rs
+index bca585e..d2f4542 100644
+--- a/crates/appkit/src/keymap.rs
++++ b/crates/appkit/src/keymap.rs
+@@ -265,7 +265,6 @@ pub fn modifiers(sdl_modifiers: u16) -> u64 {
+         (keymod::ALT, flags::OPTION),
+         (keymod::GUI, flags::COMMAND),
+         (keymod::CAPS, flags::CAPS_LOCK),
+-        (keymod::NUM, flags::NUMERIC_PAD),
+         (keymod::LCTRL, flags::DEVICE_LCTL),
+         (keymod::RCTRL, flags::DEVICE_RCTL),
+         (keymod::LSHIFT, flags::DEVICE_LSHIFT),
+@@ -424,6 +423,11 @@ mod tests {
+         assert_eq!(modifiers(keymod::NONE), 0);
+     }
+ 
++    #[test]
++    fn num_lock_is_not_the_numeric_keypad_modifier() {
++        assert_eq!(modifiers(keymod::NUM), 0);
++    }
++
+     #[test]
+     fn the_modifier_keys_are_the_modifiers() {
+         assert!(is_modifier(scancode::LSHIFT));
+diff --git a/crates/appkit/src/nsevent.rs b/crates/appkit/src/nsevent.rs
+index cf2184c..644aec8 100644
+--- a/crates/appkit/src/nsevent.rs
++++ b/crates/appkit/src/nsevent.rs
+@@ -249,6 +249,26 @@ pub fn kind_of(event: Id) -> u64 {
+     unsafe { event_of(event) }.map_or(0, |e| e.kind)
+ }
+ 
++pub(crate) fn fields_of(event: Id) -> Option<Fields> {
++    let event = unsafe { event_of(event) }?;
++    Some(Fields {
++        kind: event.kind,
++        modifiers: event.modifiers,
++        location: event.location,
++        delta: event.delta,
++        window: event.window,
++        characters: event.characters,
++        key_code: event.key_code,
++        button: event.button,
++        clicks: event.clicks,
++        repeat: event.repeat,
++        subtype: event.subtype,
++        data1: event.data1,
++        data2: event.data2,
++        tracking_area: event.tracking_area,
++    })
++}
++
+ /// The tracking area an enter, exit or cursor-update event is about, or null.
+ pub fn tracking_area_of(event: Id) -> Id {
+     // SAFETY: null or a live object this runtime allocated.
+@@ -389,6 +409,13 @@ unsafe extern "C" fn other_event(
+     event
+ }
+ 
++unsafe extern "C" fn event_with_cg_event(_class: Id, _sel: Sel, event: Id) -> Id {
++    let Some(fields) = crate::cgevent::event_fields(event) else {
++        return std::ptr::null_mut();
++    };
++    make(fields)
++}
++
+ pub(crate) fn install() {
+     let class = objc::class::lookup(c"NSEvent").expect("declared before its methods");
+     crate::define::class_methods!(class, {
+@@ -396,6 +423,7 @@ pub(crate) fn install() {
+         "mouseLocation" => mouse_location, c"{CGPoint=dd}16@0:8";
+         "pressedMouseButtons" => pressed_mouse_buttons, c"Q16@0:8";
+         "doubleClickInterval" => double_click_interval, c"d16@0:8";
++        "eventWithCGEvent:" => event_with_cg_event, c"@24@0:8^v16";
+         "enterExitEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:trackingNumber:userData:"
+             => enter_exit_event, c"@96@0:8Q16{CGPoint=dd}24Q40d48q56@64q72q80^v88";
+         "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"
+diff --git a/crates/appkit/src/view.rs b/crates/appkit/src/view.rs
+index 7040a80..41435d9 100644
+--- a/crates/appkit/src/view.rs
++++ b/crates/appkit/src/view.rs
+@@ -50,6 +50,7 @@ pub struct View {
+     /// [`WANTS_LAYER`] and [`BACKING_LAYER`], and `-setLayerContentsPlacement:`
+     /// from [`PLACEMENT_SHIFT`] up.
+     layer_backing: usize,
++    clipping: u8,
+ }
+ 
+ /// The bits of [`View::layer_backing`]: the view asked for a layer, and the
+@@ -58,6 +59,8 @@ pub struct View {
+ const WANTS_LAYER: usize = 1;
+ const BACKING_LAYER: usize = 2;
+ const PLACEMENT_SHIFT: u32 = 8;
++const CLIPPING_ENABLED: u8 = 1;
++const CLIPPING_EXPLICIT: u8 = 2;
+ 
+ /// The bits of [`View::posts`].
+ const POSTS_FRAME: usize = 1;
+@@ -916,7 +919,7 @@ pub unsafe fn children(view: Id) -> Vec<Id> {
+ }
+ 
+ unsafe fn hit(view: Id, point: NSPoint, depth: usize) -> Id {
+-    if !is_view(view) || depth > 32 {
++    if !is_view(view) || depth > 32 || is_hidden_or_has_hidden_ancestor(view) {
+         return std::ptr::null_mut();
+     }
+     // A guest's own `-hitTest:` is the answer where it has one: a view that
+@@ -942,6 +945,9 @@ unsafe fn hit(view: Id, point: NSPoint, depth: usize) -> Id {
+ /// The inherited `NSView` hit-test behavior, without redispatching an override
+ /// on `view`. This distinction matters when that override calls `super`.
+ unsafe fn hit_base(view: Id, point: NSPoint, depth: usize) -> Id {
++    if !is_view(view) || depth > 32 || is_hidden_or_has_hidden_ancestor(view) {
++        return std::ptr::null_mut();
++    }
+     let frame = view_of(view).frame;
+     if !contains(frame, point) {
+         return std::ptr::null_mut();
+@@ -1160,15 +1166,80 @@ unsafe extern "C" fn set_bounds(receiver: Id, _sel: Sel, bounds: NSRect) {
+     note_geometry_change(receiver, before);
+ }
+ 
+-/// `-visibleRect`: the part of the view not clipped away by an ancestor.
+-///
+-/// The bounds, because nothing in this tree clips: there is no scroll view and
+-/// no clip view with a smaller frame, so every view is wholly visible. A guest
+-/// sizing a viewport from this gets the same answer it would from `-bounds`,
+-/// which is what it would get from AppKit for a view that fills its window.
+-unsafe extern "C" fn visible_rect(receiver: Id, sel: Sel) -> NSRect {
+-    // SAFETY: `-bounds` is `NSRect (id, SEL)`.
+-    unsafe { bounds(receiver, sel) }
++pub(crate) fn clips_to_bounds_of(receiver: Id) -> bool {
++    let clipping = view_of(receiver).clipping;
++    if clipping & CLIPPING_EXPLICIT != 0 {
++        return clipping & CLIPPING_ENABLED != 0;
++    }
++    unsafe { objc::object::class_of(receiver) }.is_some_and(|class| {
++        class
++            .chain()
++            .any(|ancestor| ancestor.name_str() == "NSClipView")
++    })
++}
++
++unsafe extern "C" fn clips_to_bounds(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(clips_to_bounds_of(receiver))
++}
++
++unsafe extern "C" fn set_clips_to_bounds(receiver: Id, _sel: Sel, clips: u8) {
++    view_of(receiver).clipping = CLIPPING_EXPLICIT | u8::from(clips != 0);
++    crate::backing::needs_display(receiver);
++}
++
++fn intersect_rects(first: NSRect, second: NSRect) -> NSRect {
++    let x = first.origin.x.max(second.origin.x);
++    let y = first.origin.y.max(second.origin.y);
++    let right = (first.origin.x + first.size.width).min(second.origin.x + second.size.width);
++    let top = (first.origin.y + first.size.height).min(second.origin.y + second.size.height);
++    NSRect {
++        origin: NSPoint { x, y },
++        size: NSSize {
++            width: (right - x).max(0.0),
++            height: (top - y).max(0.0),
++        },
++    }
++}
++
++unsafe extern "C" fn visible_rect(receiver: Id, _sel: Sel) -> NSRect {
++    if is_hidden_or_has_hidden_ancestor(receiver) {
++        return NSRect::default();
++    }
++    let mut chain = Vec::new();
++    let mut current = receiver;
++    for _ in 0..64 {
++        if !is_view(current) {
++            break;
++        }
++        chain.push(current);
++        current = view_of(current).superview;
++    }
++    let root = chain.last().copied().unwrap_or(receiver);
++    let window = unsafe { window_of(receiver) };
++    let sdl = unsafe { crate::window::sdl_window(window) };
++    let mut visible = if let Some((width, height)) = sdl3::video::window_size(sdl) {
++        rect_between(
++            NSRect {
++                origin: NSPoint::default(),
++                size: NSSize {
++                    width: f64::from(width),
++                    height: (f64::from(height) - crate::window::content_inset(window)).max(0.0),
++                },
++            },
++            |point| point_from_window(receiver, point),
++        )
++    } else {
++        convert_rect(bounds_of(root), root, receiver)
++    };
++    for ancestor in chain {
++        if clips_to_bounds_of(ancestor) {
++            visible = intersect_rects(
++                visible,
++                convert_rect(bounds_of(ancestor), ancestor, receiver),
++            );
++        }
++    }
++    visible
+ }
+ 
+ /// `-convertRectToBacking:`, which is the whole reason a Retina program asks a
+@@ -1846,6 +1917,8 @@ pub(crate) fn install() {
+         "setFrameSize:" => set_frame_size, c"v32@0:8{CGSize=dd}16";
+         "setFrameOrigin:" => set_frame_origin, c"v32@0:8{CGPoint=dd}16";
+         "bounds" => bounds, c"{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8";
++        "clipsToBounds" => clips_to_bounds, c"c16@0:8";
++        "setClipsToBounds:" => set_clips_to_bounds, c"v20@0:8c16";
+         "visibleRect" => visible_rect, c"{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8";
+         "setBounds:" => set_bounds, c"v48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16";
+         "convertRectToBacking:" => convert_rect_to_backing,
+@@ -1986,6 +2059,70 @@ mod tests {
+         (superview, subview)
+     }
+ 
++    #[test]
++    fn hidden_views_do_not_receive_hits() {
++        let (parent, child) = tree(rect(0.0, 0.0, 100.0, 100.0), rect(0.0, 0.0, 50.0, 50.0), 0);
++        let point = NSPoint { x: 10.0, y: 10.0 };
++        view_of(child).hidden = 1;
++        assert_eq!(unsafe { hit_test(parent, point) }, parent);
++        view_of(child).hidden = 0;
++        view_of(parent).hidden = 1;
++        assert!(unsafe { hit_test(parent, point) }.is_null());
++        objc::arc::release(parent);
++    }
++
++    #[test]
++    fn clipping_selectors_are_inherited_and_control_visible_rect() {
++        crate::bootstrap();
++        let class = corefoundation::base::register(
++            c"RosemaryClippingRegressionView",
++            objc::class::lookup(c"NSView"),
++            INSTANCE_SIZE,
++            false,
++        );
++        let parent = view(rect(0.0, 0.0, 100.0, 100.0));
++        let child = objc::object::create_instance(class, 0);
++        unsafe {
++            init_with_frame(
++                child,
++                objc::sel::get("initWithFrame:"),
++                rect(80.0, 10.0, 40.0, 30.0),
++            );
++            add_subview(parent, objc::sel::get("addSubview:"), child);
++            let get: unsafe extern "C" fn(Id, Sel) -> u8 = std::mem::transmute(objc::msg::entry());
++            let set: unsafe extern "C" fn(Id, Sel, u8) = std::mem::transmute(objc::msg::entry());
++            assert_eq!(get(child, objc::sel::get("clipsToBounds")), 0);
++            set(child, objc::sel::get("setClipsToBounds:"), 1);
++            assert_eq!(get(child, objc::sel::get("clipsToBounds")), 1);
++            assert_eq!(
++                visible_rect(child, objc::sel::get("visibleRect")),
++                rect(0.0, 0.0, 20.0, 30.0)
++            );
++            set(child, objc::sel::get("setClipsToBounds:"), 0);
++            assert_eq!(get(child, objc::sel::get("clipsToBounds")), 0);
++            assert_eq!(
++                visible_rect(child, objc::sel::get("visibleRect")),
++                rect(-80.0, -10.0, 100.0, 100.0)
++            );
++            assert!(hit_base(parent, NSPoint { x: 110.0, y: 20.0 }, 0).is_null());
++        }
++        objc::arc::release(child);
++        objc::arc::release(parent);
++    }
++
++    #[test]
++    fn clip_views_clip_by_default_and_allow_explicit_changes() {
++        crate::bootstrap();
++        let class = objc::class::lookup(c"NSClipView").unwrap();
++        let clip = objc::object::create_instance(class, 0);
++        assert!(clips_to_bounds_of(clip));
++        unsafe {
++            set_clips_to_bounds(clip, objc::sel::get("setClipsToBounds:"), 0);
++        }
++        assert!(!clips_to_bounds_of(clip));
++        objc::arc::release(clip);
++    }
++
+     /// A view starts opaque, reads back the clamped alpha it was given, and
+     /// fades its subviews with it.
+     #[test]
+diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
+index ea9454f..aac5ccc 100644
+--- a/crates/appkit/src/window.rs
++++ b/crates/appkit/src/window.rs
+@@ -21,6 +21,7 @@ pub struct Window {
+     level: isize,
+     accepts_mouse_moved: usize,
+     shown: usize,
++    closed: usize,
+     /// `NSWindowCollectionBehavior`, which a program reads back to decide
+     /// whether it may go full screen.
+     collection_behavior: usize,
+@@ -42,6 +43,8 @@ pub struct Window {
+     /// panel *is* one of these - and one word costs less than a side table
+     /// keyed by address.
+     becomes_key_only_if_needed: usize,
++    hides_on_deactivate: usize,
++    hides_on_deactivate_set: usize,
+     /// `-setAlphaValue:`, with [`Window::alpha_set`] saying whether it was ever
+     /// given one - a fresh window is fully opaque, and zero is a legal alpha, so
+     /// the field cannot carry its own default.
+@@ -73,6 +76,16 @@ pub struct Window {
+     window_controller: Id,
+ }
+ 
++struct Sheet {
++    parent: usize,
++    window: usize,
++    completion: usize,
++}
++
++static SHEETS: std::sync::Mutex<Vec<Sheet>> = std::sync::Mutex::new(Vec::new());
++
++const BLOCK_INVOKE_OFFSET: usize = 16;
++
+ pub const INSTANCE_SIZE: usize = size_of::<Window>();
+ 
+ /// The notification names a window posts.
+@@ -278,18 +291,16 @@ fn placed_origin(sdl: sdl3::Window) -> Option<(i32, i32)> {
+ 
+ /// The pointer on the desktop, in SDL's coordinates, and the held buttons.
+ ///
+-/// Measured from the window the pointer is in rather than asked of SDL, whose
+-/// global answer on Wayland adds its own placeholder origin instead of the one
+-/// [`global_position`] reports.
++/// On Wayland, SDL's mouse state is relative to the focused window while the
++/// last pointer event is relative to the window it names. Use the event's
++/// coordinate frame for position and SDL only for the button mask.
+ pub(crate) fn desktop_mouse_state() -> Option<(f32, f32, u32)> {
+     if !sdl3::video::is_wayland() {
+         return sdl3::video::global_mouse_state();
+     }
+-    let (x, y, buttons) = sdl3::video::mouse_state()?;
+-    let origin = crate::event::pointer_window()
+-        .and_then(global_position)
+-        .unwrap_or((0, 0));
+-    Some((x + origin.0 as f32, y + origin.1 as f32, buttons))
++    let (x, y) = crate::event::desktop_pointer()?;
++    let buttons = sdl3::video::mouse_state().map_or(0, |(_, _, buttons)| buttons);
++    Some((x, y, buttons))
+ }
+ 
+ /// The reverse: a desktop position as the offset SDL wants for this window.
+@@ -412,6 +423,29 @@ pub fn all() -> Vec<Id> {
+         .collect()
+ }
+ 
++/// Every window still open, in the order it was made.
++pub fn open_windows() -> Vec<Id> {
++    WINDOWS
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .iter()
++        .filter_map(|(_, object)| {
++            let object = *object as Id;
++            (window_of(object).closed == 0).then_some(object)
++        })
++        .collect()
++}
++
++fn mark_closed(receiver: Id) {
++    let windows = WINDOWS.lock().unwrap_or_else(|e| e.into_inner());
++    if windows
++        .iter()
++        .any(|(_, object)| *object == receiver as usize)
++    {
++        window_of(receiver).closed = 1;
++    }
++}
++
+ /// The SDL window behind an `NSWindow`, or null.
+ ///
+ /// # Safety
+@@ -1280,6 +1314,97 @@ unsafe extern "C" fn make_key_and_order_front(receiver: Id, _sel: Sel, _sender:
+     order_front(receiver, true);
+ }
+ 
++unsafe extern "C" fn begin_sheet(receiver: Id, _sel: Sel, sheet: Id, completion: Id) {
++    if receiver.is_null() || sheet.is_null() || unsafe { sdl_window(sheet) }.is_null() {
++        return;
++    }
++    let completion = if completion.is_null() {
++        std::ptr::null_mut()
++    } else {
++        objc::block::copy(completion)
++    };
++    let old = {
++        let mut sheets = SHEETS.lock().unwrap_or_else(|e| e.into_inner());
++        let old = sheets
++            .iter()
++            .position(|entry| entry.parent == receiver as usize || entry.window == sheet as usize)
++            .map(|index| sheets.remove(index).completion);
++        sheets.push(Sheet {
++            parent: receiver as usize,
++            window: sheet as usize,
++            completion: completion as usize,
++        });
++        old
++    };
++    if let Some(old) = old.filter(|block| *block != 0) {
++        objc::block::release(old as Id);
++    }
++    trace!("{receiver:p} began sheet {sheet:p}");
++    unsafe { make_key_and_order_front(sheet, objc::sel::get("makeKeyAndOrderFront:"), receiver) };
++}
++
++fn finish_sheet(parent: Id, sheet: Id, response: isize) {
++    let completion = {
++        let mut sheets = SHEETS.lock().unwrap_or_else(|e| e.into_inner());
++        sheets
++            .iter()
++            .position(|entry| entry.parent == parent as usize && entry.window == sheet as usize)
++            .map(|index| sheets.remove(index).completion)
++    };
++    if !unsafe { sdl_window(sheet) }.is_null() {
++        unsafe { order_out(sheet, objc::sel::get("orderOut:"), std::ptr::null_mut()) };
++    }
++    trace!("{parent:p} ended sheet {sheet:p} with response {response}");
++    let Some(completion) = completion
++        .filter(|block| *block != 0)
++        .map(|block| block as Id)
++    else {
++        return;
++    };
++    let invoke = unsafe { *((completion as *const u8).add(BLOCK_INVOKE_OFFSET) as *const usize) };
++    if invoke != 0 {
++        let callback: unsafe extern "C" fn(Id, isize) = unsafe { std::mem::transmute(invoke) };
++        unsafe { callback(completion, response) };
++    }
++    objc::block::release(completion);
++}
++
++unsafe extern "C" fn end_sheet(receiver: Id, _sel: Sel, sheet: Id) {
++    finish_sheet(receiver, sheet, 0);
++}
++
++unsafe extern "C" fn end_sheet_with_response(receiver: Id, _sel: Sel, sheet: Id, response: isize) {
++    finish_sheet(receiver, sheet, response);
++}
++
++unsafe extern "C" fn attached_sheet(receiver: Id, _sel: Sel) -> Id {
++    SHEETS
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .iter()
++        .find(|entry| entry.parent == receiver as usize)
++        .map_or(std::ptr::null_mut(), |entry| entry.window as Id)
++}
++
++unsafe extern "C" fn sheet_parent(receiver: Id, _sel: Sel) -> Id {
++    SHEETS
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .iter()
++        .find(|entry| entry.window == receiver as usize)
++        .map_or(std::ptr::null_mut(), |entry| entry.parent as Id)
++}
++
++unsafe extern "C" fn is_sheet(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(
++        SHEETS
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .iter()
++            .any(|entry| entry.window == receiver as usize),
++    )
++}
++
+ unsafe extern "C" fn order_front_regardless(receiver: Id, _sel: Sel) {
+     order_front(receiver, false);
+ }
+@@ -1401,7 +1526,18 @@ unsafe extern "C" fn dealloc(receiver: Id, sel: Sel) {
+ /// `-close`: the delegate hears `-windowWillClose:` while the window is still
+ /// on screen, and the application then decides whether that was its last one.
+ unsafe extern "C" fn close(receiver: Id, sel: Sel) {
++    if let Some(parent) = SHEETS
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .iter()
++        .find(|entry| entry.window == receiver as usize)
++        .map(|entry| entry.parent as Id)
++    {
++        finish_sheet(parent, receiver, 0);
++    }
+     crate::event::post_for(receiver, WILL_CLOSE);
++    mark_closed(receiver);
++    trace!("{receiver:p} closed");
+     // SAFETY: `-orderOut:` is `void (id, SEL, id)`.
+     unsafe { order_out(receiver, sel, std::ptr::null_mut()) };
+     crate::application::window_closed();
+@@ -1524,7 +1660,7 @@ unsafe extern "C" fn perform_window_drag_with_event(receiver: Id, _sel: Sel, _ev
+         return;
+     }
+     let (Some((pointer_x, pointer_y, _)), Some((origin_x, origin_y))) = (
+-        sdl3::video::global_mouse_state(),
++        desktop_mouse_state(),
+         sdl3::video::window_position(window.sdl),
+     ) else {
+         return;
+@@ -1573,7 +1709,7 @@ pub(crate) fn drag_moved() -> bool {
+     if sdl.is_null() {
+         return false;
+     }
+-    let Some((x, y, _)) = sdl3::video::global_mouse_state() else {
++    let Some((x, y, _)) = desktop_mouse_state() else {
+         return false;
+     };
+     let at = |start: i32, from: f32, to: f32| start + (to - from).round() as i32;
+@@ -1608,6 +1744,21 @@ unsafe extern "C" fn set_becomes_key_only_if_needed(receiver: Id, _sel: Sel, val
+     window_of(receiver).becomes_key_only_if_needed = value as usize;
+ }
+ 
++unsafe extern "C" fn hides_on_deactivate(receiver: Id, _sel: Sel) -> u8 {
++    let window = window_of(receiver);
++    if window.hides_on_deactivate_set == 0 {
++        is_panel(receiver) as u8
++    } else {
++        window.hides_on_deactivate as u8
++    }
++}
++
++unsafe extern "C" fn set_hides_on_deactivate(receiver: Id, _sel: Sel, value: u8) {
++    let window = window_of(receiver);
++    window.hides_on_deactivate = value as usize;
++    window.hides_on_deactivate_set = 1;
++}
++
+ unsafe extern "C" fn is_key_window(receiver: Id, _sel: Sel) -> u8 {
+     (key_window() == receiver) as u8
+ }
+@@ -1636,6 +1787,10 @@ unsafe extern "C" fn backing_scale_factor(receiver: Id, _sel: Sel) -> CGFloat {
+     }
+ }
+ 
++pub(crate) fn backing_scale_factor_of(window: Id) -> CGFloat {
++    unsafe { backing_scale_factor(window, objc::sel::get("backingScaleFactor")) }
++}
++
+ fn scale_rect(rect: NSRect, scale: CGFloat) -> NSRect {
+     NSRect {
+         origin: NSPoint {
+@@ -2318,9 +2473,12 @@ pub(crate) fn install() {
+         "isKeyWindow" => is_key_window, c"c16@0:8";
+         "isMainWindow" => is_key_window, c"c16@0:8";
+         "isVisible" => is_visible, c"c16@0:8";
+-        // No window is ever attached as a sheet: nothing implements -beginSheet:.
+-        "isSheet" => no, c"c16@0:8";
+-        "attachedSheet" => nil, c"@16@0:8";
++        "beginSheet:completionHandler:" => begin_sheet, c"v32@0:8@16@?24";
++        "endSheet:" => end_sheet, c"v24@0:8@16";
++        "endSheet:returnCode:" => end_sheet_with_response, c"v32@0:8@16q24";
++        "attachedSheet" => attached_sheet, c"@16@0:8";
++        "sheetParent" => sheet_parent, c"@16@0:8";
++        "isSheet" => is_sheet, c"c16@0:8";
+         "screen" => screen, c"@16@0:8";
+         "backingScaleFactor" => backing_scale_factor, c"d16@0:8";
+         "convertRectToBacking:" => convert_rect_to_backing,
+@@ -2335,9 +2493,10 @@ pub(crate) fn install() {
+         "setLevel:" => set_level, c"v24@0:8q16";
+         "styleMask" => style_mask, c"Q16@0:8";
+         "setStyleMask:" => set_style_mask, c"v24@0:8Q16";
++        "hidesOnDeactivate" => hides_on_deactivate, c"c16@0:8";
++        "setHidesOnDeactivate:" => set_hides_on_deactivate, c"v20@0:8c16";
+         "setReleasedWhenClosed:" => ignored_flag, c"v20@0:8c16";
+         "setOpaque:" => ignored_flag, c"v20@0:8c16";
+-        "setHidesOnDeactivate:" => ignored_flag, c"v20@0:8c16";
+         "setRestorable:" => ignored_flag, c"v20@0:8c16";
+         // No state restoration, so nothing ever asks the class to restore.
+         "setRestorationClass:" => ignored_integer, c"v24@0:8#16";
+@@ -2434,6 +2593,40 @@ pub(crate) fn install() {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn window_registers_sheet_lifecycle_selectors() {
++        crate::bootstrap();
++        let class = objc::class::lookup(c"NSWindow").expect("NSWindow");
++        for name in [
++            "beginSheet:completionHandler:",
++            "endSheet:",
++            "endSheet:returnCode:",
++            "attachedSheet",
++            "sheetParent",
++            "isSheet",
++        ] {
++            assert!(
++                class.method(objc::sel::get(name)).is_some(),
++                "NSWindow does not implement {name}"
++            );
++        }
++    }
++
++    #[test]
++    fn closed_windows_are_excluded_from_application_enumeration() {
++        crate::bootstrap();
++        let window =
++            objc::object::create_instance(objc::class::lookup(c"NSWindow").expect("NSWindow"), 0);
++        WINDOWS
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .push((0, window as usize));
++        assert!(open_windows().contains(&window));
++        mark_closed(window);
++        assert!(!open_windows().contains(&window));
++        objc::arc::release(window);
++    }
++
+     /// What a window is, is read off its style mask and its level together -
+     /// and is read again at every ordering, because a toolkit reuses one window
+     /// as a dialog and then as a tooltip.
+@@ -2579,6 +2772,34 @@ mod tests {
+         objc::arc::release(panel);
+     }
+ 
++    #[test]
++    fn windows_and_panels_keep_hides_on_deactivate_with_platform_defaults() {
++        crate::bootstrap();
++        let window =
++            objc::object::create_instance(objc::class::lookup(c"NSWindow").expect("NSWindow"), 0);
++        let panel =
++            objc::object::create_instance(objc::class::lookup(c"NSPanel").expect("NSPanel"), 0);
++        let get = objc::sel::get("hidesOnDeactivate");
++        let set = objc::sel::get("setHidesOnDeactivate:");
++        // SAFETY: these selectors are the getter and setter on the two objects made above.
++        unsafe {
++            assert_eq!(hides_on_deactivate(window, get), 0);
++            assert_eq!(hides_on_deactivate(panel, get), 1);
++            set_hides_on_deactivate(panel, set, 0);
++            assert_eq!(hides_on_deactivate(panel, get), 0);
++            set_hides_on_deactivate(window, set, 1);
++            assert_eq!(hides_on_deactivate(window, get), 1);
++        }
++        assert!(
++            objc::class::lookup(c"NSWindow")
++                .and_then(|class| class.method(get))
++                .is_some(),
++            "the property belongs to NSWindow and is inherited by panels"
++        );
++        objc::arc::release(panel);
++        objc::arc::release(window);
++    }
++
+     /// A view that outlives its window must not answer `-window` with it:
+     /// Studio's dock panels are freed while Qt still holds their views.
+     #[test]
+diff --git a/crates/corefoundation/src/collections.rs b/crates/corefoundation/src/collections.rs
+index b34a9da..17c463b 100644
+--- a/crates/corefoundation/src/collections.rs
++++ b/crates/corefoundation/src/collections.rs
+@@ -420,7 +420,7 @@ pub fn boolean(value: bool) -> CFTypeRef {
+             kind: number_type::CHAR,
+         };
+         let object = make(boolean_class(), body);
+-        objc::arc::retain(object as objc::object::Id);
++        objc::arc::make_immortal(object as objc::object::Id);
+         object as usize
+     }) as CFTypeRef
+ }
+diff --git a/crates/corefoundation/src/lib.rs b/crates/corefoundation/src/lib.rs
+index da2f3cf..3a3f9dc 100644
+--- a/crates/corefoundation/src/lib.rs
++++ b/crates/corefoundation/src/lib.rs
+@@ -1240,6 +1240,22 @@ mod collection_tests {
+         }
+     }
+ 
++    #[test]
++    fn boolean_constants_remain_valid_after_release() {
++        bootstrap();
++        let object = collections::boolean(true);
++        // SAFETY: this is the process-lifetime `kCFBooleanTrue` singleton.
++        unsafe {
++            api::CFRelease(object);
++            api::CFRelease(object);
++            assert_eq!(api::CFBooleanGetValue(object), 1);
++        }
++        assert_eq!(
++            objc::arc::retain_count(object as objc::object::Id),
++            usize::MAX
++        );
++    }
++
+     /// The constant numbers clang lays out are numbers to CoreFoundation too,
+     /// and an integer's encoding gives its type.
+     #[test]
+diff --git a/crates/corefoundation/src/runloop.rs b/crates/corefoundation/src/runloop.rs
+index 10b24ac..a54be77 100644
+--- a/crates/corefoundation/src/runloop.rs
++++ b/crates/corefoundation/src/runloop.rs
+@@ -14,6 +14,7 @@ use crate::base::CFTypeRef;
+ /// `shims::corefoundation` - so nothing here ever holds a guest address.
+ pub type Perform = unsafe extern "C" fn(*mut c_void);
+ pub type TimerCallback = unsafe extern "C" fn(CFTypeRef, *mut c_void);
++pub type TimerInfoRelease = unsafe extern "C" fn(*mut c_void);
+ 
+ /// A version-0 source: a flag, and what to do when it is set.
+ pub struct Source {
+@@ -66,6 +67,7 @@ pub struct Timer {
+     interval: Option<Duration>,
+     callback: Option<TimerCallback>,
+     info: usize,
++    release_info: Option<TimerInfoRelease>,
+     valid: AtomicBool,
+ }
+ 
+@@ -136,6 +138,14 @@ impl Timer {
+     }
+ }
+ 
++impl Drop for Timer {
++    fn drop(&mut self) {
++        if let Some(release) = self.release_info {
++            unsafe { release(self.info as *mut c_void) };
++        }
++    }
++}
++
+ /// `CFRunLoopObserverCallBack`.
+ pub type ObserverCallback = unsafe extern "C" fn(CFTypeRef, u32, *mut c_void);
+ 
+@@ -661,12 +671,23 @@ pub fn new_timer(
+     interval: Option<Duration>,
+     callback: Option<TimerCallback>,
+     info: usize,
++) -> Arc<Timer> {
++    new_timer_with_info_release(after, interval, callback, info, None)
++}
++
++pub fn new_timer_with_info_release(
++    after: Duration,
++    interval: Option<Duration>,
++    callback: Option<TimerCallback>,
++    info: usize,
++    release_info: Option<TimerInfoRelease>,
+ ) -> Arc<Timer> {
+     let timer = Arc::new(Timer {
+         next: Mutex::new(Instant::now() + after),
+         interval,
+         callback,
+         info,
++        release_info,
+         valid: AtomicBool::new(true),
+     });
+     note(Arc::as_ptr(&timer));
+@@ -777,6 +798,26 @@ mod tests {
+         assert_eq!(calls(), 1);
+     }
+ 
++    #[test]
++    fn timer_info_lives_until_in_flight_run_loop_snapshots_are_dropped() {
++        static RELEASES: AtomicUsize = AtomicUsize::new(0);
++        unsafe extern "C" fn release_info(_info: *mut c_void) {
++            RELEASES.fetch_add(1, Ordering::SeqCst);
++        }
++
++        let loop_ = Arc::new(RunLoop::new());
++        let timer =
++            new_timer_with_info_release(Duration::from_secs(10), None, None, 0, Some(release_info));
++        loop_.add_timer(&timer, DEFAULT_MODE);
++        let in_flight = loop_.contents(DEFAULT_MODE).1;
++        loop_.remove_timer(&timer, DEFAULT_MODE);
++        timer.invalidate();
++        drop(timer);
++        assert_eq!(RELEASES.load(Ordering::SeqCst), 0);
++        drop(in_flight);
++        assert_eq!(RELEASES.load(Ordering::SeqCst), 1);
++    }
++
+     #[test]
+     fn the_next_timer_is_the_soonest_valid_one_in_the_mode() {
+         let (_, _, tick) = counter!();
+diff --git a/crates/metal_translate/src/spirv/half.rs b/crates/metal_translate/src/spirv/half.rs
+index 358b043..8c2ffa1 100644
+--- a/crates/metal_translate/src/spirv/half.rs
++++ b/crates/metal_translate/src/spirv/half.rs
+@@ -11,9 +11,10 @@ use crate::passes::Substitution;
+ /// to change or it can't be changed.
+ pub(super) fn widen(module: &Module) -> Option<Module> {
+     let any = module.globals.iter().any(|global| has_half(&global.ty))
+-        || module.functions.iter().any(|function| {
+-            has_half(&function.result) || function.values.iter().any(has_half)
+-        });
++        || module
++            .functions
++            .iter()
++            .any(|function| has_half(&function.result) || function.values.iter().any(has_half));
+     if !any {
+         return None;
+     }
+diff --git a/crates/objc/src/arc.rs b/crates/objc/src/arc.rs
+index 15e1f10..082dcc6 100644
+--- a/crates/objc/src/arc.rs
++++ b/crates/objc/src/arc.rs
+@@ -1,4 +1,4 @@
+-use std::collections::HashMap;
++use std::collections::{HashMap, HashSet};
+ use std::ffi::c_void;
+ use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, RwLock};
+ 
+@@ -8,10 +8,32 @@ use crate::object::Id;
+ static COUNTS: LazyLock<Mutex<HashMap<usize, usize>>> =
+     LazyLock::new(|| Mutex::new(HashMap::new()));
+ 
++static IMMORTAL: LazyLock<RwLock<HashSet<usize>>> = LazyLock::new(|| RwLock::new(HashSet::new()));
++
+ fn counts() -> MutexGuard<'static, HashMap<usize, usize>> {
+     COUNTS.lock().unwrap_or_else(|e| e.into_inner())
+ }
+ 
++fn is_immortal(object: Id) -> bool {
++    IMMORTAL
++        .read()
++        .unwrap_or_else(|e| e.into_inner())
++        .contains(&(object as usize))
++}
++
++/// Keep a process-lifetime object outside normal reference counting.
++pub fn make_immortal(object: Id) -> Id {
++    if object.is_null() {
++        return object;
++    }
++    crate::debug::validate(object, "makeImmortal");
++    IMMORTAL
++        .write()
++        .unwrap_or_else(|e| e.into_inner())
++        .insert(object as usize);
++    object
++}
++
+ /// How an `OS_object` counts references: `(retain, release, count)`.
+ ///
+ /// A dispatch object keeps its count in its own header, where `dispatch_retain`
+@@ -44,6 +66,9 @@ pub fn retain(object: Id) -> Id {
+     if object.is_null() {
+         return object;
+     }
++    if is_immortal(object) {
++        return object;
++    }
+     crate::debug::validate(object, "retain");
+     if crate::class::is_known(object as *const crate::class::Class) {
+         return object;
+@@ -80,6 +105,9 @@ pub fn release(object: Id) {
+     if object.is_null() {
+         return;
+     }
++    if is_immortal(object) {
++        return;
++    }
+     crate::debug::validate(object, "release");
+     if crate::class::is_known(object as *const crate::class::Class) {
+         return;
+@@ -109,6 +137,9 @@ pub fn retain_count(object: Id) -> usize {
+     if object.is_null() {
+         return 0;
+     }
++    if is_immortal(object) {
++        return usize::MAX;
++    }
+     crate::debug::validate(object, "retainCount");
+     if crate::class::is_known(object as *const crate::class::Class) {
+         return usize::MAX;
+@@ -163,19 +194,21 @@ struct Pool {
+ /// The depth of the pool that was pushed, plus one so it is never null. Apple
+ /// returns an interior pointer; nothing may read it either way.
+ pub fn pool_push() -> *mut c_void {
+-    POOLS.with(|pools| {
+-        let mut pools = pools.borrow_mut();
+-        let token = if crate::debug::enabled() {
+-            crate::debug::new_pool(thread_id())
+-        } else {
+-            (pools.len() + 1) as *mut c_void
+-        };
+-        pools.push(Pool {
+-            token,
+-            objects: Vec::new(),
+-        });
+-        token
+-    })
++    POOLS
++        .try_with(|pools| {
++            let mut pools = pools.borrow_mut();
++            let token = if crate::debug::enabled() {
++                crate::debug::new_pool(thread_id())
++            } else {
++                (pools.len() + 1) as *mut c_void
++            };
++            pools.push(Pool {
++                token,
++                objects: Vec::new(),
++            });
++            token
++        })
++        .unwrap_or(std::ptr::null_mut())
+ }
+ 
+ /// Release everything added since the matching [`pool_push`].
+@@ -183,9 +216,16 @@ pub fn pool_push() -> *mut c_void {
+ /// Pools nest, so a token naming an outer pool pops the inner ones too - which
+ /// is what happens when a `@autoreleasepool` unwinds past one.
+ pub fn pool_pop(token: *mut c_void) {
++    if token.is_null() {
++        return;
++    }
+     if crate::debug::enabled() {
++        let Ok(found) =
++            POOLS.try_with(|pools| pools.borrow().iter().any(|pool| pool.token == token))
++        else {
++            return;
++        };
+         crate::debug::validate_pool(token, thread_id());
+-        let found = POOLS.with(|pools| pools.borrow().iter().any(|pool| pool.token == token));
+         if !found {
+             crate::fail!(
+                 "objc debug: autorelease pool token {token:p} is not on this thread's stack"
+@@ -193,7 +233,11 @@ pub fn pool_pop(token: *mut c_void) {
+         }
+     }
+     loop {
+-        let Some(pool) = POOLS.with(|pools| pools.borrow_mut().pop()) else {
++        let pool = match POOLS.try_with(|pools| pools.borrow_mut().pop()) {
++            Ok(pool) => pool,
++            Err(_) => return,
++        };
++        let Some(pool) = pool else {
+             if crate::debug::enabled() {
+                 crate::fail!("objc debug: autorelease pool pop with an empty pool stack");
+             }
+@@ -221,10 +265,15 @@ pub fn autorelease(object: Id) -> Id {
+         return object;
+     }
+     crate::debug::validate(object, "autorelease");
+-    POOLS.with(|pools| match pools.borrow_mut().last_mut() {
+-        Some(pool) => pool.objects.push(object),
+-        None => no_pool(),
+-    });
++    if POOLS
++        .try_with(|pools| match pools.borrow_mut().last_mut() {
++            Some(pool) => pool.objects.push(object),
++            None => no_pool(),
++        })
++        .is_err()
++    {
++        no_pool();
++    }
+     object
+ }
+ 
+@@ -426,3 +475,51 @@ pub fn associated(object: Id, key: *const c_void) -> Id {
+         .get(&(object as usize, key as usize))
+         .map_or(std::ptr::null_mut(), |v| *v as Id)
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::{make_immortal, pool_pop, pool_push, release, retain, retain_count};
++    use std::sync::atomic::{AtomicUsize, Ordering};
++
++    static LATE_POOL_TOKEN: AtomicUsize = AtomicUsize::new(usize::MAX);
++
++    struct PushAfterPoolDestruction;
++
++    impl Drop for PushAfterPoolDestruction {
++        fn drop(&mut self) {
++            let token = pool_push();
++            LATE_POOL_TOKEN.store(token as usize, Ordering::SeqCst);
++            pool_pop(token);
++        }
++    }
++
++    thread_local! {
++        static PUSH_AFTER_POOL_DESTRUCTION: PushAfterPoolDestruction = const { PushAfterPoolDestruction };
++    }
++
++    #[test]
++    fn pool_access_after_thread_local_destruction_is_safe() {
++        LATE_POOL_TOKEN.store(usize::MAX, Ordering::SeqCst);
++        std::thread::spawn(|| {
++            PUSH_AFTER_POOL_DESTRUCTION.with(|_| {});
++            assert!(!pool_push().is_null());
++        })
++        .join()
++        .unwrap();
++        assert_eq!(LATE_POOL_TOKEN.load(Ordering::SeqCst), 0);
++    }
++
++    #[test]
++    fn immortal_objects_ignore_retain_and_release() {
++        crate::bootstrap();
++        let class = crate::class::lookup(c"NSObject").expect("NSObject");
++        let object = crate::object::create_instance(class, 0);
++        let object = make_immortal(object);
++
++        assert_eq!(retain(object), object);
++        release(object);
++        release(object);
++        assert_eq!(retain_count(object), usize::MAX);
++        assert!(unsafe { crate::object::class_of(object) }.is_some());
++    }
++}
+diff --git a/crates/objc/src/msg.rs b/crates/objc/src/msg.rs
+index 22a7e4d..7b25c1d 100644
+--- a/crates/objc/src/msg.rs
++++ b/crates/objc/src/msg.rs
+@@ -58,12 +58,31 @@ pub fn forward() -> *const c_void {
+ unsafe fn describe_unrecognised(receiver: Id, sel: Sel) -> String {
+     let class = unsafe { crate::object::class_of(receiver) };
+     let name = class.map_or("nil", |c| c.name_str());
++    let hierarchy = class
++        .map(|class| {
++            class
++                .chain()
++                .map(|ancestor| format!("{}@{:p}", ancestor.name_str(), ancestor as *const _))
++                .collect::<Vec<_>>()
++                .join(" -> ")
++        })
++        .unwrap_or_default();
++    let ns_view = crate::class::lookup(c"NSView").map(|class| {
++        format!(
++            "{}@{:p}/responds={}",
++            class.name_str(),
++            class as *const _,
++            class.method(sel).is_some(),
++        )
++    });
+     let selector = match sel.is_null() {
+         true => std::borrow::Cow::Borrowed("<null selector>"),
+         // SAFETY: a registered selector is a NUL-terminated interned name.
+         false => unsafe { std::ffi::CStr::from_ptr(sel) }.to_string_lossy(),
+     };
+-    format!("unrecognized selector sent to instance of {name}: {selector}")
++    format!(
++        "unrecognized selector sent to instance of {name} ({hierarchy}; NSView={ns_view:?}): {selector}"
++    )
+ }
+ 
+ /// `ROSEMARY_LOG_UNRECOGNIZED=1`: report each unanswered message once and answer

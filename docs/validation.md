@@ -30,6 +30,19 @@ fechamento da migração:
 - 1/1 teste direcionado da câmera passou.
 - cargo build --release --locked --offline -p rosemary passou.
 - O binário gerado tem o mesmo SHA-256 do bin/rosemary copiado.
+- Os testes unitários do launcher passaram, cobrindo configuração XDG,
+  preservação de argumentos de places, variáveis de ambiente e instalação e
+  remoção do arquivo `.desktop`.
+- O CLI do launcher foi verificado com `--help`, `diagnose` e `launch
+  --dry-run`; a validação do arquivo `.desktop` passou.
+- `patches/0001-citric-runtime-compat.patch` passou em `git apply --check` e
+  foi aplicado em um worktree temporário criado do commit base.
+- O upstream local foi configurado para `https://github.com/microlift/rosemary.git`
+  e seus refs foram buscados com sucesso.
+
+A interface GTK foi aberta para inspeção, mas o smoke test completo ficou
+limitado pela sessão de display disponível; não foi iniciado um Studio real
+durante essa verificação.
 
 Esses resultados substituem os números menores registrados no histórico da
 árvore de origem. A suíte de câmera continua provando apenas a multiplicação
@@ -37,11 +50,7 @@ condicional do delta; ela não mede a sensação de movimento em hardware real.
 
 ## Verificações ainda pendentes
 
-1. Confirmar que o diff Rust de Citric corresponde ao diff aplicado antes da migração.
-2. Executar git diff --check e bash -n nos scripts.
-3. Executar o teste direcionado da câmera e as suítes view, backing, runloop e objc, usando o cache de build disponível quando possível.
-4. Confirmar que scripts/patch-color-dialog.py aceita o bundle já patchado e não modifica binários quando o patch já está presente.
-5. Conferir hashes de RobloxStudio.app e Rosemary contra docs/bundle.md e validar o manifesto completo.
-6. Confirmar que git remote -v não imprime remote e que git status não inclui app/full, bin/rosemary, cache ou logs.
-7. Reproduzir o crash da place em uma execução normal, com um nome de log novo. Não testar arraste complexo sem perguntar ao usuário.
-8. Quando a abertura estiver estável, testar Edit e Play com o usuário validando câmera e controles. A escala 0,003 ainda não tem resultado manual.
+1. Reproduzir o crash da place em uma execução normal, com um nome de log novo. Não testar arraste complexo sem perguntar ao usuário.
+2. Quando a abertura estiver estável, testar Edit e Play com o usuário validando câmera e controles. A escala 0,003 ainda não tem resultado manual.
+3. Confirmar que scripts/patch-color-dialog.py aceita o bundle já patchado e não modifica binários quando o patch já está presente.
+4. Conferir hashes de RobloxStudio.app e Rosemary contra docs/bundle.md e validar o manifesto completo.
