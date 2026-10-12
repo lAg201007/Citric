@@ -1924,18 +1924,19 @@ index 7040a80..41435d9 100644
      /// fades its subviews with it.
      #[test]
 diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
-index ea9454f..aac5ccc 100644
+index ea9454f..56b08f9 100644
 --- a/crates/appkit/src/window.rs
 +++ b/crates/appkit/src/window.rs
-@@ -21,6 +21,7 @@ pub struct Window {
+@@ -21,6 +21,8 @@ pub struct Window {
      level: isize,
      accepts_mouse_moved: usize,
      shown: usize,
++    closing: usize,
 +    closed: usize,
      /// `NSWindowCollectionBehavior`, which a program reads back to decide
      /// whether it may go full screen.
      collection_behavior: usize,
-@@ -42,6 +43,8 @@ pub struct Window {
+@@ -42,6 +44,8 @@ pub struct Window {
      /// panel *is* one of these - and one word costs less than a side table
      /// keyed by address.
      becomes_key_only_if_needed: usize,
@@ -1944,7 +1945,7 @@ index ea9454f..aac5ccc 100644
      /// `-setAlphaValue:`, with [`Window::alpha_set`] saying whether it was ever
      /// given one - a fresh window is fully opaque, and zero is a legal alpha, so
      /// the field cannot carry its own default.
-@@ -73,6 +76,16 @@ pub struct Window {
+@@ -73,6 +77,16 @@ pub struct Window {
      window_controller: Id,
  }
  
@@ -1961,7 +1962,7 @@ index ea9454f..aac5ccc 100644
  pub const INSTANCE_SIZE: usize = size_of::<Window>();
  
  /// The notification names a window posts.
-@@ -278,18 +291,16 @@ fn placed_origin(sdl: sdl3::Window) -> Option<(i32, i32)> {
+@@ -278,18 +292,16 @@ fn placed_origin(sdl: sdl3::Window) -> Option<(i32, i32)> {
  
  /// The pointer on the desktop, in SDL's coordinates, and the held buttons.
  ///
@@ -1986,7 +1987,7 @@ index ea9454f..aac5ccc 100644
  }
  
  /// The reverse: a desktop position as the offset SDL wants for this window.
-@@ -412,6 +423,29 @@ pub fn all() -> Vec<Id> {
+@@ -412,6 +424,23 @@ pub fn all() -> Vec<Id> {
          .collect()
  }
  
@@ -2004,19 +2005,13 @@ index ea9454f..aac5ccc 100644
 +}
 +
 +fn mark_closed(receiver: Id) {
-+    let windows = WINDOWS.lock().unwrap_or_else(|e| e.into_inner());
-+    if windows
-+        .iter()
-+        .any(|(_, object)| *object == receiver as usize)
-+    {
-+        window_of(receiver).closed = 1;
-+    }
++    window_of(receiver).closed = 1;
 +}
 +
  /// The SDL window behind an `NSWindow`, or null.
  ///
  /// # Safety
-@@ -1280,6 +1314,97 @@ unsafe extern "C" fn make_key_and_order_front(receiver: Id, _sel: Sel, _sender:
+@@ -1280,6 +1309,115 @@ unsafe extern "C" fn make_key_and_order_front(receiver: Id, _sel: Sel, _sender:
      order_front(receiver, true);
  }
  
@@ -2047,6 +2042,24 @@ index ea9454f..aac5ccc 100644
 +    }
 +    trace!("{receiver:p} began sheet {sheet:p}");
 +    unsafe { make_key_and_order_front(sheet, objc::sel::get("makeKeyAndOrderFront:"), receiver) };
++}
++
++fn remove_sheets_for_window(receiver: Id) {
++    let completions = {
++        let mut sheets = SHEETS.lock().unwrap_or_else(|e| e.into_inner());
++        let mut completions = Vec::new();
++        sheets.retain(|entry| {
++            let remove = entry.parent == receiver as usize || entry.window == receiver as usize;
++            if remove && entry.completion != 0 {
++                completions.push(entry.completion as Id);
++            }
++            !remove
++        });
++        completions
++    };
++    for completion in completions {
++        objc::block::release(completion);
++    }
 +}
 +
 +fn finish_sheet(parent: Id, sheet: Id, response: isize) {
@@ -2114,26 +2127,96 @@ index ea9454f..aac5ccc 100644
  unsafe extern "C" fn order_front_regardless(receiver: Id, _sel: Sel) {
      order_front(receiver, false);
  }
-@@ -1401,7 +1526,18 @@ unsafe extern "C" fn dealloc(receiver: Id, sel: Sel) {
+@@ -1372,6 +1510,8 @@ unsafe extern "C" fn order_out(receiver: Id, _sel: Sel, _sender: Id) {
+ /// The SDL window is hidden rather than destroyed: a Metal swapchain may still
+ /// be keyed by it, and that table is not this crate's to clear.
+ unsafe extern "C" fn dealloc(receiver: Id, sel: Sel) {
++    trace!("{receiver:p} deallocating");
++    remove_sheets_for_window(receiver);
+     let window = window_of(receiver);
+     objc::arc::release(std::mem::replace(
+         &mut window.appearance,
+@@ -1401,17 +1541,46 @@ unsafe extern "C" fn dealloc(receiver: Id, sel: Sel) {
  /// `-close`: the delegate hears `-windowWillClose:` while the window is still
  /// on screen, and the application then decides whether that was its last one.
  unsafe extern "C" fn close(receiver: Id, sel: Sel) {
-+    if let Some(parent) = SHEETS
++    objc::arc::retain(receiver);
++    let window = window_of(receiver);
++    if window.closing != 0 || window.closed != 0 {
++        objc::arc::release(receiver);
++        return;
++    }
++    window.closing = 1;
++    trace!("{receiver:p} close started");
++
++    let parent = SHEETS
 +        .lock()
 +        .unwrap_or_else(|e| e.into_inner())
 +        .iter()
 +        .find(|entry| entry.window == receiver as usize)
-+        .map(|entry| entry.parent as Id)
-+    {
++        .map(|entry| entry.parent as Id);
++    if let Some(parent) = parent {
++        objc::arc::retain(parent);
 +        finish_sheet(parent, receiver, 0);
++        objc::arc::release(parent);
 +    }
++
      crate::event::post_for(receiver, WILL_CLOSE);
+-    // SAFETY: `-orderOut:` is `void (id, SEL, id)`.
 +    mark_closed(receiver);
++    window_of(receiver).closing = 0;
 +    trace!("{receiver:p} closed");
-     // SAFETY: `-orderOut:` is `void (id, SEL, id)`.
++    // SAFETY: order_out has the NSWindow method ABI.
      unsafe { order_out(receiver, sel, std::ptr::null_mut()) };
      crate::application::window_closed();
-@@ -1524,7 +1660,7 @@ unsafe extern "C" fn perform_window_drag_with_event(receiver: Id, _sel: Sel, _ev
++    objc::arc::release(receiver);
+ }
+ 
+ /// Consult the delegate before closing, falling back to the window itself.
+ unsafe extern "C" fn perform_close(receiver: Id, _sel: Sel, _sender: Id) {
++    objc::arc::retain(receiver);
+     if window_of(receiver).style_mask & style::CLOSABLE == 0 {
++        objc::arc::release(receiver);
+         return;
+     }
++    trace!("{receiver:p} performClose started");
++
+     let should_close = objc::sel::get("windowShouldClose:");
+     let target = [delegate_of(receiver), receiver]
+         .into_iter()
+@@ -1421,22 +1590,29 @@ unsafe extern "C" fn perform_close(receiver: Id, _sel: Sel, _sender: Id) {
+                 .is_some_and(|class| class.method(should_close).is_some())
+         });
+     if let Some(target) = target {
+-        // SAFETY: `-windowShouldClose:` is `BOOL (id, SEL, id)`.
++        objc::arc::retain(target);
++        // SAFETY: windowShouldClose: has the BOOL method ABI.
+         let agrees = unsafe {
+             let send: unsafe extern "C" fn(Id, Sel, Id) -> u8 =
+                 std::mem::transmute(objc::msg::entry());
+             send(target, should_close, receiver)
+         };
++        objc::arc::release(target);
+         if agrees == 0 {
++            trace!("{receiver:p} performClose vetoed by {target:p}");
++            objc::arc::release(receiver);
+             return;
+         }
++        trace!("{receiver:p} performClose accepted by {target:p}");
+     }
++
+     // Send the message so a subclass's close override runs too.
+-    // SAFETY: `-close` is `void (id, SEL)`.
++    // SAFETY: close has the void method ABI.
+     unsafe {
+         let send: unsafe extern "C" fn(Id, Sel) = std::mem::transmute(objc::msg::entry());
+         send(receiver, objc::sel::get("close"));
+     }
++    objc::arc::release(receiver);
+ }
+ 
+ /// The window a program's keystrokes go to, which is the last one ordered front.
+@@ -1524,7 +1700,7 @@ unsafe extern "C" fn perform_window_drag_with_event(receiver: Id, _sel: Sel, _ev
          return;
      }
      let (Some((pointer_x, pointer_y, _)), Some((origin_x, origin_y))) = (
@@ -2142,7 +2225,7 @@ index ea9454f..aac5ccc 100644
          sdl3::video::window_position(window.sdl),
      ) else {
          return;
-@@ -1573,7 +1709,7 @@ pub(crate) fn drag_moved() -> bool {
+@@ -1573,7 +1749,7 @@ pub(crate) fn drag_moved() -> bool {
      if sdl.is_null() {
          return false;
      }
@@ -2151,7 +2234,7 @@ index ea9454f..aac5ccc 100644
          return false;
      };
      let at = |start: i32, from: f32, to: f32| start + (to - from).round() as i32;
-@@ -1608,6 +1744,21 @@ unsafe extern "C" fn set_becomes_key_only_if_needed(receiver: Id, _sel: Sel, val
+@@ -1608,6 +1784,21 @@ unsafe extern "C" fn set_becomes_key_only_if_needed(receiver: Id, _sel: Sel, val
      window_of(receiver).becomes_key_only_if_needed = value as usize;
  }
  
@@ -2173,7 +2256,7 @@ index ea9454f..aac5ccc 100644
  unsafe extern "C" fn is_key_window(receiver: Id, _sel: Sel) -> u8 {
      (key_window() == receiver) as u8
  }
-@@ -1636,6 +1787,10 @@ unsafe extern "C" fn backing_scale_factor(receiver: Id, _sel: Sel) -> CGFloat {
+@@ -1636,6 +1827,10 @@ unsafe extern "C" fn backing_scale_factor(receiver: Id, _sel: Sel) -> CGFloat {
      }
  }
  
@@ -2184,7 +2267,7 @@ index ea9454f..aac5ccc 100644
  fn scale_rect(rect: NSRect, scale: CGFloat) -> NSRect {
      NSRect {
          origin: NSPoint {
-@@ -2318,9 +2473,12 @@ pub(crate) fn install() {
+@@ -2318,9 +2513,12 @@ pub(crate) fn install() {
          "isKeyWindow" => is_key_window, c"c16@0:8";
          "isMainWindow" => is_key_window, c"c16@0:8";
          "isVisible" => is_visible, c"c16@0:8";
@@ -2200,7 +2283,7 @@ index ea9454f..aac5ccc 100644
          "screen" => screen, c"@16@0:8";
          "backingScaleFactor" => backing_scale_factor, c"d16@0:8";
          "convertRectToBacking:" => convert_rect_to_backing,
-@@ -2335,9 +2493,10 @@ pub(crate) fn install() {
+@@ -2335,9 +2533,10 @@ pub(crate) fn install() {
          "setLevel:" => set_level, c"v24@0:8q16";
          "styleMask" => style_mask, c"Q16@0:8";
          "setStyleMask:" => set_style_mask, c"v24@0:8Q16";
@@ -2212,7 +2295,7 @@ index ea9454f..aac5ccc 100644
          "setRestorable:" => ignored_flag, c"v20@0:8c16";
          // No state restoration, so nothing ever asks the class to restore.
          "setRestorationClass:" => ignored_integer, c"v24@0:8#16";
-@@ -2434,6 +2593,40 @@ pub(crate) fn install() {
+@@ -2434,6 +2633,40 @@ pub(crate) fn install() {
  mod tests {
      use super::*;
  
@@ -2253,7 +2336,7 @@ index ea9454f..aac5ccc 100644
      /// What a window is, is read off its style mask and its level together -
      /// and is read again at every ordering, because a toolkit reuses one window
      /// as a dialog and then as a tooltip.
-@@ -2579,6 +2772,34 @@ mod tests {
+@@ -2579,6 +2812,34 @@ mod tests {
          objc::arc::release(panel);
      }
  
@@ -2288,6 +2371,132 @@ index ea9454f..aac5ccc 100644
      /// A view that outlives its window must not answer `-window` with it:
      /// Studio's dock panels are freed while Qt still holds their views.
      #[test]
+@@ -2660,6 +2921,7 @@ mod tests {
+             window_of(plain).style_mask = style::TITLED | style::CLOSABLE;
+             send(plain, sel, delegate);
+             assert_eq!(window_of(plain).shown, 0);
++            window_of(plain).closed = 0;
+             window_of(plain).shown = 1;
+             window_of(plain).delegate =
+                 objc::object::create_instance(objc::class::lookup(c"NSObject").unwrap(), 0);
+@@ -2668,13 +2930,103 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn perform_close_keeps_the_window_alive_when_the_delegate_releases_it() {
++        crate::bootstrap();
++        static CLOSED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++
++        unsafe extern "C" fn allow_and_release(_receiver: Id, _sel: Sel, window: Id) -> u8 {
++            objc::arc::release(window);
++            1
++        }
++
++        unsafe extern "C" fn did_close(_receiver: Id, _sel: Sel, notification: Id) {
++            assert!(!notification.is_null());
++            CLOSED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        }
++
++        let class = objc::class::allocate_pair(
++            objc::class::lookup(c"NSObject"),
++            c"ReleasingCloseDelegate",
++            0,
++        )
++        .unwrap();
++        class.add_method(
++            objc::sel::get("windowShouldClose:"),
++            allow_and_release as objc::class::Imp,
++            c"c24@0:8@16",
++        );
++        class.add_method(
++            objc::sel::get("windowWillClose:"),
++            did_close as objc::class::Imp,
++            c"v24@0:8@16",
++        );
++        objc::class::register_pair(class);
++        let delegate = objc::object::create_instance(class, 0);
++        let window =
++            objc::object::create_instance(objc::class::lookup(c"NSWindow").expect("NSWindow"), 0);
++        window_of(window).style_mask = style::CLOSABLE;
++        window_of(window).delegate = delegate;
++
++        // SAFETY: the window is live; performClose: takes one object argument.
++        unsafe {
++            let send: unsafe extern "C" fn(Id, Sel, Id) = std::mem::transmute(objc::msg::entry());
++            send(
++                window,
++                objc::sel::get("performClose:"),
++                std::ptr::null_mut(),
++            );
++        }
++
++        assert_eq!(CLOSED.load(std::sync::atomic::Ordering::Relaxed), 1);
++        objc::arc::release(delegate);
++    }
++
++    #[test]
++    fn deallocating_a_window_removes_its_sheet_relationships() {
++        crate::bootstrap();
++        let parent =
++            objc::object::create_instance(objc::class::lookup(c"NSWindow").expect("NSWindow"), 0);
++        let sheet =
++            objc::object::create_instance(objc::class::lookup(c"NSWindow").expect("NSWindow"), 0);
++        SHEETS
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .push(Sheet {
++                parent: parent as usize,
++                window: sheet as usize,
++                completion: 0,
++            });
++
++        objc::arc::release(parent);
++        assert!(
++            !SHEETS
++                .lock()
++                .unwrap_or_else(|e| e.into_inner())
++                .iter()
++                .any(|entry| entry.parent == parent as usize || entry.window == parent as usize)
++        );
++        objc::arc::release(sheet);
++    }
++
+     #[test]
+     fn close_tells_the_delegate_the_window_will_close() {
+         crate::bootstrap();
+         static TOLD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++        static CLOSING_WINDOW: std::sync::atomic::AtomicUsize =
++            std::sync::atomic::AtomicUsize::new(0);
+         unsafe extern "C" fn will_close(_receiver: Id, _sel: Sel, notification: Id) {
+             assert!(!notification.is_null());
+             TOLD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++            let window = CLOSING_WINDOW.load(std::sync::atomic::Ordering::Relaxed) as Id;
++            if !window.is_null() {
++                // SAFETY: the test window is live during its notification.
++                unsafe {
++                    let send: unsafe extern "C" fn(Id, Sel) =
++                        std::mem::transmute(objc::msg::entry());
++                    send(window, objc::sel::get("close"));
++                }
++            }
+         }
+         let class =
+             objc::class::allocate_pair(objc::class::lookup(c"NSObject"), c"WillCloseDelegate", 0)
+@@ -2688,11 +3040,13 @@ mod tests {
+         let window = objc::object::create_instance(objc::class::lookup(c"NSWindow").unwrap(), 0);
+         window_of(window).delegate = objc::object::create_instance(class, 0);
+         window_of(window).shown = 1;
++        CLOSING_WINDOW.store(window as usize, std::sync::atomic::Ordering::Relaxed);
+         // SAFETY: a live runtime window; `-close` is `void (id, SEL)`.
+         unsafe {
+             let send: unsafe extern "C" fn(Id, Sel) = std::mem::transmute(objc::msg::entry());
+             send(window, objc::sel::get("close"));
+         }
++        CLOSING_WINDOW.store(0, std::sync::atomic::Ordering::Relaxed);
+         assert_eq!(TOLD.load(std::sync::atomic::Ordering::Relaxed), 1);
+         assert_eq!(window_of(window).shown, 0);
+     }
 diff --git a/crates/corefoundation/src/collections.rs b/crates/corefoundation/src/collections.rs
 index b34a9da..17c463b 100644
 --- a/crates/corefoundation/src/collections.rs

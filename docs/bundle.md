@@ -24,9 +24,9 @@ O manifesto usa caminhos relativos à raiz do repositório, então um comando da
 
 - Binário: bin/rosemary.
 - Arquitetura: ELF x86_64.
-- SHA-256: f2af93037f00b3c1f67088bb973d589ccf5f9c2eb85c2dbdc2eac5809f4ad3ba.
-- Build ID ELF: da6d1c3d5cabd33252c10933dfa5c5f9f38065e7.
-- O código fonte está no próprio repositório e pode ser reconstruído com scripts/build-studio.sh.
+- SHA-256: 76505fe9ffb1a66a7b31552f0c9c9d39326c9f11f6842b12d1b4b3918fcd58f7.
+- ELF build ID: 1037f4104575379648382af279cd6da10514ca7c.
+- The source is fetched from the pinned upstream commit and Citric patch series by scripts/build-studio.sh; source files are not stored in the current working tree.
 
 ## Cache Darwin
 
