@@ -1,7 +1,8 @@
 # Project progress
 
-No active deployment remains. Deployment citric-patch-overlay-20261012
-completed the local Citric repository migration.
+No active deployment remains. Deployment citric-history-trim-20261012
+completed the local Citric repository history cleanup after the patch-overlay
+migration.
 
 The launcher milestone is complete: `scripts/citric` and the `citric_launcher/`
 GTK 4 package provide GUI/CLI launch, XDG configuration, diagnostics, and an

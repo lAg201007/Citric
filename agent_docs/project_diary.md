@@ -30,6 +30,10 @@
   offline `--build-only` in a dedicated cache, launcher tests, shell syntax,
   and `git diff --check`. The temporary validation cache was removed and local
   runtime assets were preserved.
+- The branch history was then trimmed to the four Citric commits. The old
+  Rosemary ancestry is no longer reachable from `main`, while the preserved
+  first Citric commit remains the historical workspace snapshot and the current
+  branch tree remains patch-only.
 
 Reusable lesson: keep raw account-bearing logs outside the repository and use
 the normal launcher for crash reproduction; direct GDB startup produced a

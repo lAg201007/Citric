@@ -7,7 +7,9 @@ is materialized only in a temporary build checkout.
 
 The GitHub repository is a standalone Citric repository. Locally, `origin`
 points to Citric and `upstream` points to Rosemary, so updates can be fetched
-without pretending that GitHub has a formal fork relationship. The proprietary
+without pretending that GitHub has a formal fork relationship. Its branch
+history keeps the four Citric commits and omits the prior Rosemary ancestry;
+the proprietary
 Studio bundle, runtime binary, and Darwin cache are physically available but
 ignored by Git; their versions and hashes are documented in docs/bundle.md.
 The authenticated user prefix and raw logs remain outside this repository.
