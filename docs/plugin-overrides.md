@@ -16,4 +16,4 @@ Citric keeps local compatibility overrides for installed Studio plugins separate
 
 To restore a cached plugin, close Studio and copy its matching `Plugin.rbxm.citric-original-<sha256-prefix>` backup over `Plugin.rbxm`. Keep these cache files and backups outside Git; they contain third-party plugin data.
 
-The parser and rewrite are covered by synthetic RBXM tests. The installed plugin artifact was also patched in a disposable copy and passed the helper's read-back verification. A manual Studio launch and place-open test is still required to confirm the runtime crash is gone. A future plugin update may change the source signature and require a refreshed override.
+The parser and rewrite are covered by synthetic RBXM tests. The matching artifact in the live Rosemary prefix was patched with a content-addressed backup, and the helper verified the rewritten model. A manual Studio launch and place-open test is still required to confirm the runtime crash is gone. A future plugin update may change the source signature and require a refreshed override.

@@ -21,12 +21,10 @@ Play through the updated launcher.
 Deployment `citric-plugin-bit32-20261012` is paused after identifying a likely
 plugin crash source: plugin `16708835782` requests bare `bit`, matching the
 fatal `require path must start with a valid prefix` log. The launcher-side
-override, tests, and documentation are present in the worktree, but the
-override has not been installed into the user's live prefix and no post-fix
-Studio launch has been validated. Resume by running the full tests, then
-launching through `scripts/run-studio.sh` and checking the generated metadata
-and crash result. Keep the plugin enabled; disabling it is only a diagnostic
-comparison, not the intended fix.
+override, tests, and documentation are committed, and the matching plugin in
+the user's live prefix has been patched with a verified backup. All 16 tests
+and shell syntax checks pass. A post-fix Studio launch and place-open test is
+still pending. Keep the plugin enabled; disabling it is not the intended fix.
 
 Migration verification is documented in docs/validation.md. Several checks were
 run against the source tree before migration and must be rechecked in Citric

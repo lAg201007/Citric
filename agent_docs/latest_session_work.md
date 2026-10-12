@@ -30,23 +30,23 @@ The installed plugin logged immediately before the fatal `require "bit"`
 message, so this is a high-confidence compatibility cause, although it is not
 yet a proven exclusive cause.
 
-Material changes prepared in the worktree: `scripts/patch_blender_animations.py`
-performs an idempotent, exact-signature RBXM rewrite with LZ4 chunk handling,
-hash-named backup, atomic replacement, and safe skips for unknown versions.
+Material changes: `scripts/patch_blender_animations.py` performs an
+idempotent, exact-signature RBXM rewrite with LZ4 chunk handling, a hash-named
+backup, atomic replacement, and safe skips for unknown versions.
 `scripts/run-studio.sh` invokes it before and after Studio; the launcher README,
-plugin notes, and focused tests document the behavior.
+plugin notes, and focused tests document the behavior. The matching plugin in
+the live Rosemary prefix was patched, with the original model preserved in a
+content-addressed backup next to `Plugin.rbxm`.
 
-Verification completed: staged unit tests passed (five total including the
-locale test), the helper compiled, shell syntax passed, and a disposable copy
-of the real plugin artifact was patched and then reported idempotent. The live
-prefix was not changed, the full Citric test suite was not rerun after the
-latest additions, and Studio was not relaunched after the override.
+Verification completed: all 16 Citric unit tests passed, shell syntax and
+`git diff --check` passed, and the helper patched the live plugin with verified
+backup before the launcher commit. A manual Studio launch and place-open test
+is still pending.
 
-Exact continuation point: run the full test suite and inspect the diff, then
-run the launcher once so it applies the backup-preserving override to the live
-prefix. Open an empty Baseplate and the affected place, record whether Studio
-stays open, and retain the generated `.log`, `.meta`, and exit-code files
-outside Git. Do not disable the plugin as the fix.
+Exact continuation point: open an empty Baseplate through the updated Citric
+launcher, then open the affected place. Record whether Studio stays open and
+retain the generated `.log`, `.meta`, and exit-code files outside Git. Do not
+disable the plugin as the fix.
 
 Token report: `unavailable`; no matching session record was available for
 `citric-plugin-bit32-20261012`.
