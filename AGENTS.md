@@ -1,16 +1,20 @@
-# Instruções para continuar em Citric
+# Citric Agent Instructions
 
-Este repositório é um fork local experimental de Rosemary para investigar a execução do Roblox Studio macOS no Linux. Não é o repositório do jogo CaseSolved.
+This repository is an experimental continuation of Rosemary compatibility work for investigating how to run the macOS version of Roblox Studio on Linux. It is not the CaseSolved game repository.
 
-Antes de alterar o código:
+## Language
 
-- Leia docs/current-state.md, docs/compatibility.md, docs/crashes.md e docs/validation.md.
-- Preserve o diff atual sobre o commit base registrado no README e em docs/current-state.md.
-- Não assuma que um relato visual do usuário equivale a teste automatizado.
-- Mantenha logs brutos, cookies, tokens, prefixos autenticados, places e capturas da conta fora do Git.
-- app/full/RobloxStudio.app, bin/rosemary e downloads/darwin-cache são artefatos locais ignorados. Não force sua inclusão no Git.
-- Não configure remote nem envie alterações ao GitHub sem pedido explícito posterior.
-- Ao testar com o mouse em movimentos complexos, peça que o usuário faça a interação por uma pergunta; não mova o ponteiro em seu lugar.
-- Registre separadamente correções implementadas, correções confirmadas pelo usuário e problemas que continuam abertos.
+Write all documentation and code changes in English. This includes new or modified documentation, source code, code comments, identifiers, and user-facing text.
 
-A cópia de Roblox Studio é software proprietário. O diretório local foi incluído para teste, mas seu conteúdo está excluído do Git. Antes de qualquer publicação, confira git status e o manifesto documentado em docs/bundle.md.
+## Before Changing Code
+
+- Read `docs/current-state.md`, `docs/compatibility.md`, `docs/crashes.md`, and `docs/validation.md`.
+- Preserve the current diff against the base commit recorded in `README.md` and `docs/current-state.md`.
+- Do not treat a user's visual report as equivalent to an automated test.
+- Keep raw logs, cookies, tokens, authenticated prefixes, places, and account screenshots out of Git.
+- `app/full/RobloxStudio.app`, `bin/rosemary`, and `downloads/darwin-cache` are ignored local artifacts. Do not force-add them.
+- Do not configure remotes or push changes to GitHub without a subsequent explicit request.
+- For tests requiring complex mouse movement, ask the user to perform the interaction through a question; do not move the pointer on their behalf.
+- Track implemented fixes, fixes confirmed by the user, and unresolved issues separately.
+
+The local Roblox Studio copy is proprietary software. It is available for testing but excluded from Git. Before any publication, check `git status` and the manifest documented in `docs/bundle.md`.

@@ -1,39 +1,44 @@
 # Citric
 
-Citric mantém os patches de compatibilidade e o launcher usados para executar o Roblox Studio macOS no Linux com Rosemary. A árvore atual não carrega o source completo de Rosemary: ela fixa um commit upstream e aplica os diffs versionados em patches/.
+Citric maintains the compatibility patches and launcher used to run the macOS version of Roblox Studio on Linux with Rosemary. The current tree does not include the full Rosemary source: it pins an upstream commit and applies the diffs versioned under `patches/`.
 
-O histórico Git anterior foi preservado. Assim, os commits antigos ainda contêm a árvore Rosemary usada na migração, mas o snapshot atual da branch contém o launcher, os patches e a documentação do Citric.
+The GitHub `main` branch no longer descends from Rosemary's upstream history. The first Citric commit still contains the original Rosemary source snapshot, while the current branch snapshot contains only the Citric launcher, patches, and documentation.
 
-## Compilar Rosemary
+## Build Rosemary
 
-Na primeira execução, compile o runtime modificado:
+Build the patched runtime before its first use:
 
     ./scripts/citric build
 
-O comando baixa o commit definido em patches/base-commit a partir do repositório registrado em patches/upstream-url, aplica os arquivos listados em patches/series numa cópia temporária e compila com Cargo. O resultado local fica em bin/rosemary, ignorado pelo Git. Para só verificar o download e a aplicação dos patches:
+This fetches the commit specified in `patches/base-commit` from the repository in `patches/upstream-url`, applies the files listed in `patches/series` to a temporary checkout, and builds the result with Cargo. The generated binary is stored in `bin/rosemary`, which is ignored by Git.
+
+To verify the fetch and patch application without compiling:
 
     ./scripts/citric build --check-only
+
+To compile without replacing the local `bin/rosemary` binary:
+
     ./scripts/citric build --build-only
 
-Também é possível executar o script diretamente:
+You can also run the build script directly:
 
     ./scripts/build-studio.sh
 
-## Abrir o Studio
+## Launch Studio
 
     ./scripts/citric
     ./scripts/citric launch
-    ./scripts/citric launch "/caminho/para/place.rbxl"
+    ./scripts/citric launch "/path/to/place.rbxl"
 
-O launcher usa o bundle local em app/ e o binário gerado em bin/. O bundle do Roblox Studio, o prefixo autenticado, o cache Darwin e os logs permanecem fora do Git. Consulte docs/bundle.md antes de preparar qualquer publicação.
+The launcher uses the local Studio bundle and generated binary. The Roblox Studio bundle, authenticated prefix, Darwin cache, and logs remain outside Git. Read `docs/bundle.md` before preparing any publication.
 
 ## Patch series
 
-- Commit-base: patches/base-commit
-- Repositório-base: patches/upstream-url
-- Ordem de aplicação: patches/series
-- Patch canônico: patches/0001-citric-runtime-compat.patch
+- Base commit: `patches/base-commit`
+- Upstream repository: `patches/upstream-url`
+- Application order: `patches/series`
+- Canonical patch: `patches/0001-citric-runtime-compat.patch`
 
-Use ./scripts/build-studio.sh --check-only depois de alterar a série. Veja docs/patches/README.md e docs/upstream-layout.md para o fluxo e a comparação com o modelo Vinegar/Kombucha.
+Run `./scripts/build-studio.sh --check-only` after changing the series. See `docs/patches/README.md` and `docs/upstream-layout.md` for the workflow and comparison with the Vinegar/Kombucha model.
 
-O estado do trabalho anterior, as correções confirmadas, os crashes observados e as limitações dos testes estão em docs/current-state.md, docs/compatibility.md, docs/crashes.md e docs/validation.md. Rosemary é mantido por [Microlift](https://github.com/microlift/rosemary); Citric não publica o bundle proprietário do Studio.
+The history of the work, confirmed fixes, observed crashes, and test limitations is documented in `docs/current-state.md`, `docs/compatibility.md`, `docs/crashes.md`, and `docs/validation.md`. Rosemary is maintained by [Microlift](https://github.com/microlift/rosemary); Citric does not distribute the proprietary Studio bundle.
