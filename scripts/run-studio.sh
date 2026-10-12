@@ -63,6 +63,11 @@ STUDIO_SDL_DRIVER="${STUDIO_SDL_DRIVER:-x11}"
 export SDL_VIDEODRIVER="$STUDIO_SDL_DRIVER"
 SDL_MOUSE_RELATIVE_SYSTEM_SCALE="${SDL_MOUSE_RELATIVE_SYSTEM_SCALE:-0}"
 export SDL_MOUSE_RELATIVE_SYSTEM_SCALE
+SOURCE_LC_ALL="${LC_ALL-<unset>}"
+SOURCE_LC_NUMERIC="${LC_NUMERIC-<unset>}"
+unset LC_ALL
+export LC_NUMERIC=C
+PLUGIN_PATCH_RESULT="$(python3 "$EXPERIMENT_DIR/scripts/patch_blender_animations.py" "$ROSEMARY_PREFIX")" || exit 2
 LOG_NAME="${STUDIO_LOG_NAME:-run-$(date +%Y%m%dT%H%M%S)-$$}"
 if [[ ! "$LOG_NAME" =~ ^[a-zA-Z0-9_.-]+$ ]]; then exit 2; fi
 LOG_PATH="$EXPERIMENT_DIR/logs/$LOG_NAME.log"
@@ -83,12 +88,19 @@ fi
     printf 'date='; date --iso-8601=seconds
     printf 'prefix=%s\napp=%s\nrosemary=%s\n' "$ROSEMARY_PREFIX" "$STUDIO_APP" "$ROSEMARY_BIN"
     printf 'sdl_video_driver=%s\n' "${SDL_VIDEODRIVER:-auto}"
+    printf 'locale_source_lc_all=%s\nlocale_source_lc_numeric=%s\n' "$SOURCE_LC_ALL" "$SOURCE_LC_NUMERIC"
+    printf 'locale_lc_all=%s\nlocale_lc_numeric=%s\n' "${LC_ALL-<unset>}" "$LC_NUMERIC"
+    printf 'plugin_compatibility_patch=%s\n' "$PLUGIN_PATCH_RESULT"
     printf 'command='; printf '%q ' "${RUN_COMMAND[@]}"; printf '\n'
 } > "$EXPERIMENT_DIR/logs/$LOG_NAME.meta" || exit 1
 ulimit -c 0
 printf 'Executando %s\nLog: %s\n' "$STUDIO_APP" "$LOG_PATH"
 "${RUN_COMMAND[@]}" > "$LOG_PATH" 2>&1
 RUN_EXIT_CODE=$?
+POST_PLUGIN_PATCH_RESULT="$(python3 "$EXPERIMENT_DIR/scripts/patch_blender_animations.py" "$ROSEMARY_PREFIX" 2>&1)"
+POST_PLUGIN_PATCH_EXIT=$?
+printf 'post_exit_plugin_patch_exit=%s\npost_exit_plugin_patch_result=%s\n' \
+    "$POST_PLUGIN_PATCH_EXIT" "$POST_PLUGIN_PATCH_RESULT" >> "$EXPERIMENT_DIR/logs/$LOG_NAME.meta"
 printf '%s\n' "$RUN_EXIT_CODE" > "$EXPERIMENT_DIR/logs/$LOG_NAME.exit-code"
 printf 'Código de saída: %s\n' "$RUN_EXIT_CODE"
 exit "$RUN_EXIT_CODE"

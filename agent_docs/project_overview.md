@@ -23,3 +23,14 @@ retain the removed Rosemary source, so history and reproducibility are kept.
 The patch-overlay migration is complete. Future work resumes from
 docs/current-state.md and should preserve the separation between source changes,
 local runtime assets, and user account state.
+
+The launcher normalizes Studio's numeric locale to `C` and records the
+before/after values. This addresses the observed Play failure where valid
+decimal literals were reported as `Malformed number`; fresh manual Play
+confirmation is still required.
+
+The launcher also contains a narrow compatibility override for installed
+Blender Animations plugin builds that request the unavailable bare `bit`
+module. The override is content-addressed, idempotent, and creates a local
+backup before changing the plugin artifact. Live installation and Studio
+reproduction are still pending.

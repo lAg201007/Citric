@@ -40,7 +40,7 @@ Start Studio from the command line, optionally opening a place file directly:
 ./scripts/citric launch "/path/to/place.rbxl"
 ```
 
-On first launch, choose the Studio bundle if Citric cannot find it automatically. The launcher lets you configure the [Rosemary](https://github.com/microlift/rosemary) prefix and SDL driver, save settings, build [Rosemary](https://github.com/microlift/rosemary), and open session logs.
+On first launch, choose the Studio bundle if Citric cannot find it automatically. The launcher lets you configure the [Rosemary](https://github.com/microlift/rosemary) prefix and SDL driver, save settings, build [Rosemary](https://github.com/microlift/rosemary), and open session logs. Known third-party plugin overrides are applied locally before launch; see [plugin compatibility notes](docs/plugin-overrides.md).
 
 ## Acknowledgements
 

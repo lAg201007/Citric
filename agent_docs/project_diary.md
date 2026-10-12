@@ -38,3 +38,17 @@
 Reusable lesson: keep raw account-bearing logs outside the repository and use
 the normal launcher for crash reproduction; direct GDB startup produced a
 different early selector failure.
+
+- A new Play session on 2026-10-12 produced `Malformed number` for valid
+  decimal literals in bundled PlayerModule code, plugins, and place scripts.
+  Integer literals and string conversion worked, implicating the active
+  numeric locale rather than the new place's code.
+- The launcher now removes inherited `LC_ALL`, sets `LC_NUMERIC=C`, and records
+  source and effective locale values. A regression test covers an inherited
+  `pt_BR.UTF-8` environment. Manual Play confirmation remains pending.
+- A later place-opening crash matched plugin `16708835782` loading
+  `BlenderAnimationsInternal` immediately before a fatal bare-`bit` require.
+  The chosen remedy is a launcher-managed compatibility patch that changes
+  only the exact known declaration, preserves the original RBXM by hash, and
+  skips unknown plugin versions. Disabling installed plugins was rejected as
+  the product fix because the plugins must remain usable.

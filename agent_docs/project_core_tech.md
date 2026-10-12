@@ -21,5 +21,16 @@ applied to the pinned base in `patches/base-commit` and ordered by
 GTK 4 Python launcher delegates execution to `scripts/run-studio.sh`; it does
 not download or modify the proprietary Studio bundle.
 
+The launcher clears inherited `LC_ALL` and forces `LC_NUMERIC=C` for Studio.
+Launch metadata records both the incoming and effective numeric locale values
+so decimal-literal failures can be diagnosed.
+
+Before Studio starts, `scripts/patch_blender_animations.py` checks the local
+InstalledPlugins cache for plugin `16708835782` and replaces only the exact
+invalid `requireany("bit", ...)` declaration with the built-in `bit32` module.
+The helper uses LZ4 model chunks, preserves unrelated chunks, writes an
+atomic replacement, and keeps a hash-named backup. Unknown plugin versions
+are skipped safely; the post-exit pass catches an update made during a run.
+
 Do not copy the authenticated prefix or raw logs into Git. Do not publish the
 proprietary app bundle without an explicit later decision.

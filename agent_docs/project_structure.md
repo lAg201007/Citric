@@ -12,6 +12,8 @@
 - scripts/build-studio.sh: fetches the pinned Rosemary base, applies the patch
   series in a temporary checkout, and performs a locked release build.
 - scripts/patch-color-dialog.py: idempotent Qt Cocoa QColorDialog patching.
+- scripts/patch_blender_animations.py: scoped, reversible RBXM plugin
+  compatibility override for the invalid `bit` module request.
 - app/full/RobloxStudio.app: ignored local Studio bundle.
 - bin/rosemary: ignored ready-to-run Rosemary binary.
 - downloads/darwin-cache: ignored local runtime cache.
@@ -20,6 +22,10 @@
   snapshots.
 - tests/test_citric_launcher.py: launcher configuration, argument, and desktop
   entry tests.
+- tests/test_run_studio_locale.py: numeric-locale launch contract test.
+- docs/numeric-locale.md: decimal-literal diagnosis and validation notes.
+- docs/plugin-overrides.md: plugin override contract, backup, and restore notes.
+- tests/test_patch_blender_animations.py: RBXM patcher unit tests.
 - agent_docs/: durable deployment state for future agent handoffs.
 
 The patch series is the owner of Citric's Rust behavior; the temporary
