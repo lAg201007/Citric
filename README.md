@@ -1,44 +1,47 @@
 # Citric
 
-Citric maintains the compatibility patches and launcher used to run the macOS version of Roblox Studio on Linux with Rosemary. The current tree does not include the full Rosemary source: it pins an upstream commit and applies the diffs versioned under `patches/`.
+Citric is a Linux launcher for the macOS version of Roblox Studio. It uses the Rosemary runtime, built with Citric's compatibility patches, to run a local Roblox Studio app bundle. The launcher provides a GTK 4 interface and a command-line option for opening Studio or a place file.
 
-The GitHub `main` branch no longer descends from Rosemary's upstream history. The first Citric commit still contains the original Rosemary source snapshot, while the current branch snapshot contains only the Citric launcher, patches, and documentation.
+The proprietary Roblox Studio app bundle is not included. Provide a compatible bundle under `app/` or select it in the launcher. Citric stores its built Rosemary runtime and user configuration locally; it does not include an authenticated Studio prefix.
 
-## Build Rosemary
+## Requirements
 
-Build the patched runtime before its first use:
+- Linux
+- Python 3, GTK 4, and PyGObject for the graphical launcher
+- Git, Rust, Cargo, and the native build dependencies required by Rosemary
+- A compatible macOS Roblox Studio app bundle
 
-    ./scripts/citric build
+## Build
 
-This fetches the commit specified in `patches/base-commit` from the repository in `patches/upstream-url`, applies the files listed in `patches/series` to a temporary checkout, and builds the result with Cargo. The generated binary is stored in `bin/rosemary`, which is ignored by Git.
+Build Rosemary and apply Citric's compatibility patches:
 
-To verify the fetch and patch application without compiling:
+```sh
+./scripts/citric build
+```
 
-    ./scripts/citric build --check-only
+The resulting runtime is stored in `bin/rosemary`. To check that the source and patches can be prepared without compiling:
 
-To compile without replacing the local `bin/rosemary` binary:
+```sh
+./scripts/citric build --check-only
+```
 
-    ./scripts/citric build --build-only
+## Use
 
-You can also run the build script directly:
+Open the graphical launcher:
 
-    ./scripts/build-studio.sh
+```sh
+./scripts/citric
+```
 
-## Launch Studio
+Start Studio from the command line, optionally opening a place file directly:
 
-    ./scripts/citric
-    ./scripts/citric launch
-    ./scripts/citric launch "/path/to/place.rbxl"
+```sh
+./scripts/citric launch
+./scripts/citric launch "/path/to/place.rbxl"
+```
 
-The launcher uses the local Studio bundle and generated binary. The Roblox Studio bundle, authenticated prefix, Darwin cache, and logs remain outside Git. Read `docs/bundle.md` before preparing any publication.
+On first launch, choose the Studio bundle if Citric cannot find it automatically. The launcher lets you configure the Rosemary prefix and SDL driver, save settings, build Rosemary, and open session logs.
 
-## Patch series
+## Acknowledgements
 
-- Base commit: `patches/base-commit`
-- Upstream repository: `patches/upstream-url`
-- Application order: `patches/series`
-- Canonical patch: `patches/0001-citric-runtime-compat.patch`
-
-Run `./scripts/build-studio.sh --check-only` after changing the series. See `docs/patches/README.md` and `docs/upstream-layout.md` for the workflow and comparison with the Vinegar/Kombucha model.
-
-The history of the work, confirmed fixes, observed crashes, and test limitations is documented in `docs/current-state.md`, `docs/compatibility.md`, `docs/crashes.md`, and `docs/validation.md`. Rosemary is maintained by [Microlift](https://github.com/microlift/rosemary); Citric does not distribute the proprietary Studio bundle.
+Citric's launcher is based on [Nutmeg](https://github.com/frolleks/nutmeg). Its compatibility patch workflow is based on the approach used by [Vinegar](https://github.com/vinegarhq/vinegar) and its companion project [Kombucha](https://github.com/vinegarhq/kombucha).
