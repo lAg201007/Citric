@@ -20,7 +20,7 @@ class RunStudioLocaleTests(unittest.TestCase):
             scripts.mkdir()
             shutil.copy2(ROOT / "scripts" / "run-studio.sh", scripts / "run-studio.sh")
             shutil.copy2(ROOT / "scripts" / "patch-color-dialog.py", scripts / "patch-color-dialog.py")
-            shutil.copy2(ROOT / "scripts" / "patch_blender_animations.py", scripts / "patch_blender_animations.py")
+            shutil.copy2(ROOT / "scripts" / "patch_plugin_compatibility.py", scripts / "patch_plugin_compatibility.py")
 
             studio = root / "RobloxStudio.app"
             contents = studio / "Contents"
@@ -79,9 +79,9 @@ class RunStudioLocaleTests(unittest.TestCase):
             self.assertIn("locale_source_lc_numeric=pt_BR.UTF-8\n", metadata)
             self.assertIn("locale_lc_all=<unset>\n", metadata)
             self.assertIn("locale_lc_numeric=C\n", metadata)
-            self.assertIn("plugin_compatibility_patch=Blender Animations: Blender Animations plugin is not installed; skipped\n", metadata)
+            self.assertIn("plugin_compatibility_patch=Plugin compatibility: no installed plugin models found; skipped\n", metadata)
             self.assertIn("post_exit_plugin_patch_exit=0\n", metadata)
-            self.assertIn("post_exit_plugin_patch_result=Blender Animations: Blender Animations plugin is not installed; skipped\n", metadata)
+            self.assertIn("post_exit_plugin_patch_result=Plugin compatibility: no installed plugin models found; skipped\n", metadata)
 
 
 if __name__ == "__main__":

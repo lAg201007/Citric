@@ -1,13 +1,12 @@
 # Latest session work
 
-Deployment: citric-plugin-bit32-20261012
+Deployment: citric-generic-plugin-bit32-20261012
 
-State: paused with implementation prepared and live validation pending. A Play attempt in a new place
-kept Studio open but emitted `Malformed number` for valid decimal literals in
-Roblox's bundled PlayerModule, several plugins, and place scripts. The same
-session accepted integer literals and string-based numeric conversion. This is
-recorded as a launcher/runtime locale issue, with the exact parser path still
-requiring confirmation.
+State: complete for the generic plugin compatibility change. The user
+confirmed that the Baseplate which previously failed opens after the original
+plugin fix. A separate Play attempt emitted `Malformed number` for valid
+decimal literals in Roblox's bundled PlayerModule, plugins, and place scripts.
+That locale issue remains separate and unconfirmed.
 
 Material changes: `scripts/run-studio.sh` now removes inherited `LC_ALL` and
 sets `LC_NUMERIC=C` for Studio. It records source and effective locale values
@@ -15,41 +14,39 @@ in session metadata. `tests/test_run_studio_locale.py` verifies the contract
 under `pt_BR.UTF-8`, and `docs/numeric-locale.md` documents the diagnosis and
 required manual check.
 
-Verification: the regression test and shell syntax check were run during the
-deployment; no fresh Play session was run after the locale change. The token
-report is unavailable because no matching session record was found.
+Verification: the locale regression test and shell syntax check passed during
+its deployment; no fresh Play session was run after the locale change. The
+token report is unavailable because no matching session record was found.
 
-Exact continuation point: restart Studio through `scripts/run-studio.sh`, open
-the affected place, and try Play. Inspect the new `.log` and `.meta` files. If
+Separate pending check: restart Studio through `scripts/run-studio.sh`, open
+the affected place, and try Play. Inspect new `.log` and `.meta` files. If
 `Malformed number` remains, investigate the runtime's `strtod` locale path.
 Complex mouse tests remain user-driven and are unrelated to this check.
 
-Current deployment state: the crash investigation found plugin `16708835782`
-(`BlenderAnimationsInternal`) requesting `requireany("bit", "bit32", ...)`.
-The installed plugin logged immediately before the fatal `require "bit"`
-message, so this is a high-confidence compatibility cause, although it is not
-yet a proven exclusive cause.
+The user asked to replace the plugin-specific override with a general rule.
+The initial crash evidence remains specific: `BlenderAnimationsInternal`
+loaded immediately before a fatal bare-`bit` require, and its model contains
+`requireany("bit", "bit32", "bit.numberlua", nil)`.
 
-Material changes: `scripts/patch_blender_animations.py` performs an
-idempotent, exact-signature RBXM rewrite with LZ4 chunk handling, a hash-named
-backup, atomic replacement, and safe skips for unknown versions.
-`scripts/run-studio.sh` invokes it before and after Studio; the launcher README,
-plugin notes, and focused tests document the behavior. The matching plugin in
-the live Rosemary prefix was patched, with the original model preserved in a
-content-addressed backup next to `Plugin.rbxm`.
+The launcher now uses `scripts/patch_plugin_compatibility.py`, which scans all
+`InstalledPlugins/<plugin-id>/<version>/Plugin.rbxm` models in the Rosemary
+prefix, independent of plugin ID. It patches only the exact legacy source
+signature, preserves unrelated RBXM chunks, and creates a verified
+content-addressed backup. Unknown or ambiguous models and unrelated `require`
+patterns remain unchanged. The launcher, locale test, generic plugin tests,
+project notes, and user-facing plugin documentation use the generic helper.
 
-Verification completed: all 16 Citric unit tests passed, shell syntax and
-`git diff --check` passed, and the helper patched the live plugin with verified
-backup before the launcher commit. A manual Studio launch and place-open test
-is still pending.
+Verification completed: all 17 Citric tests pass, `bash -n scripts/run-studio.sh`
+and `git diff --check` pass. The live prefix scan reported 18 models scanned,
+0 newly patched, 1 already patched, 17 unchanged, and 0 unsupported. The user
+confirmed the formerly failing Baseplate opens with the plugin enabled.
 
-Exact continuation point: open an empty Baseplate through the updated Citric
-launcher, then open the affected place. Record whether Studio stays open and
-retain the generated `.log`, `.meta`, and exit-code files outside Git. Do not
-disable the plugin as the fix.
+Exact continuation point: none for this deployment. Camera behavior and the
+separate numeric-locale Play validation remain open. Do not broaden the rule
+to arbitrary `require` names without evidence and a safe compatibility mapping.
 
 Token report: `unavailable`; no matching session record was available for
-`citric-plugin-bit32-20261012`.
+`citric-generic-plugin-bit32-20261012`.
 
 Historical deployment record: the Citric branch snapshot is patch-only: Rosemary source was
 removed from the current tree, while `patches/base-commit`, `patches/series`,

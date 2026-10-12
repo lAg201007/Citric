@@ -9,22 +9,24 @@ GTK 4 package provide GUI/CLI launch, XDG configuration, diagnostics, and an
 optional desktop-menu entry. The current branch contains no Rosemary source;
 the canonical patch series and pinned base drive each build.
 
-The next milestone is a normal-launch reproduction of the latest place-opening
-crash, with a fresh log and exit code, followed by isolation of the invalid
-require path. Camera sensitivity, nonlinear mouse spikes, Device Emulator
+The place-opening `require` crash is mitigated by the plugin compatibility
+rule, and the user confirmed the Baseplate opens. The separate Play
+`Malformed number` observation still needs a launch through the current
+launcher. Camera sensitivity, nonlinear mouse spikes, Device Emulator
 interference, and docking remain open; see docs/current-state.md.
 
 The locale mitigation is implemented in `scripts/run-studio.sh` and covered by
 `tests/test_run_studio_locale.py`. It has not yet been confirmed by opening
 Play through the updated launcher.
 
-Deployment `citric-plugin-bit32-20261012` is paused after identifying a likely
-plugin crash source: plugin `16708835782` requests bare `bit`, matching the
-fatal `require path must start with a valid prefix` log. The launcher-side
-override, tests, and documentation are committed, and the matching plugin in
-the user's live prefix has been patched with a verified backup. All 16 tests
-and shell syntax checks pass. A post-fix Studio launch and place-open test is
-still pending. Keep the plugin enabled; disabling it is not the intended fix.
+The bare-`bit` crash was associated with plugin `16708835782` and its legacy
+`requireany("bit", "bit32", ...)` fallback. The launcher now scans all
+installed plugin IDs and versions for that exact signature, patches matches
+to use built-in `bit32`, and preserves verified backups. The user confirmed
+the Baseplate that previously failed now opens with the plugin enabled. The
+generic plugin rule is implemented and verified: 17 tests pass, and the live
+prefix scan reported 18 models with one already patched. Unrelated module
+imports remain untouched.
 
 Migration verification is documented in docs/validation.md. Several checks were
 run against the source tree before migration and must be rechecked in Citric

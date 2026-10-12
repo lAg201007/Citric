@@ -29,8 +29,8 @@ before/after values. This addresses the observed Play failure where valid
 decimal literals were reported as `Malformed number`; fresh manual Play
 confirmation is still required.
 
-The launcher also contains a narrow compatibility override for installed
-Blender Animations plugin builds that request the unavailable bare `bit`
-module. The override is content-addressed, idempotent, and creates a local
-backup before changing the plugin artifact. Live installation and Studio
-reproduction are still pending.
+The launcher applies a narrow, plugin-ID-agnostic compatibility rule to
+cached plugin models that contain the known legacy `bit` fallback declaration.
+It changes only that exact signature to use Roblox's built-in `bit32`, with a
+verified local backup. The user confirmed that the Baseplate which previously
+failed now opens. Other unknown module imports remain untouched.

@@ -48,7 +48,8 @@ different early selector failure.
   `pt_BR.UTF-8` environment. Manual Play confirmation remains pending.
 - A later place-opening crash matched plugin `16708835782` loading
   `BlenderAnimationsInternal` immediately before a fatal bare-`bit` require.
-  The chosen remedy is a launcher-managed compatibility patch that changes
-  only the exact known declaration, preserves the original RBXM by hash, and
-  skips unknown plugin versions. Disabling installed plugins was rejected as
-  the product fix because the plugins must remain usable.
+  This plugin was the trigger, not the rule's scope: the launcher scans every
+  installed plugin ID for the exact legacy `requireany("bit", "bit32", ...)`
+  declaration and changes only that signature. It preserves the original RBXM
+  by hash and leaves unknown module imports untouched. The user confirmed the
+  formerly failing Baseplate opens with the plugin enabled.

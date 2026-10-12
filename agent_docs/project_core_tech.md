@@ -25,12 +25,14 @@ The launcher clears inherited `LC_ALL` and forces `LC_NUMERIC=C` for Studio.
 Launch metadata records both the incoming and effective numeric locale values
 so decimal-literal failures can be diagnosed.
 
-Before Studio starts, `scripts/patch_blender_animations.py` checks the local
-InstalledPlugins cache for plugin `16708835782` and replaces only the exact
-invalid `requireany("bit", ...)` declaration with the built-in `bit32` module.
-The helper uses LZ4 model chunks, preserves unrelated chunks, writes an
-atomic replacement, and keeps a hash-named backup. Unknown plugin versions
-are skipped safely; the post-exit pass catches an update made during a run.
+Before Studio starts, `scripts/patch_plugin_compatibility.py` scans cached
+`Plugin.rbxm` models across every plugin ID and version in InstalledPlugins.
+It replaces only the exact legacy `requireany("bit", "bit32", ...)`
+declaration with the built-in `bit32` module. The helper rewrites the matching
+LZ4 chunk, preserves unrelated chunks, performs an atomic replacement, and
+keeps a verified hash-named backup. Unsupported or ambiguous models are left
+unchanged; the post-exit pass catches plugins installed or updated during a
+run.
 
 Do not copy the authenticated prefix or raw logs into Git. Do not publish the
 proprietary app bundle without an explicit later decision.

@@ -4,6 +4,7 @@ import ctypes
 import ctypes.util
 import hashlib
 import os
+import re
 import shutil
 import stat
 import struct
@@ -12,10 +13,14 @@ import tempfile
 from pathlib import Path
 
 
-PLUGIN_ID = "16708835782"
-OLD_SOURCE = b'local bit, name_ = requireany("bit", "bit32", "bit.numberlua", nil)'
-PATCHED_SOURCE = b'local bit, name_ = bit32, "bit32"'
-PATCHED_SOURCE += b" " * (len(OLD_SOURCE) - len(PATCHED_SOURCE))
+PLUGIN_MODEL_GLOB = "*/Documents/Roblox/*/InstalledPlugins/*/*/Plugin.rbxm"
+OLD_SOURCE = re.compile(
+    rb'\blocal[ \t]+bit[ \t]*,[ \t]*name_[ \t]*=[ \t]*requireany[ \t]*\([ \t]*(?P<first_quote>["\'])bit(?P=first_quote)[ \t]*,[ \t]*(?P<second_quote>["\'])bit32(?P=second_quote)[ \t]*,[ \t]*(?P<third_quote>["\'])bit\.numberlua(?P=third_quote)[ \t]*,[ \t]*nil[ \t]*\)'
+)
+PATCHED_SOURCE = re.compile(
+    rb'\blocal[ \t]+bit[ \t]*,[ \t]*name_[ \t]*=[ \t]*bit32[ \t]*,[ \t]*(?P<quote>["\'])bit32(?P=quote)'
+)
+PATCHED_ASSIGNMENT = b'local bit, name_ = bit32, "bit32"'
 RBXM_HEADER_SIZE = 32
 CHUNK_HEADER_SIZE = 16
 
@@ -111,13 +116,23 @@ def patch_model_contents(contents: bytes, lz4: Lz4) -> tuple[bytes, str]:
             if uncompressed_size
             else compressed_payload
         )
-        old_matches = payload.count(OLD_SOURCE)
-        new_matches = payload.count(PATCHED_SOURCE)
+        old_matches = len(OLD_SOURCE.findall(payload))
+        new_matches = len(PATCHED_SOURCE.findall(payload))
         original_count += old_matches
         patched_count += new_matches
 
         if old_matches:
-            updated_payload = payload.replace(OLD_SOURCE, PATCHED_SOURCE)
+            updated_chunks = []
+            previous_end = 0
+            for match in OLD_SOURCE.finditer(payload):
+                replacement = PATCHED_ASSIGNMENT
+                if len(replacement) > len(match.group()):
+                    raise PatchError("legacy source match is shorter than its replacement")
+                replacement += b" " * (len(match.group()) - len(replacement))
+                updated_chunks.extend((payload[previous_end : match.start()], replacement))
+                previous_end = match.end()
+            updated_chunks.append(payload[previous_end:])
+            updated_payload = b"".join(updated_chunks)
             updated_compressed = lz4.compress(updated_payload)
             output.extend(tag)
             output.extend(struct.pack("<III", len(updated_compressed), len(updated_payload), reserved))
@@ -165,9 +180,14 @@ def atomic_write(path: Path, contents: bytes, mode: int) -> None:
 
 def patch_model(path: Path, lz4: Lz4) -> str:
     original = path.read_bytes()
-    updated, status = patch_model_contents(original, lz4)
+    try:
+        updated, status = patch_model_contents(original, lz4)
+    except PatchError:
+        return "unsupported"
     if status != "patched":
-        return f"{status}: {path}"
+        if status == "already patched":
+            return "already patched"
+        return "unchanged"
 
     digest = hashlib.sha256(original).hexdigest()
     backup = path.with_name(f"{path.name}.citric-original-{digest[:12]}")
@@ -182,16 +202,14 @@ def patch_model(path: Path, lz4: Lz4) -> str:
     if path.read_bytes() != original:
         raise PatchError(f"plugin changed during patching; left the current file alone: {path}")
     atomic_write(path, updated, stat.S_IMODE(path.stat().st_mode))
-    return f"patched with backup {backup}"
+    return "patched"
 
 
 def plugin_models(prefix: Path) -> list[Path]:
     user_root = prefix / "root" / "Users"
     if not user_root.is_dir():
         return []
-    candidates = sorted(
-        user_root.glob(f"*/Documents/Roblox/*/InstalledPlugins/{PLUGIN_ID}/*/Plugin.rbxm")
-    )
+    candidates = sorted(user_root.glob(PLUGIN_MODEL_GLOB))
     prefix_root = prefix.resolve()
     return [
         candidate
@@ -202,23 +220,30 @@ def plugin_models(prefix: Path) -> list[Path]:
     ]
 
 
-def patch_prefix(prefix: Path) -> list[str]:
+def patch_prefix(prefix: Path) -> str:
     models = plugin_models(prefix)
     if not models:
-        return ["Blender Animations plugin is not installed; skipped"]
+        return "no installed plugin models found; skipped"
     lz4 = Lz4()
-    return [patch_model(model, lz4) for model in models]
+    counts = {"patched": 0, "already patched": 0, "unchanged": 0, "unsupported": 0}
+    for model in models:
+        counts[patch_model(model, lz4)] += 1
+    return (
+        f"scanned={len(models)}, patched={counts['patched']}, "
+        f"already_patched={counts['already patched']}, "
+        f"unchanged={counts['unchanged']}, unsupported={counts['unsupported']}"
+    )
 
 
 def main(arguments: list[str]) -> int:
     if len(arguments) != 2:
-        print("Usage: patch_blender_animations.py ROSEMARY_PREFIX", file=sys.stderr)
+        print("Usage: patch_plugin_compatibility.py ROSEMARY_PREFIX", file=sys.stderr)
         return 2
     try:
-        results = patch_prefix(Path(arguments[1]).expanduser())
-        print("Blender Animations: " + "; ".join(results))
+        result = patch_prefix(Path(arguments[1]).expanduser())
+        print("Plugin compatibility: " + result)
     except (OSError, PatchError) as error:
-        print(f"Blender Animations compatibility patch failed: {error}", file=sys.stderr)
+        print(f"Plugin compatibility patch failed: {error}", file=sys.stderr)
         return 2
     return 0
 

@@ -67,7 +67,7 @@ SOURCE_LC_ALL="${LC_ALL-<unset>}"
 SOURCE_LC_NUMERIC="${LC_NUMERIC-<unset>}"
 unset LC_ALL
 export LC_NUMERIC=C
-PLUGIN_PATCH_RESULT="$(python3 "$EXPERIMENT_DIR/scripts/patch_blender_animations.py" "$ROSEMARY_PREFIX")" || exit 2
+PLUGIN_PATCH_RESULT="$(python3 "$EXPERIMENT_DIR/scripts/patch_plugin_compatibility.py" "$ROSEMARY_PREFIX")" || exit 2
 LOG_NAME="${STUDIO_LOG_NAME:-run-$(date +%Y%m%dT%H%M%S)-$$}"
 if [[ ! "$LOG_NAME" =~ ^[a-zA-Z0-9_.-]+$ ]]; then exit 2; fi
 LOG_PATH="$EXPERIMENT_DIR/logs/$LOG_NAME.log"
@@ -97,7 +97,7 @@ ulimit -c 0
 printf 'Executando %s\nLog: %s\n' "$STUDIO_APP" "$LOG_PATH"
 "${RUN_COMMAND[@]}" > "$LOG_PATH" 2>&1
 RUN_EXIT_CODE=$?
-POST_PLUGIN_PATCH_RESULT="$(python3 "$EXPERIMENT_DIR/scripts/patch_blender_animations.py" "$ROSEMARY_PREFIX" 2>&1)"
+POST_PLUGIN_PATCH_RESULT="$(python3 "$EXPERIMENT_DIR/scripts/patch_plugin_compatibility.py" "$ROSEMARY_PREFIX" 2>&1)"
 POST_PLUGIN_PATCH_EXIT=$?
 printf 'post_exit_plugin_patch_exit=%s\npost_exit_plugin_patch_result=%s\n' \
     "$POST_PLUGIN_PATCH_EXIT" "$POST_PLUGIN_PATCH_RESULT" >> "$EXPERIMENT_DIR/logs/$LOG_NAME.meta"
