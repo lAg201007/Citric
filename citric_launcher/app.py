@@ -35,7 +35,7 @@ class CitricWindow(Gtk.ApplicationWindow):
         outer.append(title)
 
         subtitle = Gtk.Label(
-            label="Abra o Studio pelo Rosemary ou escolha uma place para iniciar direto nela.",
+            label="Launch Studio through Rosemary or choose a place to open directly.",
             xalign=0,
             wrap=True,
         )
@@ -44,23 +44,23 @@ class CitricWindow(Gtk.ApplicationWindow):
 
         self.prefix_entry = Gtk.Entry()
         self.prefix_entry.set_text(self.config["prefix"])
-        outer.append(self._field_row("Prefixo Rosemary", self.prefix_entry, self._choose_prefix))
+        outer.append(self._field_row("Rosemary prefix", self.prefix_entry, self._choose_prefix))
 
         self.rosemary_entry = Gtk.Entry()
         self.rosemary_entry.set_text(self.config["rosemary_bin"])
-        self.rosemary_entry.set_placeholder_text("Detectar automaticamente")
-        outer.append(self._field_row("Executável Rosemary", self.rosemary_entry, self._choose_rosemary))
+        self.rosemary_entry.set_placeholder_text("Detect automatically")
+        outer.append(self._field_row("Rosemary executable", self.rosemary_entry, self._choose_rosemary))
 
         self.studio_entry = Gtk.Entry()
         self.studio_entry.set_text(self.config["studio_app"])
-        self.studio_entry.set_placeholder_text("Detectar bundle em app/")
-        outer.append(self._field_row("Bundle do Studio", self.studio_entry, self._choose_studio))
+        self.studio_entry.set_placeholder_text("Detect bundle in app/")
+        outer.append(self._field_row("Studio bundle", self.studio_entry, self._choose_studio))
 
         driver_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        driver_label = Gtk.Label(label="Driver SDL", xalign=0)
+        driver_label = Gtk.Label(label="SDL driver", xalign=0)
         driver_label.set_size_request(150, -1)
         self.driver_combo = Gtk.ComboBoxText()
-        self.driver_combo.append("x11", "X11 (recomendado)")
+        self.driver_combo.append("x11", "X11 (recommended)")
         self.driver_combo.append("wayland", "Wayland")
         self.driver_combo.set_active_id(self.config["sdl_driver"])
         driver_row.append(driver_label)
@@ -68,30 +68,30 @@ class CitricWindow(Gtk.ApplicationWindow):
         outer.append(driver_row)
 
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        launch_button = Gtk.Button(label="Abrir Studio")
+        launch_button = Gtk.Button(label="Launch Studio")
         launch_button.add_css_class("suggested-action")
         launch_button.connect("clicked", self._launch_studio)
         buttons.append(launch_button)
 
-        place_button = Gtk.Button(label="Abrir place…")
+        place_button = Gtk.Button(label="Open place…")
         place_button.connect("clicked", self._choose_place)
         buttons.append(place_button)
         outer.append(buttons)
 
-        self.build_button = Gtk.Button(label="Baixar patches e compilar Rosemary")
+        self.build_button = Gtk.Button(label="Download and build Rosemary")
         self.build_button.connect("clicked", self._build_rosemary)
         outer.append(self.build_button)
 
         settings = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        save_button = Gtk.Button(label="Salvar configurações")
+        save_button = Gtk.Button(label="Save settings")
         save_button.connect("clicked", self._save_settings)
         settings.append(save_button)
 
-        menu_button = Gtk.Button(label="Adicionar ao menu de aplicativos")
+        menu_button = Gtk.Button(label="Add to applications menu")
         menu_button.connect("clicked", self._install_menu_entry)
         settings.append(menu_button)
 
-        logs_button = Gtk.Button(label="Abrir pasta de logs")
+        logs_button = Gtk.Button(label="Open logs folder")
         logs_button.connect("clicked", self._open_logs)
         settings.append(logs_button)
         outer.append(settings)
@@ -107,7 +107,7 @@ class CitricWindow(Gtk.ApplicationWindow):
         row.append(label)
         entry.set_hexpand(True)
         row.append(entry)
-        button = Gtk.Button(label="Escolher…")
+        button = Gtk.Button(label="Choose…")
         button.connect("clicked", callback)
         row.append(button)
         return row
@@ -126,7 +126,7 @@ class CitricWindow(Gtk.ApplicationWindow):
         try:
             self.config = self._current_config()
             saved = save_config(self.config)
-            self.status.set_text(f"Configurações salvas em {saved}")
+            self.status.set_text(f"Settings saved to {saved}")
         except (OSError, ValueError) as error:
             self.status.set_text(str(error))
 
@@ -144,9 +144,9 @@ class CitricWindow(Gtk.ApplicationWindow):
             process = launcher.spawnv(list(spec.argv))
             self._processes.append(process)
             process.wait_async(None, self._on_process_exit, "launch")
-            self.status.set_text("Studio iniciado. O log desta sessão será salvo em logs/.")
+            self.status.set_text("Studio started. This session's log will be saved in logs/.")
         except (OSError, ValueError, GLib.Error) as error:
-            self.status.set_text(f"Falha ao iniciar: {error}")
+            self.status.set_text(f"Failed to launch: {error}")
 
     def _build_rosemary(self, *_args) -> None:
         try:
@@ -156,23 +156,23 @@ class CitricWindow(Gtk.ApplicationWindow):
             self._processes.append(process)
             self.build_button.set_sensitive(False)
             process.wait_async(None, self._on_process_exit, "build")
-            self.status.set_text("Baixando o commit Rosemary fixado, aplicando patches e compilando…")
+            self.status.set_text("Downloading the pinned Rosemary commit, applying patches and building…")
         except (OSError, GLib.Error) as error:
-            self.status.set_text(f"Falha ao iniciar o build: {error}")
+            self.status.set_text(f"Failed to start the build: {error}")
 
     def _on_process_exit(self, process: Gio.Subprocess, result, operation) -> None:
         try:
             process.wait_finish(result)
-            code = process.get_exit_status() if process.get_if_exited() else "interrompido"
+            code = process.get_exit_status() if process.get_if_exited() else "interrupted"
             if operation == "build":
                 if code == 0:
-                    self.status.set_text("Rosemary compilado em bin/rosemary. O Studio está pronto para abrir.")
+                    self.status.set_text("Rosemary built at bin/rosemary. Studio is ready to launch.")
                 else:
-                    self.status.set_text(f"Build do Rosemary terminou (código {code}).")
+                    self.status.set_text(f"Rosemary build finished (exit code {code}).")
             else:
-                self.status.set_text(f"Processo do Studio terminou (código {code}).")
+                self.status.set_text(f"Studio process finished (exit code {code}).")
         except GLib.Error as error:
-            self.status.set_text(f"Não consegui observar a saída do processo: {error}")
+            self.status.set_text(f"Could not monitor process exit: {error}")
         finally:
             if operation == "build":
                 self.build_button.set_sensitive(True)
@@ -181,14 +181,14 @@ class CitricWindow(Gtk.ApplicationWindow):
 
     def _choose_place(self, *_args) -> None:
         chooser = Gtk.FileChooserNative.new(
-            "Abrir place",
+            "Open place",
             self,
             Gtk.FileChooserAction.OPEN,
-            "Abrir",
-            "Cancelar",
+            "Open",
+            "Cancel",
         )
         file_filter = Gtk.FileFilter()
-        file_filter.set_name("Places Roblox")
+        file_filter.set_name("Roblox places")
         file_filter.add_pattern("*.rbxl")
         file_filter.add_pattern("*.rbxlx")
         chooser.add_filter(file_filter)
@@ -197,33 +197,33 @@ class CitricWindow(Gtk.ApplicationWindow):
 
     def _choose_prefix(self, *_args) -> None:
         chooser = Gtk.FileChooserNative.new(
-            "Selecionar prefixo Rosemary",
+            "Select Rosemary prefix",
             self,
             Gtk.FileChooserAction.SELECT_FOLDER,
-            "Selecionar",
-            "Cancelar",
+            "Select",
+            "Cancel",
         )
         chooser.connect("response", self._on_prefix_response)
         self._show_chooser(chooser)
 
     def _choose_rosemary(self, *_args) -> None:
         chooser = Gtk.FileChooserNative.new(
-            "Selecionar executável Rosemary",
+            "Select Rosemary executable",
             self,
             Gtk.FileChooserAction.OPEN,
-            "Selecionar",
-            "Cancelar",
+            "Select",
+            "Cancel",
         )
         chooser.connect("response", self._on_rosemary_response)
         self._show_chooser(chooser)
 
     def _choose_studio(self, *_args) -> None:
         chooser = Gtk.FileChooserNative.new(
-            "Selecionar RobloxStudio.app",
+            "Select RobloxStudio.app",
             self,
             Gtk.FileChooserAction.SELECT_FOLDER,
-            "Selecionar",
-            "Cancelar",
+            "Select",
+            "Cancel",
         )
         chooser.connect("response", self._on_studio_response)
         self._show_chooser(chooser)
@@ -271,33 +271,33 @@ class CitricWindow(Gtk.ApplicationWindow):
     def _install_menu_entry(self, *_args) -> None:
         try:
             destination = install_desktop_entry()
-            self.status.set_text(f"Citric adicionado ao menu: {destination}")
+            self.status.set_text(f"Citric added to the applications menu: {destination}")
         except OSError as error:
-            self.status.set_text(f"Falha ao instalar atalho: {error}")
+            self.status.set_text(f"Failed to install shortcut: {error}")
 
     def _open_logs(self, *_args) -> None:
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
         try:
             Gio.AppInfo.launch_default_for_uri(LOGS_DIR.as_uri(), None)
         except GLib.Error as error:
-            self.status.set_text(f"Falha ao abrir logs: {error}")
+            self.status.set_text(f"Failed to open logs: {error}")
 
     def _diagnostic_summary(self) -> str:
         from .core import diagnose
 
         if self.config_error:
-            return "Configuração inválida; confira as opções e salve novamente: {}".format(self.config_error)
+            return "Invalid configuration; check the settings and save again: {}".format(self.config_error)
         result = diagnose()
         if result["ready"]:
-            return "Pronto para iniciar. Use Editar se precisar apontar para outro bundle ou executável."
+            return "Ready to launch. Use the fields above to select a different bundle or executable."
         missing = []
         if not result["rosemary_executable"]:
-            missing.append("Rosemary não compilado; use o botão de build")
+            missing.append("Rosemary has not been built; use the build button")
         if not result["studio_bundle"]:
             missing.append("RobloxStudio.app")
         if not result["launcher_script"]:
-            missing.append("script de launch")
-        return "Falta configurar: " + ", ".join(missing)
+            missing.append("launch script")
+        return "Setup required: " + ", ".join(missing)
 
 
 class CitricApplication(Gtk.Application):

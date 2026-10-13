@@ -17,7 +17,7 @@ if [[ ! -x "$ROSEMARY_BIN" ]]; then
     ROSEMARY_BIN="$HOME/rosemary/target/release/rosemary"
 fi
 if [[ ! -x "$ROSEMARY_BIN" ]]; then
-    printf 'Rosemary não encontrado. Compile com ./scripts/build-studio.sh ou ./scripts/citric build.\n' >&2
+    printf 'Rosemary not found. Build it with ./scripts/build-studio.sh or ./scripts/citric build.\n' >&2
     exit 127
 fi
 if [[ -z "${STUDIO_APP:-}" ]]; then
@@ -33,7 +33,7 @@ for plist in pathlib.Path(sys.argv[1]).rglob('Contents/Info.plist'):
     except (OSError, ValueError):
         continue
 if not candidates:
-    sys.exit('Nenhum bundle Studio válido encontrado em app/.')
+    sys.exit('No valid Studio bundle found in app/.')
 print(sorted(candidates)[0][1])
 PYAPP
 )" || exit 2
@@ -45,12 +45,12 @@ try:
     info = plistlib.loads((bundle / 'Contents/Info.plist').read_bytes())
     name = info.get('CFBundleExecutable', '')
     if name not in ('RobloxStudio', 'RobloxStudioInstaller'):
-        raise ValueError('CFBundleExecutable não é do Studio')
+        raise ValueError('CFBundleExecutable is not a Studio executable')
     executable = bundle / 'Contents/MacOS' / name
     if not executable.is_file():
-        raise ValueError('executável ausente no bundle')
+        raise ValueError('executable missing from bundle')
 except (OSError, ValueError) as error:
-    sys.exit(f'Bundle inválido: {bundle}: {error}')
+    sys.exit(f'Invalid bundle: {bundle}: {error}')
 PYVALIDATE
 if [[ $? -ne 0 ]]; then exit 2; fi
 python3 "$EXPERIMENT_DIR/scripts/patch-color-dialog.py" "$STUDIO_APP" || exit 2
@@ -74,7 +74,7 @@ LOG_NAME="${STUDIO_LOG_NAME:-run-$(date +%Y%m%dT%H%M%S)-$$}"
 if [[ ! "$LOG_NAME" =~ ^[a-zA-Z0-9_.-]+$ ]]; then exit 2; fi
 LOG_PATH="$EXPERIMENT_DIR/logs/$LOG_NAME.log"
 if [[ -e "$LOG_PATH" ]]; then
-    printf 'Log já existe, use outro STUDIO_LOG_NAME: %s\n' "$LOG_PATH" >&2
+    printf 'Log already exists; use a different STUDIO_LOG_NAME: %s\n' "$LOG_PATH" >&2
     exit 2
 fi
 mkdir -p "$EXPERIMENT_DIR/logs" || exit 1
@@ -96,7 +96,7 @@ fi
     printf 'command='; printf '%q ' "${RUN_COMMAND[@]}"; printf '\n'
 } > "$EXPERIMENT_DIR/logs/$LOG_NAME.meta" || exit 1
 ulimit -c 0
-printf 'Executando %s\nLog: %s\n' "$STUDIO_APP" "$LOG_PATH"
+printf 'Running %s\nLog: %s\n' "$STUDIO_APP" "$LOG_PATH"
 "${RUN_COMMAND[@]}" > "$LOG_PATH" 2>&1
 RUN_EXIT_CODE=$?
 POST_PLUGIN_PATCH_RESULT="$(python3 "$EXPERIMENT_DIR/scripts/patch_plugin_compatibility.py" "$ROSEMARY_PREFIX" 2>&1)"
@@ -104,5 +104,5 @@ POST_PLUGIN_PATCH_EXIT=$?
 printf 'post_exit_plugin_patch_exit=%s\npost_exit_plugin_patch_result=%s\n' \
     "$POST_PLUGIN_PATCH_EXIT" "$POST_PLUGIN_PATCH_RESULT" >> "$EXPERIMENT_DIR/logs/$LOG_NAME.meta"
 printf '%s\n' "$RUN_EXIT_CODE" > "$EXPERIMENT_DIR/logs/$LOG_NAME.exit-code"
-printf 'Código de saída: %s\n' "$RUN_EXIT_CODE"
+printf 'Exit code: %s\n' "$RUN_EXIT_CODE"
 exit "$RUN_EXIT_CODE"

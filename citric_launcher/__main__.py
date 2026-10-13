@@ -20,21 +20,21 @@ from .core import (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="citric", description="Launcher local do Roblox Studio pelo Rosemary")
+    parser = argparse.ArgumentParser(prog="citric", description="Local Roblox Studio launcher using Rosemary")
     commands = parser.add_subparsers(dest="command")
 
-    build = commands.add_parser("build", help="baixar a base Rosemary, aplicar patches e compilar")
+    build = commands.add_parser("build", help="download the Rosemary base, apply patches and build")
     build_modes = build.add_mutually_exclusive_group()
-    build_modes.add_argument("--check-only", action="store_true", help="validar fetch e patches sem compilar")
-    build_modes.add_argument("--build-only", action="store_true", help="compilar sem substituir bin/rosemary")
+    build_modes.add_argument("--check-only", action="store_true", help="verify source fetching and patches without building")
+    build_modes.add_argument("--build-only", action="store_true", help="build without replacing bin/rosemary")
 
-    launch = commands.add_parser("launch", help="iniciar o Studio")
-    launch.add_argument("place", nargs="?", help="arquivo .rbxl ou .rbxlx")
-    launch.add_argument("--dry-run", action="store_true", help="mostrar o comando sem iniciar o Studio")
+    launch = commands.add_parser("launch", help="launch Studio")
+    launch.add_argument("place", nargs="?", help=".rbxl or .rbxlx file")
+    launch.add_argument("--dry-run", action="store_true", help="show the command without launching Studio")
 
-    commands.add_parser("install-desktop", help="adicionar Citric ao menu de aplicativos")
-    commands.add_parser("uninstall-desktop", help="remover Citric do menu de aplicativos")
-    commands.add_parser("diagnose", help="verificar os arquivos necessários sem abrir o Studio")
+    commands.add_parser("install-desktop", help="add Citric to the applications menu")
+    commands.add_parser("uninstall-desktop", help="remove Citric from the applications menu")
+    commands.add_parser("diagnose", help="check required files without launching Studio")
     return parser
 
 
@@ -45,7 +45,7 @@ def run_gui() -> int:
         gi.require_version("Gtk", "4.0")
         from .app import run
     except (ImportError, ValueError) as error:
-        print(f"Não consegui carregar a interface GTK 4: {error}", file=sys.stderr)
+        print(f"Could not load the GTK 4 interface: {error}", file=sys.stderr)
         return 1
     return run()
 

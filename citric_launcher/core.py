@@ -51,12 +51,12 @@ def normalize_config(values: Mapping[str, object], environment: Mapping[str, str
     for key in config:
         value = values.get(key, config[key])
         if not isinstance(value, str):
-            raise ValueError(f"Configuração inválida para {key}")
+            raise ValueError(f"Invalid configuration for {key}")
         config[key] = value.strip()
     if not config["prefix"]:
-        raise ValueError("O prefixo do Rosemary não pode ficar vazio")
+        raise ValueError("The Rosemary prefix cannot be empty")
     if config["sdl_driver"] not in {"x11", "wayland"}:
-        raise ValueError("O driver SDL deve ser x11 ou wayland")
+        raise ValueError("The SDL driver must be x11 or wayland")
     return config
 
 
@@ -67,9 +67,9 @@ def load_config(path: Path | None = None, environment: Mapping[str, str] | None 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"Não consegui ler {path}: {error}") from error
+        raise ValueError(f"Could not read {path}: {error}") from error
     if not isinstance(raw, dict):
-        raise ValueError(f"Configuração inválida em {path}")
+        raise ValueError(f"Invalid configuration in {path}")
     return normalize_config(raw, environment)
 
 
@@ -94,7 +94,7 @@ def save_config(values: Mapping[str, object], path: Path | None = None, environm
 def build_rosemary_spec(root: Path = ROOT, check_only: bool = False, build_only: bool = False) -> LaunchSpec:
     script = root / "scripts" / "build-studio.sh"
     if not script.is_file():
-        raise FileNotFoundError(f"Script de build não encontrado: {script}")
+        raise FileNotFoundError(f"Build script not found: {script}")
     argv = [str(script)]
     if check_only:
         argv.append("--check-only")
@@ -145,12 +145,12 @@ def build_launch_spec(
     normalized = normalize_config(config, environment)
     script = root / "scripts" / "run-studio.sh"
     if not script.is_file():
-        raise FileNotFoundError(f"Script de inicialização não encontrado: {script}")
+        raise FileNotFoundError(f"Launch script not found: {script}")
     argv = [str(script)]
     if place is not None:
         place_path = Path(place).expanduser()
         if not place_path.is_file():
-            raise FileNotFoundError(f"Place não encontrada: {place_path}")
+            raise FileNotFoundError(f"Place not found: {place_path}")
         argv.append(str(place_path.resolve()))
     overrides = {
         "ROSEMARY_PREFIX": str(Path(normalized["prefix"]).expanduser()),

@@ -1,14 +1,14 @@
-# Launcher do Citric
+# Citric launcher
 
-O launcher GTK 4 inicia Roblox Studio com scripts/run-studio.sh. Ele também pode preparar o runtime quando o checkout ainda não tem bin/rosemary.
+The GTK 4 launcher starts Roblox Studio with `scripts/run-studio.sh`. It can also prepare the runtime when the checkout does not yet contain `bin/rosemary`. The launcher interface, CLI help, and launcher-owned status and error messages are in English.
 
-## Abrir
+## Open
 
-Execute ./scripts/citric para abrir a interface ou python3 -m citric_launcher na raiz do repositório.
+Run `./scripts/citric` to open the interface, or run `python3 -m citric_launcher` from the repository root.
 
-A janela permite iniciar o Studio ou uma place .rbxl/.rbxlx, compilar o Rosemary a partir da série de patches, escolher prefixo, executável Rosemary, bundle do Studio e driver SDL, salvar preferências XDG, instalar o atalho de menu e abrir a pasta de logs.
+The window lets you launch Studio or a `.rbxl`/`.rbxlx` place, build Rosemary from the patch series, select the prefix, Rosemary executable, Studio bundle and SDL driver, save XDG preferences, install the menu shortcut, and open the logs folder.
 
-Na primeira instalação, clique em Baixar patches e compilar Rosemary. Isso busca a base fixada, aplica patches/series, compila e grava bin/rosemary. O bundle proprietário ainda precisa estar disponível em app/ ou ser selecionado manualmente.
+On first installation, click **Download and build Rosemary**. This fetches the pinned base, applies `patches/series`, builds the runtime, and saves it to `bin/rosemary`. The proprietary bundle must also be available under `app/` or selected manually.
 
 ## CLI
 
@@ -16,18 +16,18 @@ Na primeira instalação, clique em Baixar patches e compilar Rosemary. Isso bus
     ./scripts/citric build --check-only
     ./scripts/citric build --build-only
     ./scripts/citric launch
-    ./scripts/citric launch "/caminho/para/place.rbxl"
+    ./scripts/citric launch "/path/to/place.rbxl"
     ./scripts/citric launch --dry-run
     ./scripts/citric diagnose
     ./scripts/citric install-desktop
     ./scripts/citric uninstall-desktop
 
-build --check-only valida a revisão-base e os patches sem compilar. diagnose verifica caminhos locais sem iniciar o Studio. launch --dry-run mostra os argumentos e as variáveis que seriam passados ao wrapper.
+`build --check-only` validates the base revision and patches without building. `diagnose` checks local paths without launching Studio. `launch --dry-run` shows the arguments and environment variables that would be passed to the wrapper.
 
-## Preferências e arquivos locais
+## Preferences and local files
 
-As preferências ficam em $XDG_CONFIG_HOME/citric/launcher.json, ou em ~/.config/citric/launcher.json. Os logs ficam em logs/ no checkout. O source temporário e o target Cargo ficam em $XDG_CACHE_HOME/citric ou ~/.cache/citric. O executável gerado em bin/rosemary, app/full/RobloxStudio.app e downloads/darwin-cache estão excluídos do Git.
+Preferences are stored in `$XDG_CONFIG_HOME/citric/launcher.json`, or `~/.config/citric/launcher.json`. Logs are stored in `logs/` in the checkout. Temporary source and Cargo build output are stored in `$XDG_CACHE_HOME/citric` or `~/.cache/citric`. The generated `bin/rosemary` executable, `app/full/RobloxStudio.app`, and `downloads/darwin-cache` are excluded from Git.
 
-## Dependências
+## Dependencies
 
-A interface precisa de Python 3, PyGObject e GTK 4. O build do Rosemary precisa de Git, Rust/Cargo e as dependências upstream exigidas pela revisão fixada. O script chama Cargo no source preparado e mantém toda a configuração de runtime em scripts/run-studio.sh.
+The interface requires Python 3, PyGObject, and GTK 4. Building Rosemary requires Git, Rust/Cargo, and the upstream dependencies required by the pinned revision. The build script runs Cargo against the prepared source; runtime configuration is kept in `scripts/run-studio.sh`.

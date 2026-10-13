@@ -21,17 +21,17 @@ case "${1:-}" in
         BUILD_ONLY=1
         ;;
     --help|-h)
-        printf 'Uso: %s [--check-only|--build-only]\n' "$0"
+        printf 'Usage: %s [--check-only|--build-only]\n' "$0"
         exit 0
         ;;
     *)
-        printf 'Argumento desconhecido: %s\n' "$1" >&2
+        printf 'Unknown argument: %s\n' "$1" >&2
         exit 2
         ;;
 esac
 
 if [[ ! -f "$UPSTREAM_URL_FILE" || ! -f "$BASE_COMMIT_FILE" || ! -f "$SERIES_FILE" ]]; then
-    printf 'Metadados da série de patches incompletos em %s\n' "$PATCH_DIR" >&2
+    printf 'Incomplete patch series metadata in %s\n' "$PATCH_DIR" >&2
     exit 2
 fi
 
@@ -40,7 +40,7 @@ UPSTREAM_URL="${CITRIC_ROSEMARY_REPOSITORY:-$UPSTREAM_URL}"
 BASE_COMMIT="$(tr -d '\r\n' < "$BASE_COMMIT_FILE")"
 
 if [[ -z "$UPSTREAM_URL" || ! "$BASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-    printf 'URL do upstream ou commit-base inválido.\n' >&2
+    printf 'Invalid upstream URL or base commit.\n' >&2
     exit 2
 fi
 
@@ -63,7 +63,7 @@ git -C "$SOURCE_DIR" checkout --quiet --detach FETCH_HEAD
 
 ACTUAL_BASE="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
 if [[ "$ACTUAL_BASE" != "$BASE_COMMIT" ]]; then
-    printf 'O upstream retornou %s, mas Citric exige %s.\n' "$ACTUAL_BASE" "$BASE_COMMIT" >&2
+    printf 'Upstream returned %s, but Citric requires %s.\n' "$ACTUAL_BASE" "$BASE_COMMIT" >&2
     exit 2
 fi
 
@@ -73,12 +73,12 @@ while IFS= read -r PATCH_NAME || [[ -n "$PATCH_NAME" ]]; do
         continue
     fi
     if [[ "$PATCH_NAME" == */* || "$PATCH_NAME" == *".."* || ! "$PATCH_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.patch$ ]]; then
-        printf 'Nome de patch inválido na série: %s\n' "$PATCH_NAME" >&2
+        printf 'Invalid patch name in series: %s\n' "$PATCH_NAME" >&2
         exit 2
     fi
     PATCH_PATH="$PATCH_DIR/$PATCH_NAME"
     if [[ ! -f "$PATCH_PATH" ]]; then
-        printf 'Patch listado não encontrado: %s\n' "$PATCH_PATH" >&2
+        printf 'Listed patch not found: %s\n' "$PATCH_PATH" >&2
         exit 2
     fi
     git -C "$SOURCE_DIR" apply --check "$PATCH_PATH"
@@ -87,24 +87,24 @@ while IFS= read -r PATCH_NAME || [[ -n "$PATCH_NAME" ]]; do
 done < "$SERIES_FILE"
 
 if (( PATCH_COUNT == 0 )); then
-    printf 'A série de patches está vazia.\n' >&2
+    printf 'The patch series is empty.\n' >&2
     exit 2
 fi
 
 if (( CHECK_ONLY == 1 )); then
-    printf 'Base %s obtida; %s patch(es) aplicados com sucesso.\n' "$BASE_COMMIT" "$PATCH_COUNT"
+    printf 'Base %s fetched; %s patch(es) applied successfully.\n' "$BASE_COMMIT" "$PATCH_COUNT"
     exit 0
 fi
 
 CARGO_TARGET_DIR="$CITRIC_TARGET_DIR" cargo build --manifest-path "$SOURCE_DIR/Cargo.toml" --locked --release -p rosemary
 BUILT_ROSEMARY="$CITRIC_TARGET_DIR/release/rosemary"
 if [[ ! -x "$BUILT_ROSEMARY" ]]; then
-    printf 'Cargo terminou sem gerar o executável esperado: %s\n' "$BUILT_ROSEMARY" >&2
+    printf 'Cargo finished without producing the expected executable: %s\n' "$BUILT_ROSEMARY" >&2
     exit 1
 fi
 
 if (( BUILD_ONLY == 1 )); then
-    printf 'Rosemary compilado em %s; o binário local não foi substituído.\n' "$BUILT_ROSEMARY"
+    printf 'Rosemary built at %s; the local binary was not replaced.\n' "$BUILT_ROSEMARY"
     exit 0
 fi
 
@@ -115,4 +115,4 @@ chmod 0755 "$OUTPUT_TEMP"
 mv -f -- "$OUTPUT_TEMP" "$CITRIC_ROOT/bin/rosemary"
 OUTPUT_TEMP=""
 
-printf 'Rosemary compilado e instalado em %s/bin/rosemary\n' "$CITRIC_ROOT"
+printf 'Rosemary built and installed at %s/bin/rosemary\n' "$CITRIC_ROOT"
