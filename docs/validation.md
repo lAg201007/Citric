@@ -97,3 +97,15 @@ On 2026-10-12, the user restarted this build through Citric, ran an empty Basepl
 A árvore patch-only foi validada buscando a revisão registrada em patches/base-commit, aplicando patches/series com o mesmo script usado no build e executando a suíte do launcher. O modo ./scripts/build-studio.sh --check-only testa a obtenção da base e a aplicação dos diffs sem compilar nem iniciar o Studio.
 
 O teste de integração buscou o commit fixado por uma URL Git local isolada, aplicou a série canônica e completou cargo build --release --locked -p rosemary em modo offline. O comando usou --build-only e gerou o executável no diretório temporário de teste, sem substituir bin/rosemary. A compilação em instalação nova ainda depende das ferramentas Rust e bibliotecas exigidas pelo commit Rosemary fixado.\n\nA migração não reescreve commits históricos e não altera o bundle, o binário Rosemary local, o prefixo autenticado ou o cache Darwin.
+
+## Rosemary v0.2.2 update
+
+Validated on 2026-10-12 against the official `v0.2.2` tag, commit `04dce85b63154d6451adf74e3f7bacf40add08bd`. The canonical Citric patch was regenerated for this base and covers 22 Rust files, including the guest-PC attribution added to the periodic Play redraw trace.
+
+- `./scripts/build-studio.sh --check-only` fetched the pinned commit and applied the canonical patch successfully.
+- `cargo check --locked --offline --tests -p rosemary` passed.
+- `cargo build --locked --offline --release -p rosemary` passed. The binary reported `rosemary 0.2.2` and was installed atomically to the ignored `bin/rosemary` path.
+- The full `cargo test --locked --offline -p rosemary` did not complete: linking the large test executable stopped making visible progress, so it was interrupted. Test code was compile-checked with `cargo check --tests`.
+- `cargo fmt --all -- --check` reports one module-order formatting difference in `crates/darwin/src/lib.rs`, which is already present in the unmodified upstream v0.2.2 tree.
+
+The already-open Studio process was left running. A fresh launch through Citric will use the installed v0.2.2 binary.

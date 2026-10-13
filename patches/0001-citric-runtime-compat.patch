@@ -1,5 +1,5 @@
 diff --git a/crates/appkit/src/application.rs b/crates/appkit/src/application.rs
-index 21dff67..c545a30 100644
+index 9764ad6..7fae524 100644
 --- a/crates/appkit/src/application.rs
 +++ b/crates/appkit/src/application.rs
 @@ -63,6 +63,7 @@ static CURRENT_EVENT: AtomicUsize = AtomicUsize::new(0);
@@ -176,7 +176,7 @@ index 21dff67..c545a30 100644
          "windowWithWindowNumber:" => window_with_window_number, c"@24@0:8q16";
          "keyWindow" => key_window, c"@16@0:8";
          "mainWindow" => key_window, c"@16@0:8";
-@@ -1222,6 +1295,40 @@ mod tests {
+@@ -1226,6 +1299,40 @@ mod tests {
          assert!(unsafe { current_event(app, objc::sel::get("currentEvent")) }.is_null());
      }
  
@@ -218,10 +218,10 @@ index 21dff67..c545a30 100644
      #[test]
      fn run_services_the_run_loop_until_it_is_stopped() {
 diff --git a/crates/appkit/src/backing.rs b/crates/appkit/src/backing.rs
-index 6b2019f..e5fb215 100644
+index 6b2019f..8693436 100644
 --- a/crates/appkit/src/backing.rs
 +++ b/crates/appkit/src/backing.rs
-@@ -505,10 +505,39 @@ pub(crate) fn focus_density() -> f64 {
+@@ -505,10 +505,25 @@ pub(crate) fn focus_density() -> f64 {
      current_focus().map_or(1.0, |focus| focus.density)
  }
  
@@ -232,36 +232,22 @@ index 6b2019f..e5fb215 100644
      }
 +    let area = rect.width.saturating_mul(rect.height);
 +    if area >= 100_000 && corefoundation::perf_trace_enabled() {
-+        static LOGGED_DAMAGE_SITES: Mutex<Vec<(&'static str, u32, Rect)>> = Mutex::new(Vec::new());
 +        let caller = std::panic::Location::caller();
-+        let site = (caller.file(), caller.line(), rect);
-+        let first_seen = {
-+            let mut logged = LOGGED_DAMAGE_SITES
-+                .lock()
-+                .unwrap_or_else(|e| e.into_inner());
-+            if logged.contains(&site) {
-+                false
-+            } else {
-+                logged.push(site);
-+                true
-+            }
-+        };
-+        if first_seen {
-+            corefoundation::perf_trace_log(&format!(
-+                "stage=appkit.backing_damage source={}:{} rect={},{} {}x{} pixels={area}",
-+                caller.file(),
-+                caller.line(),
-+                rect.x,
-+                rect.y,
-+                rect.width,
-+                rect.height
-+            ));
-+        }
++        corefoundation::perf_trace_log(&format!(
++            "stage=appkit.backing_damage source={}:{} window={} rect={},{} {}x{} pixels={area}",
++            caller.file(),
++            caller.line(),
++            window as usize,
++            rect.x,
++            rect.y,
++            rect.width,
++            rect.height
++        ));
 +    }
      let mut windows = WINDOWS.lock().unwrap_or_else(|e| e.into_inner());
      let state = windows
          .get_or_insert_with(HashMap::new)
-@@ -853,7 +882,11 @@ fn send(receiver: Id, name: &str) {
+@@ -853,7 +868,11 @@ fn send(receiver: Id, name: &str) {
  
  /// Draw everything marked for display and present every window that changed.
  pub fn pump() {
@@ -273,7 +259,7 @@ index 6b2019f..e5fb215 100644
      for window in crate::window::all() {
          if !crate::window::is_shown(window) {
              continue;
-@@ -875,6 +908,9 @@ pub fn pump() {
+@@ -875,6 +894,9 @@ pub fn pump() {
              needs_display_in_tree(crate::window::content_view_of(window), 0);
          }
      }
@@ -283,7 +269,7 @@ index 6b2019f..e5fb215 100644
      let pending = std::mem::take(&mut *NEEDS_DISPLAY.lock().unwrap_or_else(|e| e.into_inner()));
      let count = pending.len();
      let depth = {
-@@ -882,25 +918,42 @@ pub fn pump() {
+@@ -882,25 +904,42 @@ pub fn pump() {
          drawing.push(pending);
          drawing.len() - 1
      };
@@ -327,7 +313,7 @@ index 6b2019f..e5fb215 100644
  }
  
  /// Views whose layer trees were still animating when last composed, by window.
-@@ -932,6 +985,7 @@ fn damage_animating() {
+@@ -932,6 +971,7 @@ fn damage_animating() {
  
  /// Have the part of the window `view` covers recomposed at the next pump,
  /// without asking the view to draw again: its layer tree changed, not it.
@@ -335,7 +321,7 @@ index 6b2019f..e5fb215 100644
  pub(crate) fn damage_view(view: Id) {
      // SAFETY: a view this crate made.
      let Some(frame) = (unsafe { crate::view::presentation_frame(view) }) else {
-@@ -1038,7 +1092,12 @@ fn place_view(
+@@ -1038,7 +1078,12 @@ fn place_view(
          width: (frame.size.width * density).round() as i64,
          height: (frame.size.height * density).round() as i64,
      };
@@ -349,7 +335,7 @@ index 6b2019f..e5fb215 100644
      let alpha = crate::view::effective_alpha(view);
      out.push(Placed {
          view,
-@@ -1049,7 +1108,15 @@ fn place_view(
+@@ -1049,7 +1094,15 @@ fn place_view(
      let flipped = crate::view::is_flipped(view);
      // SAFETY: a view this crate made.
      for child in unsafe { crate::view::children(view) } {
@@ -366,7 +352,7 @@ index 6b2019f..e5fb215 100644
      }
  }
  
-@@ -1083,21 +1150,29 @@ fn opaque_views(placed: &[Placed]) -> Vec<usize> {
+@@ -1083,21 +1136,29 @@ fn opaque_views(placed: &[Placed]) -> Vec<usize> {
  /// Bring a window's composite up to date with its views: recompose what was
  /// drawn over, and everywhere a view appeared, moved or went away.
  fn compose_window(window: Id) {
@@ -396,7 +382,7 @@ index 6b2019f..e5fb215 100644
      let mut holes = Vec::new();
      let mut covered = Vec::new();
      for (index, p) in placed.iter().enumerate() {
-@@ -1127,6 +1202,7 @@ fn compose_window(window: Id) {
+@@ -1127,6 +1188,7 @@ fn compose_window(window: Id) {
              covered.push((layer as usize, above));
          }
      }
@@ -404,7 +390,7 @@ index 6b2019f..e5fb215 100644
  
      let mut stores = STORES.lock().unwrap_or_else(|e| e.into_inner());
      // A window no view has drawn into has nothing to compose. Composing it
-@@ -1175,16 +1251,24 @@ fn compose_window(window: Id) {
+@@ -1175,16 +1237,24 @@ fn compose_window(window: Id) {
          .get_or_insert_with(HashMap::new)
          .entry(sdl as usize)
          .or_default();
@@ -429,7 +415,7 @@ index 6b2019f..e5fb215 100644
              region = region.union(rect);
          }
          state.placed = now;
-@@ -1201,6 +1285,7 @@ fn compose_window(window: Id) {
+@@ -1201,6 +1271,7 @@ fn compose_window(window: Id) {
      let chrome_changed =
          std::mem::replace(&mut state.chrome, chrome_generation) != chrome_generation;
      drop(windows);
@@ -437,7 +423,7 @@ index 6b2019f..e5fb215 100644
      let region = region.intersection(&whole);
      if region.is_empty() {
          if let Some(chrome) = chrome.as_ref().filter(|_| chrome_changed || resized) {
-@@ -1217,7 +1302,23 @@ fn compose_window(window: Id) {
+@@ -1217,7 +1288,23 @@ fn compose_window(window: Id) {
      // program that draws only a logo and a bar relies on for everything else.
      // With none set it is `windowBackgroundColor`, AppKit's default; a layer
      // view's hole is the layer's either way.
@@ -461,7 +447,7 @@ index 6b2019f..e5fb215 100644
      for row in region.y..region.y + region.height {
          let base = (row as usize * width as usize + region.x as usize) * 4;
          for pixel in store.pixels[base..base + region.width as usize * 4]
-@@ -1227,22 +1328,98 @@ fn compose_window(window: Id) {
+@@ -1227,22 +1314,98 @@ fn compose_window(window: Id) {
              *pixel = background;
          }
      }
@@ -525,7 +511,7 @@ index 6b2019f..e5fb215 100644
 +            sublayer_render_total += duration;
 +            corefoundation::perf_trace_duration("appkit.compose_render_sublayers", duration);
 +        }
-     }
++    }
 +    corefoundation::perf_trace_duration(
 +        "appkit.compose_render_background_total",
 +        background_render_total,
@@ -552,7 +538,7 @@ index 6b2019f..e5fb215 100644
 +                clip.width.saturating_mul(clip.height)
 +            ));
 +        }
-+    }
+     }
 +    corefoundation::perf_trace_duration("appkit.compose_blend_view_stores_total", view_blend_total);
 +    corefoundation::perf_trace_duration(
 +        "appkit.compose_render_sublayers_total",
@@ -561,7 +547,7 @@ index 6b2019f..e5fb215 100644
      drop(views);
      ANIMATING
          .lock()
-@@ -1253,9 +1430,37 @@ fn compose_window(window: Id) {
+@@ -1253,9 +1416,37 @@ fn compose_window(window: Id) {
          .unwrap_or_else(|e| e.into_inner())
          .extend(animating.into_iter().map(|view| (sdl as usize, view)));
      if let Some(chrome) = &chrome {
@@ -599,7 +585,7 @@ index 6b2019f..e5fb215 100644
  }
  
  /// Put a window's chrome over the top rows of its store.
-@@ -1942,6 +2147,90 @@ mod tests {
+@@ -1942,6 +2133,90 @@ mod tests {
          );
      }
  
@@ -933,18 +919,160 @@ index 7366165..c1638f7 100644
  
      /// The knob takes its proportion of the slot and slides along the rest;
 diff --git a/crates/appkit/src/coreanimation.rs b/crates/appkit/src/coreanimation.rs
-index 314da92..73505f4 100644
+index 314da92..6bb1630 100644
 --- a/crates/appkit/src/coreanimation.rs
 +++ b/crates/appkit/src/coreanimation.rs
-@@ -206,6 +206,7 @@ fn root_of(layer: Id) -> Id {
+@@ -206,12 +206,38 @@ fn root_of(layer: Id) -> Id {
  }
  
  /// Have the view showing `layer`'s tree recomposed.
 +#[track_caller]
  pub(crate) fn changed(layer: Id) {
++    let root = root_of(layer);
      // SAFETY: a layer of this crate's.
-     let view = unsafe { crate::layer::view_of(root_of(layer)) };
-@@ -1326,6 +1327,161 @@ fn place(gravity: Gravity, bounds: Rect, width: f64, height: f64) -> (f64, f64,
+-    let view = unsafe { crate::layer::view_of(root_of(layer)) };
+-    if !view.is_null() {
+-        crate::backing::damage_view(view);
++    let view = unsafe { crate::layer::view_of(root) };
++    if view.is_null() {
++        return;
++    }
++    if corefoundation::perf_trace_enabled() {
++        // SAFETY: the view belongs to this crate and is live while its layer changes.
++        if let Some(frame) = unsafe { crate::view::presentation_frame(view) } {
++            let area = u64::from(frame.width) * u64::from(frame.height);
++            if area >= 100_000 {
++                let caller = std::panic::Location::caller();
++                // SAFETY: a live view owned by this crate.
++                let class = unsafe { objc::object::class_of(view) }
++                    .map_or("?", objc::class::Class::name_str);
++                corefoundation::perf_trace_log(&format!(
++                    "stage=appkit.coreanimation_changed caller={}:{} layer={layer:p} root={root:p} view={view:p} view_class={class} frame={},{} {}x{} window={}x{}",
++                    caller.file(),
++                    caller.line(),
++                    frame.x,
++                    frame.y,
++                    frame.width,
++                    frame.height,
++                    frame.window_width,
++                    frame.window_height
++                ));
++            }
++        }
+     }
++    crate::backing::damage_view(view);
+ }
+ 
+ unsafe extern "C" fn frame(receiver: Id, _sel: Sel) -> NSRect {
+@@ -412,10 +438,106 @@ unsafe extern "C" fn contents(receiver: Id, _sel: Sel) -> Id {
+ /// shown, as the window server's use of one is on a Mac.
+ unsafe extern "C" fn set_contents(receiver: Id, _sel: Sel, contents: Id) {
+     let retained = objc::arc::retain(contents) as usize;
+-    if iosurface::is_surface(contents as CFTypeRef) {
++    let old_contents = read_node(receiver, |node| node.map_or(0, |node| node.contents));
++    let is_surface = iosurface::is_surface(contents as CFTypeRef);
++    if is_surface {
+         // SAFETY: a live surface.
+         unsafe { iosurface::IOSurfaceIncrementUseCount(contents as CFTypeRef) };
+     }
++    if corefoundation::perf_trace_enabled() {
++        let root = root_of(receiver);
++        // SAFETY: a layer of this crate's.
++        let view = unsafe { crate::layer::view_of(root) };
++        // SAFETY: the view belongs to this crate and is live while its layer changes.
++        let frame = if view.is_null() {
++            None
++        } else {
++            unsafe { crate::view::presentation_frame(view) }
++        };
++        if let Some(frame) =
++            frame.filter(|frame| u64::from(frame.width) * u64::from(frame.height) >= 100_000)
++        {
++            let (surface_id, seed, width, height) = if is_surface {
++                // SAFETY: contents is a live IOSurface.
++                unsafe {
++                    (
++                        iosurface::IOSurfaceGetID(contents as CFTypeRef),
++                        iosurface::IOSurfaceGetSeed(contents as CFTypeRef),
++                        iosurface::IOSurfaceGetWidth(contents as CFTypeRef),
++                        iosurface::IOSurfaceGetHeight(contents as CFTypeRef),
++                    )
++                }
++            } else {
++                (0, 0, 0, 0)
++            };
++            let should_trace_stack = {
++                static STACK_COUNTS: Mutex<Option<HashMap<usize, u8>>> = Mutex::new(None);
++                let mut counts = STACK_COUNTS
++                    .lock()
++                    .unwrap_or_else(|error| error.into_inner());
++                let count = counts
++                    .get_or_insert_with(HashMap::new)
++                    .entry(receiver as usize)
++                    .or_default();
++                if *count < 3 {
++                    *count += 1;
++                    true
++                } else {
++                    false
++                }
++            };
++            let stack = if should_trace_stack {
++                let mut frames: [*mut std::ffi::c_void; 8] = [std::ptr::null_mut(); 8];
++                let count = unsafe {
++                    darwin::backtrace::backtrace(frames.as_mut_ptr(), frames.len() as i32)
++                };
++                if count > 0 {
++                    let guest_frames = (0..(count as usize).min(2))
++                        .map(|index| {
++                            let pc = frames[index] as usize as u64;
++                            let location = corefoundation::perf_trace_map_pc(pc)
++                                .unwrap_or_else(|| String::from("unmapped"));
++                            format!("frame{index}={pc:#x}:{location}")
++                        })
++                        .collect::<Vec<_>>()
++                        .join("|");
++                    let symbols =
++                        unsafe { darwin::backtrace::backtrace_symbols(frames.as_ptr(), count) };
++                    if symbols.is_null() {
++                        format!("unavailable;guest={guest_frames}")
++                    } else {
++                        let stack = (0..count as usize)
++                            .map(|index| {
++                                let symbol = unsafe { *symbols.add(index) };
++                                if symbol.is_null() {
++                                    String::from("?")
++                                } else {
++                                    unsafe { std::ffi::CStr::from_ptr(symbol) }
++                                        .to_string_lossy()
++                                        .into_owned()
++                                }
++                            })
++                            .collect::<Vec<_>>()
++                            .join("|");
++                        unsafe { darwin::heap::free(symbols.cast()) };
++                        format!("{stack};guest={guest_frames}")
++                    }
++                } else {
++                    String::from("unavailable")
++                }
++            } else {
++                String::new()
++            };
++            corefoundation::perf_trace_log(&format!(
++                "stage=appkit.layer_set_contents layer={receiver:p} view={view:p} new={contents:p} old={old_contents:#x} same={} iosurface={is_surface} surface_id={surface_id} seed={seed} size={width}x{height} frame={},{} {}x{} stack={stack}",
++                old_contents == contents as usize,
++                frame.x,
++                frame.y,
++                frame.width,
++                frame.height
++            ));
++        }
++    }
+     let old = with_node(receiver, |node| {
+         node.decoded = None;
+         std::mem::replace(&mut node.contents, retained)
+@@ -1326,6 +1448,161 @@ fn place(gravity: Gravity, bounds: Rect, width: f64, height: f64) -> (f64, f64,
  
  /// Draw `layer`'s contents into `store` for a layer at `bounds` in window
  /// pixels, `scale` window pixels to the point, within `clip`, source-over.
@@ -1106,7 +1234,7 @@ index 314da92..73505f4 100644
  fn draw_contents(
      store: &mut Store,
      layer: Id,
-@@ -1333,15 +1489,20 @@ fn draw_contents(
+@@ -1333,15 +1610,20 @@ fn draw_contents(
      scale: (f64, f64),
      clip: Rect,
      opacity: f64,
@@ -1130,7 +1258,7 @@ index 314da92..73505f4 100644
          let (x, y, width, height) = place(
              gravity,
              bounds,
-@@ -1351,6 +1512,8 @@ fn draw_contents(
+@@ -1351,6 +1633,8 @@ fn draw_contents(
          if width <= 0.0 || height <= 0.0 {
              return;
          }
@@ -1139,7 +1267,7 @@ index 314da92..73505f4 100644
          let area = Rect {
              x: x.round() as i64,
              y: y.round() as i64,
-@@ -1367,13 +1530,25 @@ fn draw_contents(
+@@ -1367,13 +1651,25 @@ fn draw_contents(
          if area.is_empty() {
              return;
          }
@@ -1166,7 +1294,7 @@ index 314da92..73505f4 100644
          for row in area.y..area.y + area.height {
              let v = (row as f64 + 0.5 - y) / height;
              let from = ((v * source.height as f64) as usize).min(source.height - 1);
-@@ -1399,6 +1574,7 @@ fn draw_contents(
+@@ -1399,6 +1695,7 @@ fn draw_contents(
              }
          }
      });
@@ -1174,7 +1302,7 @@ index 314da92..73505f4 100644
  }
  
  /// Which part of a view's layer tree [`render`] draws: the root layer's own
-@@ -1409,6 +1585,9 @@ pub(crate) enum Pass {
+@@ -1409,6 +1706,9 @@ pub(crate) enum Pass {
      Sublayers,
  }
  
@@ -1184,7 +1312,7 @@ index 314da92..73505f4 100644
  /// Draw `view`'s layer tree into `store`, where the view sits at `rect` and
  /// may show within `clip`. Whether anything in it is still animating.
  pub(crate) fn render(view: Id, store: &mut Store, rect: Rect, clip: Rect, pass: Pass) -> bool {
-@@ -1428,13 +1607,32 @@ pub(crate) fn render(view: Id, store: &mut Store, rect: Rect, clip: Rect, pass:
+@@ -1428,13 +1728,32 @@ pub(crate) fn render(view: Id, store: &mut Store, rect: Rect, clip: Rect, pass:
          flipped: crate::view::is_flipped(view),
      };
      let now = darwin::mach::media_time();
@@ -1217,7 +1345,7 @@ index 314da92..73505f4 100644
              if let Some(color) = root_presented.background {
                  fill(
                      store,
-@@ -1443,7 +1641,14 @@ pub(crate) fn render(view: Id, store: &mut Store, rect: Rect, clip: Rect, pass:
+@@ -1443,7 +1762,14 @@ pub(crate) fn render(view: Id, store: &mut Store, rect: Rect, clip: Rect, pass:
                      root_presented.opacity,
                  );
              }
@@ -1233,7 +1361,7 @@ index 314da92..73505f4 100644
                  store,
                  root,
                  whole,
-@@ -1451,6 +1656,59 @@ pub(crate) fn render(view: Id, store: &mut Store, rect: Rect, clip: Rect, pass:
+@@ -1451,6 +1777,59 @@ pub(crate) fn render(view: Id, store: &mut Store, rect: Rect, clip: Rect, pass:
                  clip,
                  root_presented.opacity,
              );
@@ -1293,7 +1421,7 @@ index 314da92..73505f4 100644
              false
          }
          Pass::Sublayers => {
-@@ -1926,6 +2184,109 @@ mod tests {
+@@ -1926,6 +2305,109 @@ mod tests {
          objc::arc::pool_pop(pool);
      }
  
@@ -1637,7 +1765,7 @@ index f395984..3c43a56 100644
  }
  
 diff --git a/crates/appkit/src/event.rs b/crates/appkit/src/event.rs
-index 663570d..5fac82a 100644
+index 0b8441c..15c7604 100644
 --- a/crates/appkit/src/event.rs
 +++ b/crates/appkit/src/event.rs
 @@ -1,14 +1,29 @@
@@ -2544,7 +2672,7 @@ index 663570d..5fac82a 100644
  }
  
  /// The SDL id of the window the last pointer event came from; `0` before any.
-@@ -1129,6 +1641,77 @@ fn delegate_selector(name: &str) -> &'static str {
+@@ -1131,6 +1643,77 @@ fn delegate_selector(name: &str) -> &'static str {
  mod tests {
      use super::*;
  
@@ -2622,7 +2750,7 @@ index 663570d..5fac82a 100644
      #[test]
      fn a_programmatic_warp_updates_the_reported_pointer() {
          let previous = pointer_position();
-@@ -1141,12 +1724,74 @@ mod tests {
+@@ -1143,12 +1726,74 @@ mod tests {
  
      #[test]
      fn a_warp_echo_is_taken_once() {
@@ -2841,7 +2969,7 @@ index cf2184c..644aec8 100644
              => enter_exit_event, c"@96@0:8Q16{CGPoint=dd}24Q40d48q56@64q72q80^v88";
          "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"
 diff --git a/crates/appkit/src/view.rs b/crates/appkit/src/view.rs
-index 7040a80..41435d9 100644
+index ab58227..49308aa 100644
 --- a/crates/appkit/src/view.rs
 +++ b/crates/appkit/src/view.rs
 @@ -50,6 +50,7 @@ pub struct View {
@@ -2970,7 +3098,7 @@ index 7040a80..41435d9 100644
  }
  
  /// `-convertRectToBacking:`, which is the whole reason a Retina program asks a
-@@ -1846,6 +1917,8 @@ pub(crate) fn install() {
+@@ -1848,6 +1919,8 @@ pub(crate) fn install() {
          "setFrameSize:" => set_frame_size, c"v32@0:8{CGSize=dd}16";
          "setFrameOrigin:" => set_frame_origin, c"v32@0:8{CGPoint=dd}16";
          "bounds" => bounds, c"{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8";
@@ -2979,7 +3107,7 @@ index 7040a80..41435d9 100644
          "visibleRect" => visible_rect, c"{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8";
          "setBounds:" => set_bounds, c"v48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16";
          "convertRectToBacking:" => convert_rect_to_backing,
-@@ -1986,6 +2059,70 @@ mod tests {
+@@ -1990,6 +2063,70 @@ mod tests {
          (superview, subview)
      }
  
@@ -3051,7 +3179,7 @@ index 7040a80..41435d9 100644
      /// fades its subviews with it.
      #[test]
 diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
-index ea9454f..56b08f9 100644
+index 9911d6f..0e2c563 100644
 --- a/crates/appkit/src/window.rs
 +++ b/crates/appkit/src/window.rs
 @@ -21,6 +21,8 @@ pub struct Window {
@@ -3089,7 +3217,7 @@ index ea9454f..56b08f9 100644
  pub const INSTANCE_SIZE: usize = size_of::<Window>();
  
  /// The notification names a window posts.
-@@ -278,18 +292,16 @@ fn placed_origin(sdl: sdl3::Window) -> Option<(i32, i32)> {
+@@ -280,18 +294,16 @@ fn placed_origin(sdl: sdl3::Window) -> Option<(i32, i32)> {
  
  /// The pointer on the desktop, in SDL's coordinates, and the held buttons.
  ///
@@ -3114,7 +3242,7 @@ index ea9454f..56b08f9 100644
  }
  
  /// The reverse: a desktop position as the offset SDL wants for this window.
-@@ -412,6 +424,23 @@ pub fn all() -> Vec<Id> {
+@@ -414,6 +426,23 @@ pub fn all() -> Vec<Id> {
          .collect()
  }
  
@@ -3138,7 +3266,7 @@ index ea9454f..56b08f9 100644
  /// The SDL window behind an `NSWindow`, or null.
  ///
  /// # Safety
-@@ -1280,6 +1309,115 @@ unsafe extern "C" fn make_key_and_order_front(receiver: Id, _sel: Sel, _sender:
+@@ -1326,6 +1355,115 @@ unsafe extern "C" fn make_key_and_order_front(receiver: Id, _sel: Sel, _sender:
      order_front(receiver, true);
  }
  
@@ -3254,7 +3382,7 @@ index ea9454f..56b08f9 100644
  unsafe extern "C" fn order_front_regardless(receiver: Id, _sel: Sel) {
      order_front(receiver, false);
  }
-@@ -1372,6 +1510,8 @@ unsafe extern "C" fn order_out(receiver: Id, _sel: Sel, _sender: Id) {
+@@ -1418,6 +1556,8 @@ unsafe extern "C" fn order_out(receiver: Id, _sel: Sel, _sender: Id) {
  /// The SDL window is hidden rather than destroyed: a Metal swapchain may still
  /// be keyed by it, and that table is not this crate's to clear.
  unsafe extern "C" fn dealloc(receiver: Id, sel: Sel) {
@@ -3263,7 +3391,7 @@ index ea9454f..56b08f9 100644
      let window = window_of(receiver);
      objc::arc::release(std::mem::replace(
          &mut window.appearance,
-@@ -1401,17 +1541,46 @@ unsafe extern "C" fn dealloc(receiver: Id, sel: Sel) {
+@@ -1447,17 +1587,46 @@ unsafe extern "C" fn dealloc(receiver: Id, sel: Sel) {
  /// `-close`: the delegate hears `-windowWillClose:` while the window is still
  /// on screen, and the application then decides whether that was its last one.
  unsafe extern "C" fn close(receiver: Id, sel: Sel) {
@@ -3311,7 +3439,7 @@ index ea9454f..56b08f9 100644
      let should_close = objc::sel::get("windowShouldClose:");
      let target = [delegate_of(receiver), receiver]
          .into_iter()
-@@ -1421,22 +1590,29 @@ unsafe extern "C" fn perform_close(receiver: Id, _sel: Sel, _sender: Id) {
+@@ -1467,22 +1636,29 @@ unsafe extern "C" fn perform_close(receiver: Id, _sel: Sel, _sender: Id) {
                  .is_some_and(|class| class.method(should_close).is_some())
          });
      if let Some(target) = target {
@@ -3343,7 +3471,7 @@ index ea9454f..56b08f9 100644
  }
  
  /// The window a program's keystrokes go to, which is the last one ordered front.
-@@ -1524,7 +1700,7 @@ unsafe extern "C" fn perform_window_drag_with_event(receiver: Id, _sel: Sel, _ev
+@@ -1570,7 +1746,7 @@ unsafe extern "C" fn perform_window_drag_with_event(receiver: Id, _sel: Sel, _ev
          return;
      }
      let (Some((pointer_x, pointer_y, _)), Some((origin_x, origin_y))) = (
@@ -3352,7 +3480,7 @@ index ea9454f..56b08f9 100644
          sdl3::video::window_position(window.sdl),
      ) else {
          return;
-@@ -1573,7 +1749,7 @@ pub(crate) fn drag_moved() -> bool {
+@@ -1619,7 +1795,7 @@ pub(crate) fn drag_moved() -> bool {
      if sdl.is_null() {
          return false;
      }
@@ -3361,7 +3489,7 @@ index ea9454f..56b08f9 100644
          return false;
      };
      let at = |start: i32, from: f32, to: f32| start + (to - from).round() as i32;
-@@ -1608,6 +1784,21 @@ unsafe extern "C" fn set_becomes_key_only_if_needed(receiver: Id, _sel: Sel, val
+@@ -1654,6 +1830,21 @@ unsafe extern "C" fn set_becomes_key_only_if_needed(receiver: Id, _sel: Sel, val
      window_of(receiver).becomes_key_only_if_needed = value as usize;
  }
  
@@ -3383,7 +3511,7 @@ index ea9454f..56b08f9 100644
  unsafe extern "C" fn is_key_window(receiver: Id, _sel: Sel) -> u8 {
      (key_window() == receiver) as u8
  }
-@@ -1636,6 +1827,10 @@ unsafe extern "C" fn backing_scale_factor(receiver: Id, _sel: Sel) -> CGFloat {
+@@ -1682,6 +1873,10 @@ unsafe extern "C" fn backing_scale_factor(receiver: Id, _sel: Sel) -> CGFloat {
      }
  }
  
@@ -3394,7 +3522,7 @@ index ea9454f..56b08f9 100644
  fn scale_rect(rect: NSRect, scale: CGFloat) -> NSRect {
      NSRect {
          origin: NSPoint {
-@@ -2318,9 +2513,12 @@ pub(crate) fn install() {
+@@ -2369,9 +2564,12 @@ pub(crate) fn install() {
          "isKeyWindow" => is_key_window, c"c16@0:8";
          "isMainWindow" => is_key_window, c"c16@0:8";
          "isVisible" => is_visible, c"c16@0:8";
@@ -3410,7 +3538,7 @@ index ea9454f..56b08f9 100644
          "screen" => screen, c"@16@0:8";
          "backingScaleFactor" => backing_scale_factor, c"d16@0:8";
          "convertRectToBacking:" => convert_rect_to_backing,
-@@ -2335,9 +2533,10 @@ pub(crate) fn install() {
+@@ -2386,9 +2584,10 @@ pub(crate) fn install() {
          "setLevel:" => set_level, c"v24@0:8q16";
          "styleMask" => style_mask, c"Q16@0:8";
          "setStyleMask:" => set_style_mask, c"v24@0:8Q16";
@@ -3422,7 +3550,7 @@ index ea9454f..56b08f9 100644
          "setRestorable:" => ignored_flag, c"v20@0:8c16";
          // No state restoration, so nothing ever asks the class to restore.
          "setRestorationClass:" => ignored_integer, c"v24@0:8#16";
-@@ -2434,6 +2633,40 @@ pub(crate) fn install() {
+@@ -2492,6 +2691,40 @@ pub(crate) fn install() {
  mod tests {
      use super::*;
  
@@ -3463,7 +3591,7 @@ index ea9454f..56b08f9 100644
      /// What a window is, is read off its style mask and its level together -
      /// and is read again at every ordering, because a toolkit reuses one window
      /// as a dialog and then as a tooltip.
-@@ -2579,6 +2812,34 @@ mod tests {
+@@ -2637,6 +2870,34 @@ mod tests {
          objc::arc::release(panel);
      }
  
@@ -3498,7 +3626,7 @@ index ea9454f..56b08f9 100644
      /// A view that outlives its window must not answer `-window` with it:
      /// Studio's dock panels are freed while Qt still holds their views.
      #[test]
-@@ -2660,6 +2921,7 @@ mod tests {
+@@ -2718,6 +2979,7 @@ mod tests {
              window_of(plain).style_mask = style::TITLED | style::CLOSABLE;
              send(plain, sel, delegate);
              assert_eq!(window_of(plain).shown, 0);
@@ -3506,7 +3634,7 @@ index ea9454f..56b08f9 100644
              window_of(plain).shown = 1;
              window_of(plain).delegate =
                  objc::object::create_instance(objc::class::lookup(c"NSObject").unwrap(), 0);
-@@ -2668,13 +2930,103 @@ mod tests {
+@@ -2726,13 +2988,103 @@ mod tests {
          }
      }
  
@@ -3610,7 +3738,7 @@ index ea9454f..56b08f9 100644
          }
          let class =
              objc::class::allocate_pair(objc::class::lookup(c"NSObject"), c"WillCloseDelegate", 0)
-@@ -2688,11 +3040,13 @@ mod tests {
+@@ -2746,11 +3098,13 @@ mod tests {
          let window = objc::object::create_instance(objc::class::lookup(c"NSWindow").unwrap(), 0);
          window_of(window).delegate = objc::object::create_instance(class, 0);
          window_of(window).shown = 1;
@@ -3638,10 +3766,10 @@ index b34a9da..17c463b 100644
      }) as CFTypeRef
  }
 diff --git a/crates/corefoundation/src/lib.rs b/crates/corefoundation/src/lib.rs
-index da2f3cf..1ab8b6a 100644
+index da2f3cf..3559c70 100644
 --- a/crates/corefoundation/src/lib.rs
 +++ b/crates/corefoundation/src/lib.rs
-@@ -30,6 +30,57 @@ pub mod url;
+@@ -30,6 +30,69 @@ pub mod url;
  pub mod urlresource;
  pub mod uuid;
  
@@ -3654,6 +3782,18 @@ index da2f3cf..1ab8b6a 100644
 +pub fn perf_trace_enabled() -> bool {
 +    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 +    *ENABLED.get_or_init(|| std::env::var("ROSEMARY_PERF_TRACE").ok().as_deref() == Some("1"))
++}
++
++pub type PerfTracePcMapper = fn(u64) -> Option<String>;
++
++static PERF_TRACE_PC_MAPPER: std::sync::OnceLock<PerfTracePcMapper> = std::sync::OnceLock::new();
++
++pub fn set_perf_trace_pc_mapper(mapper: PerfTracePcMapper) {
++    let _ = PERF_TRACE_PC_MAPPER.set(mapper);
++}
++
++pub fn perf_trace_map_pc(pc: u64) -> Option<String> {
++    PERF_TRACE_PC_MAPPER.get().and_then(|mapper| mapper(pc))
 +}
 +
 +pub fn perf_trace_start() -> Option<std::time::Instant> {
@@ -3699,7 +3839,7 @@ index da2f3cf..1ab8b6a 100644
  /// Install the classes this crate owns. Idempotent.
  pub fn bootstrap() {
      objc::bootstrap();
-@@ -1240,6 +1291,22 @@ mod collection_tests {
+@@ -1240,6 +1303,22 @@ mod collection_tests {
          }
      }
  
@@ -4146,3 +4286,65 @@ index 22a7e4d..7b25c1d 100644
  }
  
  /// `ROSEMARY_LOG_UNRECOGNIZED=1`: report each unanswered message once and answer
+diff --git a/crates/rosemary/src/fault.rs b/crates/rosemary/src/fault.rs
+index c83e0eb..b1c4480 100644
+--- a/crates/rosemary/src/fault.rs
++++ b/crates/rosemary/src/fault.rs
+@@ -185,6 +185,43 @@ pub fn attribute(pc: u64) -> Attribution {
+     }
+ }
+ 
++pub fn describe_host_pc(return_pc: u64) -> Option<String> {
++    let previous = {
++        #[cfg(target_arch = "x86_64")]
++        {
++            return_pc.checked_sub(1)
++        }
++        #[cfg(target_arch = "aarch64")]
++        {
++            return_pc.checked_sub(4)
++        }
++        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
++        {
++            None
++        }
++    };
++    let mut translated = None;
++    for pc in std::iter::once(return_pc).chain(previous) {
++        match attribute(pc) {
++            Attribution::Instruction { guest_va, region } => {
++                let image = crate::thunk::current()
++                    .and_then(|vm| vm.program.locate(guest_va))
++                    .unwrap_or_else(|| String::from("unknown"));
++                return Some(format!(
++                    "mapped_pc={pc:#x},guest={guest_va:#x},region={region:#x},image={image}"
++                ));
++            }
++            Attribution::Translated { region, why } => {
++                translated.get_or_insert_with(|| {
++                    format!("mapped_pc={pc:#x},translated_region={region:#x},kind={why:?}")
++                });
++            }
++            Attribution::Elsewhere => {}
++        }
++    }
++    translated
++}
++
+ /// One placed translation, as anything outside this module may see it.
+ ///
+ /// A view rather than a borrow of [`Placed`] because the vector is behind a mutex that
+diff --git a/crates/rosemary/src/startup.rs b/crates/rosemary/src/startup.rs
+index 3ce0ab8..4f4f7a8 100644
+--- a/crates/rosemary/src/startup.rs
++++ b/crates/rosemary/src/startup.rs
+@@ -26,6 +26,9 @@ pub fn run(exec: &dyn Execution) -> Result<i32, VmError> {
+     // image map goes with it.
+     crate::fault::install();
+     crate::fault::note_images(exec.report());
++    if corefoundation::perf_trace_enabled() {
++        corefoundation::set_perf_trace_pc_mapper(crate::fault::describe_host_pc);
++    }
+     // Before any framework can ask a question about the main executable and get
+     // an answer about this binary rather than the program's. See [`crate::compat`].
+     #[cfg(target_os = "macos")]

@@ -4,7 +4,7 @@ Data do snapshot: 12 de outubro de 2026, horário local America/Recife.
 
 ## Ponto de partida
 
-Citric começou como um clone local da árvore Rosemary em /home/lag/rosemary-studio/source. O commit-base continua sendo c14275b4197e97d08c068acee79a016dcb5c5f6d; o patch canônico registra 19 arquivos Rust, com 1.987 linhas adicionadas e 151 removidas. Nesta migração, a ponta atual da branch passou a guardar launcher, scripts, documentação e patches, sem os crates Rosemary. scripts/build-studio.sh busca a base fixada, aplica patches/series numa cópia temporária e compila bin/rosemary. O histórico Git foi mantido, sem reescrita, portanto commits anteriores ainda contêm o source Rosemary. Os remotes locais são origin=https://github.com/lAg201007/Citric.git e upstream=https://github.com/microlift/rosemary.git. O GitHub ainda trata Citric como repositório independente, não como fork formal da rede Rosemary.
+Citric is pinned to the official Rosemary v0.2.2 release at commit `04dce85b63154d6451adf74e3f7bacf40add08bd`. The canonical patch series applies to this upstream revision and carries Citric compatibility changes across 22 Rust files, including guest-PC attribution for the Play redraw trace. `scripts/build-studio.sh` fetches the exact pinned revision, applies `patches/series` in a temporary source tree, and builds `bin/rosemary`. Citric’s current snapshot contains the launcher, scripts, documentation, and patches; prior Git history remains unchanged and still includes Rosemary source.
 
 A solicitação original de execução no Linux está fora do repositório CaseSolved. Nenhum código, place ou asset do jogo CaseSolved foi copiado para Citric. O nome Citric foi escolhido pelo usuário para este novo repositório.
 
