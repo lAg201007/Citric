@@ -115,6 +115,14 @@ def download_studio_spec(root: Path = ROOT, replace: bool = False) -> LaunchSpec
     return LaunchSpec(tuple(argv), {})
 
 
+def check_studio_update_spec(root: Path, installed_version: str) -> LaunchSpec:
+    module = root / "citric_launcher" / "studio_bundle.py"
+    if not module.is_file():
+        raise FileNotFoundError(f"Studio bundle update checker not found: {module}")
+    argv = [sys.executable, str(module), "--check-update", "--installed-version", installed_version]
+    return LaunchSpec(tuple(argv), {})
+
+
 def studio_bundle_version(bundle: Path) -> str | None:
     if bundle.is_symlink():
         return None

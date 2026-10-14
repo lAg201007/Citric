@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import plistlib
+import re
 import shutil
 import stat
 import struct
@@ -24,6 +26,9 @@ ARCHIVE_SHA256 = "04bab64d3b463519874e09887e1ca75777e6b39285f4cb78720449477404da
 MAX_ARCHIVE_SIZE = 2 * 1024**3
 MAX_UNPACKED_SIZE = 4 * 1024**3
 USER_AGENT = "Citric-Studio-Bundle-Installer/1.0"
+VERSION_ENDPOINT = "https://clientsettings.roblox.com/v2/client-version/MacStudio"
+VERSION_PATTERN = re.compile(r"\d+(?:\.\d+){2,3}\Z")
+BUILD_PATTERN = re.compile(r"version-[a-f0-9]{16,64}\Z")
 
 
 class DownloadError(Exception):
@@ -66,6 +71,54 @@ def _download_archive(destination: Path) -> None:
         raise DownloadError("The Studio download ended before the complete archive arrived.")
     if digest.hexdigest() != ARCHIVE_SHA256:
         raise DownloadError("The downloaded Studio archive did not match the pinned SHA-256 checksum.")
+
+
+def _latest_release() -> tuple[str, str]:
+    request = urllib.request.Request(VERSION_ENDPOINT, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            final_url = urlsplit(response.geturl())
+            if final_url.scheme != "https" or final_url.hostname != "clientsettings.roblox.com":
+                raise DownloadError("Roblox's version endpoint redirected to an unexpected host.")
+            payload = response.read(64 * 1024 + 1)
+    except urllib.error.HTTPError as error:
+        raise DownloadError(f"Roblox's version endpoint returned HTTP {error.code}.") from error
+    except urllib.error.URLError as error:
+        raise DownloadError(f"Could not check Roblox Studio's version: {error.reason}") from error
+    except TimeoutError as error:
+        raise DownloadError("Roblox Studio's version check timed out.") from error
+    if len(payload) > 64 * 1024:
+        raise DownloadError("Roblox's version response exceeded the accepted size.")
+    try:
+        data = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise DownloadError("Roblox's version endpoint returned invalid JSON.") from error
+    if not isinstance(data, dict):
+        raise DownloadError("Roblox's version response has an invalid structure.")
+    version = data.get("version")
+    build = data.get("clientVersionUpload")
+    if not isinstance(version, str) or not VERSION_PATTERN.fullmatch(version):
+        raise DownloadError("Roblox's version response did not contain a valid Studio version.")
+    if not isinstance(build, str) or not BUILD_PATTERN.fullmatch(build):
+        raise DownloadError("Roblox's version response did not contain a valid Studio build ID.")
+    return version, build
+
+
+def check_update(installed_version: str) -> dict[str, object]:
+    if not VERSION_PATTERN.fullmatch(installed_version):
+        raise DownloadError("The installed Studio version could not be identified.")
+    latest_version, latest_build = _latest_release()
+    installed_parts = tuple(int(part) for part in installed_version.split("."))
+    latest_parts = tuple(int(part) for part in latest_version.split("."))
+    width = max(len(installed_parts), len(latest_parts))
+    installed_parts += (0,) * (width - len(installed_parts))
+    latest_parts += (0,) * (width - len(latest_parts))
+    return {
+        "installed_version": installed_version,
+        "latest_version": latest_version,
+        "latest_build": latest_build,
+        "update_available": latest_parts > installed_parts,
+    }
 
 
 def _archive_path(info: zipfile.ZipInfo) -> tuple[str, ...] | None:
@@ -292,9 +345,17 @@ def install(replace: bool = False) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install Citric's pinned official Roblox Studio bundle")
-    parser.add_argument("--replace", action="store_true", help="replace a different app bundle after confirmation")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--replace", action="store_true", help="replace a different app bundle after confirmation")
+    modes.add_argument("--check-update", action="store_true", help="check Roblox's currently published Studio version")
+    parser.add_argument("--installed-version", help="currently installed Studio version for --check-update")
     args = parser.parse_args(argv)
     try:
+        if args.check_update:
+            if not args.installed_version:
+                parser.error("--check-update requires --installed-version")
+            print(json.dumps(check_update(args.installed_version), separators=(",", ":")))
+            return 0
         print(install(replace=args.replace))
     except (DownloadError, OSError) as error:
         print(f"Studio download failed: {error}", file=sys.stderr)

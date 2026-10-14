@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 
 import gi
 
@@ -13,7 +15,9 @@ from .core import (
     STUDIO_BUNDLE_VERSION,
     build_launch_spec,
     build_rosemary_spec,
+    check_studio_update_spec,
     default_config,
+    discover_studio_app,
     download_studio_spec,
     install_desktop_entry,
     load_config,
@@ -35,6 +39,7 @@ class CitricWindow(Gtk.ApplicationWindow):
         self._processes: list[Gio.Subprocess] = []
         self._chooser: Gtk.FileChooserNative | None = None
         self._replacement_dialog: Gtk.Window | None = None
+        self._studio_update_version: str | None = None
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         outer.set_margin_top(22)
@@ -116,6 +121,7 @@ class CitricWindow(Gtk.ApplicationWindow):
         self.status = Gtk.Label(label=self._diagnostic_summary(), xalign=0, wrap=True)
         self.status.add_css_class("dim-label")
         outer.append(self.status)
+        self._check_for_studio_update()
 
     def _field_row(self, title: str, entry: Gtk.Entry, callback) -> Gtk.Box:
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -178,6 +184,16 @@ class CitricWindow(Gtk.ApplicationWindow):
             self.status.set_text(f"Failed to start the build: {error}")
 
     def _download_studio(self, *_args) -> None:
+        if (
+            self._studio_update_version is not None
+            and self._version_key(self._studio_update_version) > self._version_key(STUDIO_BUNDLE_VERSION)
+        ):
+            self.status.set_text(
+                f"Roblox Studio {self._studio_update_version} is available. Citric currently installs only the "
+                f"validated {STUDIO_BUNDLE_VERSION} build, so this newer version is not installed yet. "
+                "Your current Studio bundle has not been changed."
+            )
+            return
         bundle = ROOT / "app" / "full" / "RobloxStudio.app"
         if studio_bundle_version(bundle) == STUDIO_BUNDLE_VERSION:
             self.studio_entry.set_text(str(bundle))
@@ -192,6 +208,49 @@ class CitricWindow(Gtk.ApplicationWindow):
             self._show_studio_replacement_dialog()
             return
         self._start_studio_download(replace=False)
+
+    @staticmethod
+    def _version_key(version: str) -> tuple[int, ...]:
+        parts = tuple(int(part) for part in version.split("."))
+        return parts + (0,) * (4 - len(parts))
+
+    def _check_for_studio_update(self) -> None:
+        configured = self.studio_entry.get_text().strip()
+        bundle = Path(configured).expanduser() if configured else discover_studio_app(ROOT)
+        if bundle is None:
+            return
+        installed_version = studio_bundle_version(bundle)
+        if installed_version is None:
+            return
+        try:
+            spec = check_studio_update_spec(ROOT, installed_version)
+            launcher = Gio.SubprocessLauncher.new(
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE
+            )
+            launcher.set_cwd(str(ROOT))
+            process = launcher.spawnv(list(spec.argv))
+            self._processes.append(process)
+            process.communicate_utf8_async(None, None, self._on_studio_update_check_exit, None)
+        except (OSError, GLib.Error):
+            # A version check is advisory; it must not prevent launching Studio.
+            return
+
+    def _on_studio_update_check_exit(self, process: Gio.Subprocess, result, _user_data) -> None:
+        try:
+            _success, output, _error_output = process.communicate_utf8_finish(result)
+            if not process.get_if_exited() or process.get_exit_status() != 0 or not output:
+                return
+            result_data = json.loads(output)
+            latest_version = result_data.get("latest_version")
+            if result_data.get("update_available") is True and isinstance(latest_version, str):
+                self._studio_update_version = latest_version
+                self.download_studio_button.set_label(f"UPDATE STUDIO NEW VERSION {latest_version}")
+        except (GLib.Error, json.JSONDecodeError, AttributeError, TypeError):
+            # An unavailable or malformed version response leaves the normal launcher usable.
+            pass
+        finally:
+            if process in self._processes:
+                self._processes.remove(process)
 
     def _show_studio_replacement_dialog(self) -> None:
         dialog = Gtk.Window(title="Replace Roblox Studio bundle")
