@@ -45,3 +45,26 @@ A solicitação original de execução no Linux está fora do repositório CaseS
 The visible Play stutter is currently confirmed resolved. If it returns, inspect transparent-row counts and the caller locations in a fresh damage trace. The separate camera and docking issues remain deferred. Retest Open from File separately; arbitrary accessory-view rendering also remains unverified.
 
 Não repetir testes complexos de mouse automaticamente. Para qualquer novo teste de arraste, perguntar ao usuário e deixar que ele interaja na janela.
+
+## Clipboard follow-up status
+
+The current bridge distinguishes promised Carbon pasteboard flavors from
+genuinely empty data, registers and invokes the PromiseKeeper, exposes the
+promised-flavor flag, materializes text eagerly for SDL's eager UTF-8 clipboard
+API, and resolves other promised flavors on demand. External clipboard changes
+replace stale local flavors, local writes do not get overwritten by a
+resynchronization pass, and Carbon `ItemCount`/`PasteboardItemID` output uses
+the API's 32-bit ABI. Regression coverage includes promise resolution,
+callback behavior, stale external flavors, and the 32-bit output canary.
+
+Automated validation passed: 15 focused pasteboard tests, the locked offline
+release build, formatting, patch diff checks, and clean application to the
+pinned Rosemary base. The installed `bin/rosemary` hash is
+`280140f9a9a8324ccef9564953832234c8f6a9c144ce979fcce9df342b67daa3`.
+
+Manual validation is still pending. The latest report says Studio-to-search
+paste works, while cut does not; search-to-other-Studio paste and all
+clipboard transfers involving external Linux applications still fail. The
+first debug-profile attempt ran out of temporary disk space; the low-disk
+release-profile verification completed successfully. Continue with the
+metadata-only `ROSEMARY_TRACE_CLIPBOARD` and `ROSEMARY_INPUT_TRACE` traces.

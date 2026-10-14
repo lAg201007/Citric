@@ -194,6 +194,51 @@ Warnings:
 
 ---
 
+Deployment: citric_clipboard_promises_20261013
+
+State: paused with implementation and automated validation complete; manual
+clipboard validation remains incomplete.
+
+Outcome: the Carbon pasteboard bridge now distinguishes promised flavors from
+genuinely empty CFData, registers and invokes PromiseKeeper callbacks,
+materializes promised text eagerly for SDL's eager UTF-8 clipboard interface,
+resolves non-text promises on demand, replaces stale local flavors when the
+external clipboard changes, avoids resynchronizing over a local write, and
+uses UInt32/u32 for Carbon item-count and pasteboard-item-ID output. Regression
+coverage was added for promise callbacks, on-demand non-text resolution,
+stale external flavor replacement, and the 32-bit output canary.
+
+Verification: 15 focused pasteboard tests passed with the low-disk test
+profile, the locked offline release build passed, formatting and source diff
+checks passed, and the generated canonical patch applied cleanly to the pinned
+Rosemary base. The installed `bin/rosemary` hash is
+`280140f9a9a8324ccef9564953832234c8f6a9c144ce979fcce9df342b67daa3`.
+An earlier debug-profile attempt ran out of temporary disk space; that attempt
+was superseded by the successful low-disk verification.
+
+Manual evidence: Studio-to-search paste works in the latest user report, but
+cut does not; search-to-other-Studio paste remains broken; and clipboard
+transfers to or from external Linux applications remain broken.
+
+Exact continuation point: launch a fresh Citric session with
+`ROSEMARY_TRACE_CLIPBOARD=1` and `ROSEMARY_INPUT_TRACE=1`, reproduce one
+external-to-Studio failure and one search-to-other-control failure, and inspect
+metadata-only traces. Do not log clipboard contents. Preserve the existing
+user-owned `scripts/run-mcp.sh` and unrelated working-tree changes. No commit
+or push was made by this handoff.
+
+Token report for `citric_clipboard_promises_20261013`:
+
+Deployment token report: `citric_clipboard_promises_20261013` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warning: no session record matched this deployment ID.
+
+---
+
 Deployment: citric_clipboard_20261013
 
 State: implementation complete; manual UI retest is pending. The implementation and installed
@@ -224,6 +269,45 @@ existing user-owned `scripts/run-mcp.sh` and unrelated working-tree changes.
 
 Token report: unavailable; no matching session record was found for
 `citric_clipboard_20261013`.
+
+---
+
+Deployment: citric_clipboard_followup_20261013
+
+State: paused with implementation and automated validation complete, but the
+user-visible clipboard contract still failing in multiple controls.
+
+Outcome: the follow-up patch added selection-only field editors for selectable
+read-only NSTextField controls, blocks paste/host text commits/IME composition
+in those editors, synchronizes the SDL system clipboard before WebKit exposes
+general text and HTML, walks focused responder ancestors for key-equivalent
+handling, and lets WKWebView recognize focused descendants. Privacy-safe
+ROSEMARY_TRACE_CLIPBOARD and ROSEMARY_INPUT_TRACE diagnostics record metadata
+only. The user confirmed Ctrl+C and Ctrl+X in Toolbox and Explorer, but Ctrl+V
+still fails there; all three clipboard shortcuts remain broken elsewhere,
+including the script editor and properties.
+
+Verification: locked offline Release build, seven pasteboard tests, 21 text
+tests, rustfmt, source git diff checks, and clean application of the generated
+patch to the pinned Rosemary base passed. No commit or push was made.
+
+Pending: restart with `ROSEMARY_TRACE_CLIPBOARD=1` and
+`ROSEMARY_INPUT_TRACE=1`, reproduce one Toolbox/Explorer paste failure and one
+script-editor or property shortcut failure, and inspect the metadata trace.
+The next code entry point is AppKit focused-responder/key-equivalent dispatch
+and WebKit clipboard offering. Preserve user-owned launcher changes,
+`scripts/run-mcp.sh`, and canonical patch additions.
+
+Token report for `citric_clipboard_followup_20261013`:
+
+Deployment token report: `citric_clipboard_followup_20261013` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID
 
 ---
 
@@ -258,3 +342,48 @@ if the installed manifest differs from the recorded local snapshot.
 
 Token report: `unavailable`; no matching session record was available for
 `launcher_studio_bundle_20261013`.
+
+---
+
+Deployment: studio_update_label_20261013
+
+State: complete; the launcher implementation and local automated checks are
+finished. Live endpoint/network access and GTK GUI behavior remain unverified
+in this environment.
+
+Outcome: the GTK launcher now checks Roblox's published Mac Studio version at
+startup when it can identify the selected installed bundle. If the published
+version is newer, it changes the action label to `UPDATE STUDIO NEW VERSION
+<version>`. Citric does not install that release automatically. Clicking the
+action for a release newer than the validated pin explains that only
+0.742.0.7421053 can currently be installed and leaves the existing bundle
+unchanged; the pinned installer still handles its verified archive normally.
+
+Material changes are in `citric_launcher/app.py`, `citric_launcher/core.py`,
+`citric_launcher/studio_bundle.py`, `README.md`, `docs/bundle.md`, and
+`docs/current-state.md`. The checker validates the endpoint host, response
+size, JSON shape, version, and build identifier before comparing numeric
+version components. The existing pinned checksum and compatibility boundary
+were preserved.
+
+Verification: Python compilation, six launcher unit tests, version-comparison
+smoke checks, and a scoped `git diff --check` passed. The live Roblox endpoint,
+network retrieval, and GTK click behavior were not exercised here. Existing
+unrelated changes, including `patches/0001-citric-runtime-compat.patch` and
+the untracked `scripts/run-mcp.sh`, remain preserved.
+
+Exact next entry point: run the launcher with network access and a compatible
+installed bundle, verify that the label follows the published version, and
+click it once for a newer unvalidated release to confirm the explanatory status
+and unchanged bundle.
+
+Token report for `studio_update_label_20261013`:
+
+Deployment token report: `studio_update_label_20261013` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID

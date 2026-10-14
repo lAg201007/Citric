@@ -1,8 +1,8 @@
 # Project progress
 
-Latest deployment: citric_dark_picker_20261013; code and automated validation
-are complete, and the user confirmed the Import chooser manually. Open from File
-remains to be tested separately.
+Latest completed deployment: studio_update_label_20261013. Its code and local
+automated checks are complete; live endpoint access and GTK GUI validation
+remain pending. There is no active deployment.
 
 The user confirmed that a periodic roughly 0.5 second stutter occurs in Play
 even in an empty Baseplate. A per-view trace isolated pixel-content copying
@@ -74,10 +74,14 @@ search behavior. The full AppKit suite had two unrelated dark-theme named-color
 failures; this does not block the validated fix. The next milestone is a new
 user-selected compatibility issue.
 
-The current deployment is `citric_clipboard_20261013`. Its code and release
-build are complete, but manual UI validation is pending the user's next
-retest. The user established that native copy from Toolbox/Explorer reaches an
-external Linux application, while external text cannot be pasted into Studio.
+The current deployment is `citric_clipboard_promises_20261013`. Its source
+patch and release build are complete, but the manual retest still fails in
+several paths. The Carbon bridge now resolves promised flavors, eagerly
+materializes promised text for SDL, replaces stale external formats, avoids
+local-write resynchronization, and uses the correct 32-bit item-count and
+item-ID ABI. Studio-to-search paste works in the latest report, while cut,
+search-to-other-control paste, and all transfers involving external Linux
+applications still fail.
 The canonical patch now synchronizes non-empty SDL clipboard text despite a
 false availability result, preserves local state when the backend is
 unavailable, clears stale plain text and HTML on confirmed empty external
@@ -85,13 +89,15 @@ clipboard state, and makes identical observations idempotent. Native AppKit
 text responders and the WebKit editor accept Control and Command clipboard
 shortcuts; plain copy/cut clears stale HTML.
 
-Verification completed: release build with locked offline dependencies, seven
-pasteboard tests, 21 text tests, rustfmt check, source diff check, and clean
-application of the generated patch to the pinned Rosemary base. The installed
-`bin/rosemary` is ignored. Next entry point: restart through Citric and verify
-copy/paste in a native property/editor field, Toolbox/Explorer search, the
-script editor, and an external Linux application. Do not treat the absence of
-external clipboard input as fixed until that manual retest passes.
+Verification completed: 15 focused pasteboard tests, locked offline Release
+build, rustfmt, source diff checks, and clean application of the generated
+patch to the pinned Rosemary base. The installed `bin/rosemary` is ignored;
+its current hash is `280140f9a9a8324ccef9564953832234c8f6a9c144ce979fcce9df342b67daa3`.
+The first debug-profile attempt ran out of temporary disk space; the
+low-disk release-profile verification passed. Exact continuation point:
+launch with `ROSEMARY_TRACE_CLIPBOARD=1` and `ROSEMARY_INPUT_TRACE=1`, then
+reproduce external-to-Studio and search-to-other-control paths. Do not treat
+clipboard input as fixed until those manual paths pass.
 
 The `launcher_studio_bundle_20261013` deployment is implementation-complete.
 The GTK launcher now offers download and install of the pinned Roblox Studio
@@ -103,3 +109,17 @@ network download and installation remain unverified because DNS resolution was
 unavailable in this environment. No active deployment remains after this
 handoff; the next milestone is user validation of the button with network
 access.
+
+The `studio_update_label_20261013` deployment is complete. On launcher startup,
+Citric checks Roblox's published Mac Studio version asynchronously against the
+selected installed bundle. When a newer version is published, the button is
+renamed to `UPDATE STUDIO NEW VERSION <version>`. Citric does not auto-install
+that release: the pinned 0.742.0.7421053 build is the only validated installer,
+and selecting the button for a newer unvalidated release leaves the installed
+bundle unchanged while explaining the limitation.
+
+Verification completed with Python compilation, six launcher unit tests,
+version-comparison smoke checks, and a scoped whitespace check. The live
+endpoint/network and GTK GUI behavior were not exercised in this environment.
+There is no active deployment; the next entry point is a manual launcher run
+with network access to verify the label and guarded click behavior.

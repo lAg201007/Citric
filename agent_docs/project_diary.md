@@ -111,6 +111,14 @@ different early selector failure.
   clipboard shortcuts, and plain copy/cut no longer leaves stale HTML. Release
   build and focused pasteboard/text tests passed; manual UI retest is pending.
 
+- On 2026-10-13, the clipboard follow-up added selection-only field editors
+  for selectable read-only NSTextField controls, rejected paste and host/IME
+  commits in those fields, synchronized SDL clipboard state before WebKit
+  reads it, and searched focused responder ancestors for key equivalents.
+  Privacy-safe clipboard and input traces were added. Automated validation
+  passed, but the latest manual evidence leaves paste and other controls
+  unresolved.
+
 - On 2026-10-13 the launcher gained a managed Studio download action. The
   implementation pins the known compatible x86_64 archive and checksum rather
   than silently following an update channel, validates the app before install,
@@ -119,3 +127,24 @@ different early selector failure.
   exercised because this environment had no DNS resolution; retain the pending
   manual check and refresh the bundle manifest if a different local build is
   installed.
+
+- On 2026-10-13 the launcher gained a bounded Studio update notice. It checks
+  Roblox's MacStudio version endpoint at startup and labels the action
+  `UPDATE STUDIO NEW VERSION <version>` when the published version is newer
+  than the selected bundle. Automatic replacement was deliberately rejected:
+  only 0.742.0.7421053 has a recorded checksum and compatibility validation,
+  so a newer release is displayed but the current bundle remains untouched.
+  The endpoint and GUI were not exercised in this environment; manual
+  validation with network access remains the next step.
+
+- On 2026-10-13, the clipboard follow-up exposed a Carbon promise boundary:
+  Qt registered promised flavors, while the bridge stored them as empty data
+  and never invoked the provider. The fix keeps promised data distinct from
+  genuine empty data, invokes PromiseKeeper callbacks, resolves text eagerly
+  for SDL's eager clipboard API, resolves other formats on demand, removes
+  stale external flavors, avoids local-write resync, and corrects Carbon
+  item-count/item-ID output widths to UInt32. The release build and 15 focused
+  pasteboard tests passed. Manual validation still reports failures across
+  cut, search-to-other-control paste, and Linux application boundaries. The
+  durable lesson is to implement the promise contract rather than treating
+  NULL promised data as an empty string.

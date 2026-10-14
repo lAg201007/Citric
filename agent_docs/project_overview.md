@@ -35,6 +35,13 @@ checksum and app metadata before atomically installing the ignored bundle;
 replacement of a different existing bundle requires an explicit GTK
 confirmation.
 
+At startup, the launcher makes an advisory request to Roblox's MacStudio
+version endpoint when a compatible installed bundle is available. A newer
+published version changes the action label to `UPDATE STUDIO NEW VERSION
+<version>`. Selecting it never silently replaces Studio: the validated
+0.742.0.7421053 archive remains the only installable build, and a newer
+unvalidated release is reported while the current bundle stays intact.
+
 The launcher applies a narrow, plugin-ID-agnostic compatibility rule to
 cached plugin models that contain the known legacy `bit` fallback declaration.
 It changes only that exact signature to use Roblox's built-in `bit32`, with a
@@ -58,8 +65,16 @@ equivalent handling, preventing doubled characters in Studio search fields
 while preserving Backspace and shortcuts.
 
 Clipboard support covers both directions of the Linux/Studio boundary. Native
-AppKit and WebKit text controls now handle Control and Command copy, cut, paste,
+AppKit and WebKit text controls handle Control and Command copy, cut, paste,
 and select-all paths. The SDL pasteboard bridge reads non-empty external text
 even when the availability flag is unreliable, preserves local state when the
 backend is unavailable, clears stale formats when an external clipboard is
 confirmed empty, and avoids repeated change notifications for identical reads.
+Carbon promised flavors are tracked separately from empty data; the
+PromiseKeeper is registered and invoked, promised text is materialized eagerly
+for SDL's eager UTF-8 API, other promised flavors resolve on demand, stale
+external flavors are replaced, and Carbon item-count/item-ID outputs use the
+required 32-bit ABI. Privacy-safe diagnostics are gated by
+ROSEMARY_TRACE_CLIPBOARD and ROSEMARY_INPUT_TRACE. Manual validation remains
+incomplete: Studio-to-search paste works, while cut, search-to-other-control
+paste, and transfers involving external Linux applications still fail.

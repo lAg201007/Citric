@@ -24,6 +24,14 @@ fetches a pinned Roblox CDN ZIP, checks its SHA-256, validates the bundle
 identifier/version/executable and Intel Mach-O slice, and installs it under the
 ignored `app/full/RobloxStudio.app` path with a replacement confirmation.
 
+`citric_launcher/studio_bundle.py --check-update` queries
+`clientsettings.roblox.com/v2/client-version/MacStudio`, validates the returned
+version and build identifier, and compares numeric version components. The GTK
+launcher runs this check asynchronously and updates its button label when a
+newer release exists. The check is advisory because the downloader has a
+recorded checksum and compatibility validation only for the pinned build;
+unknown releases are never installed automatically.
+
 The launcher clears inherited `LC_ALL` and forces `LC_NUMERIC=C` for Studio.
 Launch metadata records both the incoming and effective numeric locale values
 so decimal-literal failures can be diagnosed.
@@ -76,7 +84,19 @@ even when SDL reports no clipboard text, while the bridge tracks the last
 successfully observed or exported value so unavailable backends do not erase
 local state. Confirmed empty external clipboards clear stale plain text and
 HTML. Identical observations are idempotent and do not increment the
-pasteboard change count or discard rich HTML. Native copy and cut export plain
-text without stale rich formats; native and WebKit text controls accept both
-Control and Command C/X/V/A shortcuts. Clipboard trace logging, when enabled,
-records availability and byte counts only, never clipboard contents.
+pasteboard change count or discard rich HTML. Carbon promised flavors are
+represented distinctly from empty CFData, promise callbacks are materialized
+without holding the board mutex, and promised text is eagerly converted to
+SDL's UTF-8 clipboard representation; non-text promises resolve when
+requested. Carbon ItemCount and PasteboardItemID output parameters use
+UInt32/u32. Native copy and cut export plain text without stale rich formats;
+native and WebKit text controls accept both Control and Command C/X/V/A
+shortcuts. Clipboard trace logging, when enabled, records availability and
+byte counts only, never clipboard contents.
+The follow-up patch permits selection-only field editors for selectable
+read-only NSTextField instances while rejecting paste, host text commits, and
+IME composition in those editors. WebKit synchronizes the system clipboard
+before exposing general text and HTML, and key-equivalent dispatch walks the
+focused responder's ancestor views. Manual validation remains incomplete:
+Toolbox and Explorer copy/cut work, while paste there and clipboard shortcuts
+in other controls still fail.

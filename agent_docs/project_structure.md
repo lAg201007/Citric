@@ -6,6 +6,9 @@
   regression coverage for printable text, editing keys, and shortcuts.
 - crates/appkit/src/pasteboard.rs: SDL system-clipboard synchronization,
   plain/rich text ownership, and external clipboard state tracking.
+- crates/appkit/src/pasteboard_manager.rs: Carbon pasteboard ABI, promised
+  flavor registration and resolution, PromiseKeeper callbacks, and item
+  identifier/count compatibility.
 - crates/appkit/src/text.rs: native AppKit text selection, copy/cut actions,
   and Control/Command editing shortcuts.
 - crates/webkit/src/web_view.rs: WebKit editor clipboard and keyboard shortcut
@@ -20,7 +23,11 @@
 - citric_launcher/: GTK 4 UI, configuration, desktop-entry integration, and
   launch diagnostics.
 - citric_launcher/studio_bundle.py: pinned Studio archive downloader,
-  checksum/app validation, safe ZIP extraction, and atomic installation.
+  checksum/app validation, safe ZIP extraction, atomic installation, and the
+  bounded published-version check.
+- citric_launcher/app.py and citric_launcher/core.py: asynchronous Studio
+  update availability check, update button label, and guarded pinned-installer
+  behavior.
 - scripts/build-studio.sh: fetches the pinned Rosemary base, applies the patch
   series in a temporary checkout, and performs a locked release build.
 - scripts/patch-color-dialog.py: idempotent Qt Cocoa QColorDialog patching.
@@ -53,3 +60,8 @@ Git; no standalone diagnostic module was introduced.
 The clipboard compatibility change is owned by the AppKit pasteboard/text
 modules and the WebKit view bridge. The canonical patch remains the source of
 truth; `bin/rosemary` is an ignored installed build artifact.
+The follow-up clipboard layer also owns read-only NSTextField selection-only
+field-editor behavior in `crates/appkit/src/text.rs`, WebKit pre-read clipboard
+synchronization in `crates/webkit/src/web_view.rs`, and focused-responder
+ancestor traversal for key equivalents. Diagnostics are environment-gated in
+the existing AppKit and WebKit input paths.
