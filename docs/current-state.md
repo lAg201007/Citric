@@ -48,23 +48,28 @@ Não repetir testes complexos de mouse automaticamente. Para qualquer novo teste
 
 ## Clipboard follow-up status
 
-The current bridge distinguishes promised Carbon pasteboard flavors from
-genuinely empty data, registers and invokes the PromiseKeeper, exposes the
-promised-flavor flag, materializes text eagerly for SDL's eager UTF-8 clipboard
-API, and resolves other promised flavors on demand. External clipboard changes
-replace stale local flavors, local writes do not get overwritten by a
-resynchronization pass, and Carbon `ItemCount`/`PasteboardItemID` output uses
-the API's 32-bit ABI. Regression coverage includes promise resolution,
-callback behavior, stale external flavors, and the 32-bit output canary.
+The bridge distinguishes promised Carbon pasteboard flavors from genuinely
+empty data, invokes the PromiseKeeper, materializes text for SDL's clipboard,
+and resolves other promised flavors on demand. External clipboard changes
+replace stale local flavors, and Carbon `ItemCount`/`PasteboardItemID`
+outputs use the API's 32-bit ABI.
 
-Automated validation passed: 15 focused pasteboard tests, the locked offline
-release build, formatting, patch diff checks, and clean application to the
-pinned Rosemary base. The installed `bin/rosemary` hash is
-`280140f9a9a8324ccef9564953832234c8f6a9c144ce979fcce9df342b67daa3`.
+A Qt Cocoa fast path gets the Carbon pasteboard name and opens that name through
+`NSPasteboard`. Rosemary had kept Carbon's
+`com.apple.pasteboard.clipboard` name separate from Cocoa's
+`NSGeneralPboard`, so the named Cocoa lookup could see an empty board. Both
+`pasteboardWithName:` and `initWithName:` now map that Carbon name to the
+general pasteboard. The legacy `NSStringPboardType` string type also resolves
+to canonical UTF-8 plain text, and `availableTypeFromArray:` synchronizes the
+external clipboard before reporting a match.
 
-Manual validation is still pending. The latest report says Studio-to-search
-paste works, while cut does not; search-to-other-Studio paste and all
-clipboard transfers involving external Linux applications still fail. The
-first debug-profile attempt ran out of temporary disk space; the low-disk
-release-profile verification completed successfully. Continue with the
-metadata-only `ROSEMARY_TRACE_CLIPBOARD` and `ROSEMARY_INPUT_TRACE` traces.
+The focused pasteboard suite passed 17 tests. The Rosemary v0.2.2 release build
+passed, and the complete patch applies to a clean checkout of pinned commit
+`04dce85b63154d6451adf74e3f7bacf40add08bd`. The installed `bin/rosemary`
+hash is `0224c12329b76ea9dce11f636eee3051b091bfacb879cd54d0929f827af18865`.
+
+Manual validation of this installed build was completed on 2026-10-13. The
+user confirmed that external Linux app to Script Editor, external Linux app to
+Explorer, and Explorer to Script Editor transfers all work after restarting
+with the updated Rosemary binary. The trace remains metadata-only and never
+records clipboard contents.

@@ -387,3 +387,49 @@ Deployment token report: `studio_update_label_20261013` (unavailable)
 
 Warnings:
 - no session record matched this deployment ID
+
+---
+
+Deployment: file_picker_qol_20261013
+
+State: complete for the shared file-picker QoL patch. The implementation is
+ready for later upstream review; no commit, push, or Rosemary pull request was
+created by this handoff.
+
+Outcome: the shared `chrome::FilePicker` now has a case-insensitive live name
+search, Ctrl/Command+F focus, Ctrl/Command+H hidden dotfile visibility,
+Ctrl/Command+R refresh, filtered Home/End/PageUp/PageDown and arrow navigation,
+and generic canvas-drawn icons for folders, packages, images, video, audio,
+archives, code, text, and documents. AppKit `NSOpenPanel` and `NSSavePanel`
+expose and preserve `showsHiddenFiles`; the reusable chooser does not depend on
+desktop-native icon APIs. Wine research informed the existing filter and
+navigation concepts, while the dotfile shortcut is recorded as Rosemary
+behavior rather than attributed to Wine.
+
+Material change: only `patches/0001-citric-runtime-compat.patch` contains the
+production implementation. The preexisting untracked `scripts/run-mcp.sh` was
+preserved untouched.
+
+Verification: a clean checkout of pinned Rosemary base
+`04dce85b63154d6451adf74e3f7bacf40add08bd` accepted the patch with
+`git apply --check`; `cargo fmt --check -p chrome -p appkit` passed;
+`CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 CARGO_PROFILE_DEV_DEBUG=0
+CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --offline -p chrome
+file_picker::tests` passed 7 tests; corresponding focused AppKit panel tests
+passed 8 tests. No GUI visual test was run, so icon contrast and shortcut
+behavior still need manual validation in Studio.
+
+Exact next entry point: build or install the patched Rosemary runtime, open
+Import/Open/Save in Studio, and manually verify search, dotfile visibility,
+refresh, filtered keyboard navigation, and icon readability in both themes.
+
+Token report for `file_picker_qol_20261013`:
+
+Deployment token report: `file_picker_qol_20261013` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID

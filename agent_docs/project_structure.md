@@ -14,7 +14,8 @@
 - crates/webkit/src/web_view.rs: WebKit editor clipboard and keyboard shortcut
   forwarding for Control and Command modifiers.
 - crates/chrome/src/file_picker.rs: shared SDL-rendered Import/Open/Save
-  chooser and navigation, filtering, and rendering tests.
+  chooser, search and hidden-file filtering, keyboard navigation, generic
+  file-type icons, and rendering tests.
 - crates/corefoundation: collection singletons, run-loop and timer lifetime.
 - crates/objc: Objective-C messaging and autorelease-pool safety.
 - crates/metal_translate: Metal/SPIR-V translation support.

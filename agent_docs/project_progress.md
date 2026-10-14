@@ -1,8 +1,8 @@
 # Project progress
 
-Latest completed deployment: studio_update_label_20261013. Its code and local
-automated checks are complete; live endpoint access and GTK GUI validation
-remain pending. There is no active deployment.
+Latest completed deployment: file_picker_qol_20261013. Its patch and focused
+automated checks are complete; no GUI visual test was run. There is no active
+deployment.
 
 The user confirmed that a periodic roughly 0.5 second stutter occurs in Play
 even in an empty Baseplate. A per-view trace isolated pixel-content copying
@@ -65,6 +65,16 @@ white. The chooser now uses a theme-specific input background. Chrome tests
 (52), AppKit tests (295 plus the theme integration test), formatting, patch
 application, source diff checks, and the locked offline Release build passed;
 the updated binary is installed. The user restarted Studio through Citric and confirmed readable Import entries, file selection returning without a crash, and cancellation working. Separate Open from File validation remains pending. There is no active deployment after this retest.
+
+The file-picker QoL deployment is complete. The canonical patch extends the
+shared chooser with case-insensitive live name search, Ctrl/Command+F search
+focus, Ctrl/Command+H dotfile visibility, Ctrl/Command+R refresh, filtered
+Home/End/PageUp/PageDown navigation, and generic extension-based icons. The
+AppKit panel exposes and preserves the hidden-file preference. A clean pinned
+base accepted the patch; formatting, seven focused chrome tests, and eight
+focused AppKit panel tests passed. No GUI visual test was run. Future manual
+work can verify the controls in Import/Open/Save and assess icon contrast in
+both themes.
 
 The 2026-10-13 duplicate-text deployment is complete. The canonical patch now
 prevents printable key-down and SDL text commits from inserting the same

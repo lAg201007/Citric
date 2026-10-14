@@ -10,6 +10,20 @@ The `NSOpenPanel` and `NSSavePanel` compatibility layer now opens a built-in fil
 
 The asynchronous AppKit selectors found in Studio's file-panel paths are registered and invoke their completion block with the selected or cancelled response. Selector and path handling have unit-test coverage. The first Studio retest exposed a general AppKit cell-forwarding order issue: `NSTextFieldCell` did not inherit `setFont:` because cell forwarding was installed before label methods. Bootstrap now installs cell forwarding after the control and label methods, and a regression test exercises both the setter and getter dispatch. A later retest exposed `NSOpenPanel.setAccessoryView:`; the panel now retains and returns this property and releases it on replacement or deallocation, with a lifecycle regression test. The next retest exposed `setAccessoryViewDisclosed:`; the panels now store and return the disclosure boolean through `isAccessoryViewDisclosed` and `accessoryViewDisclosed`. A later run faulted in Qt Cocoa because Foundation did not publish `_NSFileTypeDirectory` and related string globals; all seven standard `NSFileType*` constants are now published as interned Foundation strings. The latest run exposed a missing `treatsFilePackagesAsDirectories` getter after that filter path advanced. The panel now stores and returns this property, and the shared chooser follows it when displaying common file-package directories as folders or selectable file entries. The internal chooser does not yet embed arbitrary accessory-view hierarchies into its custom rendering. Qt Cocoa also queries `NSWorkspace -isFilePackageAtPath:` while filtering panel URLs; Rosemary now implements it with guest-to-host path translation and the same package classifier used by the chooser. The latest Studio retest no longer crashed, but the user reported white file entries with invisible names. The cause was a hardcoded white list and field background paired with white text in the dark appearance. `chrome::Theme` now provides `panel_input_background` for both appearances, and the chooser uses it for the location, list, and save-name fields. A rendering regression test verifies that dark-mode filenames remain visible against the list. The user manually confirmed that Import shows readable names, selecting a file returns to Studio without a crash, and cancellation returns cleanly. Open from File still needs separate confirmation; arbitrary accessory-view rendering remains unverified.
 
+## Carbon/AppKit clipboard bridge
+
+Files: `crates/appkit/src/pasteboard.rs` and
+`crates/appkit/src/pasteboard_manager.rs`.
+
+Qt Cocoa can retrieve plain text through either Carbon flavor data or an
+`NSPasteboard` lookup by the name returned from `PasteboardCopyName`. The
+default Carbon name, `com.apple.pasteboard.clipboard`, now aliases Cocoa's
+`NSGeneralPboard` entry so both API families read the same data. The AppKit
+bridge also recognizes the legacy `NSStringPboardType` spelling for canonical
+UTF-8 plain text and synchronizes external clipboard state before answering an
+available-type query. Trace messages log type names, status, and byte counts
+only.
+
 ## AppKit e ciclo de vida de janelas
 
 ### NSView e composição

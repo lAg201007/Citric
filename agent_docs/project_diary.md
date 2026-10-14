@@ -148,3 +148,12 @@ different early selector failure.
   cut, search-to-other-control paste, and Linux application boundaries. The
   durable lesson is to implement the promise contract rather than treating
   NULL promised data as an empty string.
+
+- On 2026-10-13, the shared Rosemary file chooser was extended from basic
+  navigation and selection with a case-insensitive live name filter, a
+  Ctrl/Command+H dotfile toggle, refresh and search shortcuts, filtered
+  keyboard navigation, and generic canvas-drawn icons. Wine's native chooser
+  was used as inspiration for filter controls and navigation; Ctrl/Command+H
+  is a Rosemary addition rather than a behavior attributed to Wine. The
+  implementation stays in the shared `chrome` chooser and AppKit preference
+  bridge so it can be proposed upstream without desktop-specific APIs.

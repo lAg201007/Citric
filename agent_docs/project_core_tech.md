@@ -78,6 +78,13 @@ entry, and guest/host path conversion without depending on a desktop portal.
 `Theme::panel_input_background` keeps dark-mode file names readable against the
 chooser fields and list.
 
+The chooser's shared implementation provides a case-insensitive live filename
+filter, Ctrl/Command+F search focus, Ctrl/Command+H dotfile visibility, and
+Ctrl/Command+R refresh. Home/End/PageUp/PageDown and arrow navigation operate
+on the filtered view. File and package icons are drawn from stable generic
+shapes and extension categories so the patch remains suitable for Rosemary's
+cross-platform base without host-native icon dependencies.
+
 Clipboard compatibility spans the SDL/AppKit pasteboard bridge, native AppKit
 text responders, and the WebKit-backed script editor. System text is queried
 even when SDL reports no clipboard text, while the bridge tracks the last
