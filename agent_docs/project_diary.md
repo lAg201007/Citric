@@ -99,3 +99,23 @@ different early selector failure.
   Backspace, shortcuts, key equivalents, and IME/layout resolution remain
   intact. The focused regression passed and the user confirmed both fields now
   insert one character per key.
+
+- On 2026-10-13, clipboard diagnosis separated write and read failures. Text
+  copied from Toolbox and Explorer reached external Linux applications, while
+  text copied externally could not be pasted back into Studio fields. The
+  availability gate around SDL clipboard reads was unreliable for this runtime.
+  The bridge now queries the text value regardless of that flag, tracks the
+  last observed/exported system value, preserves local state when the backend
+  is unavailable, and clears stale plain/rich data only on a confirmed external
+  empty clipboard. Native AppKit and WebKit editors also gained Control-key
+  clipboard shortcuts, and plain copy/cut no longer leaves stale HTML. Release
+  build and focused pasteboard/text tests passed; manual UI retest is pending.
+
+- On 2026-10-13 the launcher gained a managed Studio download action. The
+  implementation pins the known compatible x86_64 archive and checksum rather
+  than silently following an update channel, validates the app before install,
+  stages extraction under an ignored temporary directory, and asks before
+  replacing a different existing bundle. The archive download could not be
+  exercised because this environment had no DNS resolution; retain the pending
+  manual check and refresh the bundle manifest if a different local build is
+  installed.

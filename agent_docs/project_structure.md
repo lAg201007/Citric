@@ -4,6 +4,12 @@
   file-panel, and AppKit diagnostic behavior.
 - crates/appkit/src/event.rs: key event normalization for text clients and
   regression coverage for printable text, editing keys, and shortcuts.
+- crates/appkit/src/pasteboard.rs: SDL system-clipboard synchronization,
+  plain/rich text ownership, and external clipboard state tracking.
+- crates/appkit/src/text.rs: native AppKit text selection, copy/cut actions,
+  and Control/Command editing shortcuts.
+- crates/webkit/src/web_view.rs: WebKit editor clipboard and keyboard shortcut
+  forwarding for Control and Command modifiers.
 - crates/chrome/src/file_picker.rs: shared SDL-rendered Import/Open/Save
   chooser and navigation, filtering, and rendering tests.
 - crates/corefoundation: collection singletons, run-loop and timer lifetime.
@@ -13,12 +19,15 @@
 - scripts/citric: GTK launcher entry point and CLI wrapper.
 - citric_launcher/: GTK 4 UI, configuration, desktop-entry integration, and
   launch diagnostics.
+- citric_launcher/studio_bundle.py: pinned Studio archive downloader,
+  checksum/app validation, safe ZIP extraction, and atomic installation.
 - scripts/build-studio.sh: fetches the pinned Rosemary base, applies the patch
   series in a temporary checkout, and performs a locked release build.
 - scripts/patch-color-dialog.py: idempotent Qt Cocoa QColorDialog patching.
 - scripts/patch_plugin_compatibility.py: reversible, signature-based RBXM
   compatibility rules scanned across installed plugin IDs and versions.
 - app/full/RobloxStudio.app: ignored local Studio bundle.
+- app/full/.citric-studio-*/: ignored temporary download/extraction staging.
 - bin/rosemary: ignored ready-to-run Rosemary binary.
 - downloads/darwin-cache: ignored local runtime cache.
 - docs/: migration, compatibility, crash, bundle, patch, and validation notes.
@@ -40,3 +49,7 @@ workflow handoff state.
 The periodic-stutter diagnostic path is owned by `scripts/run-studio.sh` and
 runtime hooks in the patch. Its output is session metadata and raw logs outside
 Git; no standalone diagnostic module was introduced.
+
+The clipboard compatibility change is owned by the AppKit pasteboard/text
+modules and the WebKit view bridge. The canonical patch remains the source of
+truth; `bin/rosemary` is an ignored installed build artifact.

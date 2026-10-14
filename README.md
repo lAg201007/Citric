@@ -2,7 +2,7 @@
 
 Citric is a Linux launcher for the macOS version of Roblox Studio. It uses the [Rosemary](https://github.com/microlift/rosemary) runtime, built with Citric's compatibility patches, to run a local Roblox Studio app bundle. The launcher provides a GTK 4 interface and a command-line option for opening Studio or a place file.
 
-The proprietary Roblox Studio app bundle is not included. Provide a compatible bundle under `app/` or select it in the launcher. Citric stores its built [Rosemary](https://github.com/microlift/rosemary) runtime and user configuration locally; it does not include an authenticated Studio prefix.
+The proprietary Roblox Studio app bundle is not included in Git. Use the launcher's **Download and install Roblox Studio** button to retrieve the pinned official macOS x86_64 bundle; Citric verifies its SHA-256 checksum and stores it under `app/full/RobloxStudio.app`. You can also provide a compatible bundle under `app/` or select it in the launcher. Citric stores its built [Rosemary](https://github.com/microlift/rosemary) runtime and user configuration locally; it does not include an authenticated Studio prefix.
 
 ## Requirements
 
@@ -40,7 +40,7 @@ Start Studio from the command line, optionally opening a place file directly:
 ./scripts/citric launch "/path/to/place.rbxl"
 ```
 
-On first launch, choose the Studio bundle if Citric cannot find it automatically. The launcher lets you configure the [Rosemary](https://github.com/microlift/rosemary) prefix and SDL driver, save settings, build [Rosemary](https://github.com/microlift/rosemary), and open session logs. Known third-party plugin overrides are applied locally before launch; see [plugin compatibility notes](docs/plugin-overrides.md).
+On first launch, download the pinned Studio bundle or choose an existing one if Citric cannot find it automatically. The launcher lets you configure the [Rosemary](https://github.com/microlift/rosemary) prefix and SDL driver, save settings, build [Rosemary](https://github.com/microlift/rosemary), and open session logs. Known third-party plugin overrides are applied locally before launch; see [plugin compatibility notes](docs/plugin-overrides.md).
 
 ## Acknowledgements
 

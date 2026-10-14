@@ -7,7 +7,19 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, Gtk, GLib
 
-from .core import LOGS_DIR, ROOT, build_launch_spec, build_rosemary_spec, default_config, install_desktop_entry, load_config, save_config
+from .core import (
+    LOGS_DIR,
+    ROOT,
+    STUDIO_BUNDLE_VERSION,
+    build_launch_spec,
+    build_rosemary_spec,
+    default_config,
+    download_studio_spec,
+    install_desktop_entry,
+    load_config,
+    save_config,
+    studio_bundle_version,
+)
 
 
 class CitricWindow(Gtk.ApplicationWindow):
@@ -22,6 +34,7 @@ class CitricWindow(Gtk.ApplicationWindow):
             self.config_error = str(error)
         self._processes: list[Gio.Subprocess] = []
         self._chooser: Gtk.FileChooserNative | None = None
+        self._replacement_dialog: Gtk.Window | None = None
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         outer.set_margin_top(22)
@@ -81,6 +94,10 @@ class CitricWindow(Gtk.ApplicationWindow):
         self.build_button = Gtk.Button(label="Download and build Rosemary")
         self.build_button.connect("clicked", self._build_rosemary)
         outer.append(self.build_button)
+
+        self.download_studio_button = Gtk.Button(label="Download and install Roblox Studio")
+        self.download_studio_button.connect("clicked", self._download_studio)
+        outer.append(self.download_studio_button)
 
         settings = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         save_button = Gtk.Button(label="Save settings")
@@ -159,6 +176,104 @@ class CitricWindow(Gtk.ApplicationWindow):
             self.status.set_text("Downloading the pinned Rosemary commit, applying patches and building…")
         except (OSError, GLib.Error) as error:
             self.status.set_text(f"Failed to start the build: {error}")
+
+    def _download_studio(self, *_args) -> None:
+        bundle = ROOT / "app" / "full" / "RobloxStudio.app"
+        if studio_bundle_version(bundle) == STUDIO_BUNDLE_VERSION:
+            self.studio_entry.set_text(str(bundle))
+            try:
+                self.config = self._current_config()
+                save_config(self.config)
+                self.status.set_text(f"Roblox Studio {STUDIO_BUNDLE_VERSION} is already installed and selected.")
+            except (OSError, ValueError) as error:
+                self.status.set_text(f"Studio is already installed, but settings could not be saved: {error}")
+            return
+        if bundle.exists() or bundle.is_symlink():
+            self._show_studio_replacement_dialog()
+            return
+        self._start_studio_download(replace=False)
+
+    def _show_studio_replacement_dialog(self) -> None:
+        dialog = Gtk.Window(title="Replace Roblox Studio bundle")
+        dialog.set_transient_for(self)
+        dialog.set_modal(True)
+        dialog.set_resizable(False)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        content.set_margin_top(22)
+        content.set_margin_bottom(22)
+        content.set_margin_start(24)
+        content.set_margin_end(24)
+        dialog.set_child(content)
+        explanation = Gtk.Label(
+            label=(
+                f"This downloads the pinned, validated Studio {STUDIO_BUNDLE_VERSION} bundle and replaces "
+                "app/full/RobloxStudio.app. Close Studio before continuing."
+            ),
+            wrap=True,
+            xalign=0,
+        )
+        content.append(explanation)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        actions.set_halign(Gtk.Align.END)
+        cancel = Gtk.Button(label="Cancel")
+        cancel.connect("clicked", self._close_replacement_dialog)
+        actions.append(cancel)
+        replace_button = Gtk.Button(label="Download and replace")
+        replace_button.add_css_class("destructive-action")
+        replace_button.connect("clicked", self._confirm_studio_replacement)
+        actions.append(replace_button)
+        content.append(actions)
+        self._replacement_dialog = dialog
+        dialog.present()
+
+    def _close_replacement_dialog(self, *_args) -> None:
+        if self._replacement_dialog is not None:
+            self._replacement_dialog.close()
+            self._replacement_dialog = None
+
+    def _confirm_studio_replacement(self, *_args) -> None:
+        self._close_replacement_dialog()
+        self._start_studio_download(replace=True)
+
+    def _start_studio_download(self, replace: bool) -> None:
+        try:
+            spec = download_studio_spec(ROOT, replace=replace)
+            launcher = Gio.SubprocessLauncher.new(
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE
+            )
+            launcher.set_cwd(str(ROOT))
+            process = launcher.spawnv(list(spec.argv))
+            self._processes.append(process)
+            self.download_studio_button.set_sensitive(False)
+            process.communicate_utf8_async(None, None, self._on_studio_download_exit, None)
+            self.status.set_text(
+                f"Downloading and verifying the pinned Roblox Studio {STUDIO_BUNDLE_VERSION} bundle…"
+            )
+        except (OSError, GLib.Error) as error:
+            self.status.set_text(f"Failed to start the Studio download: {error}")
+
+    def _on_studio_download_exit(self, process: Gio.Subprocess, result, _user_data) -> None:
+        try:
+            _success, output, _error_output = process.communicate_utf8_finish(result)
+            code = process.get_exit_status() if process.get_if_exited() else "interrupted"
+            message = output.strip().splitlines()[-1] if output and output.strip() else ""
+            if code == 0:
+                bundle = ROOT / "app" / "full" / "RobloxStudio.app"
+                self.studio_entry.set_text(str(bundle))
+                try:
+                    self.config = self._current_config()
+                    save_config(self.config)
+                    self.status.set_text(message or f"Roblox Studio {STUDIO_BUNDLE_VERSION} is ready to launch.")
+                except (OSError, ValueError) as error:
+                    self.status.set_text(f"Studio installed, but settings could not be saved: {error}")
+            else:
+                self.status.set_text(message or f"Studio download failed (exit code {code}).")
+        except GLib.Error as error:
+            self.status.set_text(f"Could not read the Studio download result: {error}")
+        finally:
+            self.download_studio_button.set_sensitive(True)
+            if process in self._processes:
+                self._processes.remove(process)
 
     def _on_process_exit(self, process: Gio.Subprocess, result, operation) -> None:
         try:

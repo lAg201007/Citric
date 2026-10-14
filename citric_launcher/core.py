@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import shutil
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = ROOT / "logs"
+STUDIO_BUNDLE_VERSION = "0.742.0.7421053"
 
 
 @dataclass(frozen=True)
@@ -101,6 +103,38 @@ def build_rosemary_spec(root: Path = ROOT, check_only: bool = False, build_only:
     elif build_only:
         argv.append("--build-only")
     return LaunchSpec(tuple(argv), {})
+
+
+def download_studio_spec(root: Path = ROOT, replace: bool = False) -> LaunchSpec:
+    module = root / "citric_launcher" / "studio_bundle.py"
+    if not module.is_file():
+        raise FileNotFoundError(f"Studio bundle download module not found: {module}")
+    argv = [sys.executable, str(module)]
+    if replace:
+        argv.append("--replace")
+    return LaunchSpec(tuple(argv), {})
+
+
+def studio_bundle_version(bundle: Path) -> str | None:
+    if bundle.is_symlink():
+        return None
+    try:
+        import plistlib
+
+        info = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())
+        if not isinstance(info, dict):
+            return None
+        version = info.get("CFBundleShortVersionString")
+        executable = info.get("CFBundleExecutable")
+        if (
+            info.get("CFBundleIdentifier") != "com.Roblox.RobloxStudio"
+            or executable != "RobloxStudio"
+            or not (bundle / "Contents" / "MacOS" / executable).is_file()
+        ):
+            return None
+        return version if isinstance(version, str) else None
+    except (OSError, ValueError):
+        return None
 
 
 def detect_rosemary(root: Path = ROOT, environment: Mapping[str, str] | None = None) -> Path | None:

@@ -73,3 +73,33 @@ the release build was installed, and the user confirmed Toolbox and Explorer
 search behavior. The full AppKit suite had two unrelated dark-theme named-color
 failures; this does not block the validated fix. The next milestone is a new
 user-selected compatibility issue.
+
+The current deployment is `citric_clipboard_20261013`. Its code and release
+build are complete, but manual UI validation is pending the user's next
+retest. The user established that native copy from Toolbox/Explorer reaches an
+external Linux application, while external text cannot be pasted into Studio.
+The canonical patch now synchronizes non-empty SDL clipboard text despite a
+false availability result, preserves local state when the backend is
+unavailable, clears stale plain text and HTML on confirmed empty external
+clipboard state, and makes identical observations idempotent. Native AppKit
+text responders and the WebKit editor accept Control and Command clipboard
+shortcuts; plain copy/cut clears stale HTML.
+
+Verification completed: release build with locked offline dependencies, seven
+pasteboard tests, 21 text tests, rustfmt check, source diff check, and clean
+application of the generated patch to the pinned Rosemary base. The installed
+`bin/rosemary` is ignored. Next entry point: restart through Citric and verify
+copy/paste in a native property/editor field, Toolbox/Explorer search, the
+script editor, and an external Linux application. Do not treat the absence of
+external clipboard input as fixed until that manual retest passes.
+
+The `launcher_studio_bundle_20261013` deployment is implementation-complete.
+The GTK launcher now offers download and install of the pinned Roblox Studio
+0.742.0.7421053 macOS x86_64 archive. The downloader validates the pinned
+SHA-256 and bundle metadata, extracts through a safe staging directory, and
+replaces a different local bundle only after launcher confirmation. `py_compile`,
+the downloader help path, and a scoped whitespace check passed. End-to-end
+network download and installation remain unverified because DNS resolution was
+unavailable in this environment. No active deployment remains after this
+handoff; the next milestone is user validation of the button with network
+access.

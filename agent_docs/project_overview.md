@@ -29,6 +29,12 @@ before/after values. This addresses the observed Play failure where valid
 decimal literals were reported as `Malformed number`; fresh manual Play
 confirmation is still required.
 
+The launcher also exposes a managed download action for the pinned official
+Roblox Studio macOS x86_64 archive. The downloader verifies the recorded
+checksum and app metadata before atomically installing the ignored bundle;
+replacement of a different existing bundle requires an explicit GTK
+confirmation.
+
 The launcher applies a narrow, plugin-ID-agnostic compatibility rule to
 cached plugin models that contain the known legacy `bit` fallback declaration.
 It changes only that exact signature to use Roblox's built-in `bit32`, with a
@@ -50,3 +56,10 @@ Printable text input is routed through SDL's resolved text/IME commit for active
 text clients. The duplicate AppKit key-down character is retained only for key
 equivalent handling, preventing doubled characters in Studio search fields
 while preserving Backspace and shortcuts.
+
+Clipboard support covers both directions of the Linux/Studio boundary. Native
+AppKit and WebKit text controls now handle Control and Command copy, cut, paste,
+and select-all paths. The SDL pasteboard bridge reads non-empty external text
+even when the availability flag is unreliable, preserves local state when the
+backend is unavailable, clears stale formats when an external clipboard is
+confirmed empty, and avoids repeated change notifications for identical reads.

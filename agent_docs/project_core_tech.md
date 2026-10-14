@@ -19,7 +19,10 @@ The current canonical patch is `patches/0001-citric-runtime-compat.patch`,
 applied to the pinned base in `patches/base-commit` and ordered by
 `patches/series`. The older patch files remain historical snapshots. Citric's
 GTK 4 Python launcher delegates execution to `scripts/run-studio.sh`; it does
-not download or modify the proprietary Studio bundle.
+not include the proprietary Studio bundle in Git. Its optional downloader
+fetches a pinned Roblox CDN ZIP, checks its SHA-256, validates the bundle
+identifier/version/executable and Intel Mach-O slice, and installs it under the
+ignored `app/full/RobloxStudio.app` path with a replacement confirmation.
 
 The launcher clears inherited `LC_ALL` and forces `LC_NUMERIC=C` for Studio.
 Launch metadata records both the incoming and effective numeric locale values
@@ -66,3 +69,14 @@ the SDL window backend. It handles navigation, filtering, selection, save-name
 entry, and guest/host path conversion without depending on a desktop portal.
 `Theme::panel_input_background` keeps dark-mode file names readable against the
 chooser fields and list.
+
+Clipboard compatibility spans the SDL/AppKit pasteboard bridge, native AppKit
+text responders, and the WebKit-backed script editor. System text is queried
+even when SDL reports no clipboard text, while the bridge tracks the last
+successfully observed or exported value so unavailable backends do not erase
+local state. Confirmed empty external clipboards clear stale plain text and
+HTML. Identical observations are idempotent and do not increment the
+pasteboard change count or discard rich HTML. Native copy and cut export plain
+text without stale rich formats; native and WebKit text controls accept both
+Control and Command C/X/V/A shortcuts. Clipboard trace logging, when enabled,
+records availability and byte counts only, never clipboard contents.

@@ -4,6 +4,7 @@
 /vendor
 /result*
 /app/full/RobloxStudio.app/
+/app/full/.citric-studio-*/
 /bin/rosemary
 /downloads/darwin-cache/
 /logs/

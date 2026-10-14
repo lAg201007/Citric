@@ -40,3 +40,9 @@ O launcher chama scripts/patch-color-dialog.py antes de iniciar. A cópia atual 
 ## Publicação futura
 
 Antes de criar remote ou enviar para GitHub, verifique git status --ignored e confirme que app/full/RobloxStudio.app, bin/rosemary, downloads/darwin-cache e logs/ continuam ignorados. O manifesto é documentação e não inclui os binários.
+
+## Launcher-managed Studio download
+
+The launcher can download the pinned Roblox Studio 0.742.0.7421053 macOS x86_64 archive from Roblox's official CDN at `https://setup.rbxcdn.com/mac/version-6b80d5eacfba48e5-RobloxStudioApp.zip`. It verifies the archive against SHA-256 `04bab64d3b463519874e09887e1ca75777e6b39285f4cb78720449477404da2d`, validates the app identifier, version, executable, and x86_64 Mach-O architecture, then installs it under `app/full/RobloxStudio.app`. A different bundle at that destination is replaced only after confirmation in the launcher. The archive and extracted app are temporary or ignored local artifacts; neither is added to Git.
+
+This is the pinned build recorded above, not an automatic update channel. The checked-in bundle manifest describes the local snapshot at the time it was recorded; installing a different bundle changes that local snapshot and requires refreshing the manifest before using it to verify the replacement.

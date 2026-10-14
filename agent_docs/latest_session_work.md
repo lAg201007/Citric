@@ -191,3 +191,70 @@ Deployment token report: `citric_duplicate_text_input_20261013` (unavailable)
 
 Warnings:
 - no session record matched this deployment ID
+
+---
+
+Deployment: citric_clipboard_20261013
+
+State: implementation complete; manual UI retest is pending. The implementation and installed
+release binary are complete.
+
+Outcome: the reported clipboard asymmetry was addressed. Toolbox and Explorer
+could export copied text to Linux, but text copied in another Linux app could
+not be pasted into Studio. The SDL pasteboard bridge now always queries the
+system text value, accepts a non-empty value even when SDL reports unavailable,
+tracks the last observed or exported system value, preserves local state when
+the backend cannot answer, clears stale text and HTML on confirmed empty
+external state, and avoids change-count churn for identical observations.
+Native AppKit text responders now implement copy/cut and Control/Command
+C/X/V/A handling. The WebKit script editor accepts Control shortcuts as well as
+Command shortcuts. Plain copy/cut clears stale rich HTML formats.
+
+Verification: `CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_INCREMENTAL=0 cargo build
+--locked --offline --release -p rosemary` passed; focused pasteboard tests
+passed 7/7; focused text tests passed 21/21; rustfmt and `git diff --check`
+passed; and the generated canonical patch applied cleanly to the pinned
+Rosemary base. The installed `bin/rosemary` is ignored. These checks are newer
+than the clipboard source changes. Manual Studio retest is not yet available.
+
+Exact continuation point: restart Studio through Citric and test external text
+paste into Toolbox and Explorer, native property/editor copy and paste, script
+editor Control shortcuts, and an external Linux application. Preserve the
+existing user-owned `scripts/run-mcp.sh` and unrelated working-tree changes.
+
+Token report: unavailable; no matching session record was found for
+`citric_clipboard_20261013`.
+
+---
+
+Deployment: launcher_studio_bundle_20261013
+
+State: implementation complete; end-to-end download remains pending network
+access and user validation.
+
+Outcome: the GTK launcher now has a `Download and install Roblox Studio`
+button. It invokes `citric_launcher/studio_bundle.py`, which downloads the
+pinned official Roblox macOS x86_64 archive, verifies its SHA-256, validates
+the bundle identifier/version/executable/architecture, safely extracts it to
+ignored staging storage, and installs it at `app/full/RobloxStudio.app`.
+When another bundle is already present, the launcher requires an explicit
+replacement confirmation; failed validation leaves the destination unchanged.
+
+Material files: `.gitignore`, `README.md`, `citric_launcher/app.py`,
+`citric_launcher/core.py`, `citric_launcher/studio_bundle.py`,
+`docs/bundle.md`, and `docs/current-state.md`.
+
+Verification: `py_compile`, the downloader `--help` path, and a scoped
+whitespace check passed. The real network download was not run because shell
+DNS resolution failed with `Temporary failure in name resolution`; therefore
+archive retrieval, extraction, and installation are not yet end-to-end
+verified. Proprietary bundles, Rosemary binaries, Darwin cache, and logs remain
+ignored. Unrelated working-tree changes in `patches/0001-citric-runtime-compat.patch`
+and `scripts/run-mcp.sh` were preserved.
+
+Exact next entry point: run the launcher with network access, click the download
+button, confirm the installed bundle is detected, and refresh `docs/bundle.md`
+if the installed manifest differs from the recorded local snapshot.
+
+Token report: `unavailable`; no matching session record was available for
+`launcher_studio_bundle_20261013`.
