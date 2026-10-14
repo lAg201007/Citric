@@ -39,7 +39,7 @@ def default_config(environment: Mapping[str, str] | None = None) -> dict[str, st
     environment = os.environ if environment is None else environment
     return {
         "prefix": str(_home(environment) / "rosemary-studio-prefix"),
-        "sdl_driver": "x11",
+        "sdl_driver": "wayland",
         "rosemary_bin": "",
         "studio_app": "",
     }

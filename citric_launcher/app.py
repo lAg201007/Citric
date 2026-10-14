@@ -60,8 +60,8 @@ class CitricWindow(Gtk.ApplicationWindow):
         driver_label = Gtk.Label(label="SDL driver", xalign=0)
         driver_label.set_size_request(150, -1)
         self.driver_combo = Gtk.ComboBoxText()
-        self.driver_combo.append("x11", "X11 (recommended)")
-        self.driver_combo.append("wayland", "Wayland")
+        self.driver_combo.append("x11", "X11")
+        self.driver_combo.append("wayland", "Wayland (recommended)")
         self.driver_combo.set_active_id(self.config["sdl_driver"])
         driver_row.append(driver_label)
         driver_row.append(self.driver_combo)
@@ -113,7 +113,7 @@ class CitricWindow(Gtk.ApplicationWindow):
         return row
 
     def _current_config(self) -> dict[str, str]:
-        driver = self.driver_combo.get_active_id() or "x11"
+        driver = self.driver_combo.get_active_id() or "wayland"
         return {
             **self.config,
             "prefix": self.prefix_entry.get_text().strip(),
