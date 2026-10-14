@@ -17,6 +17,9 @@
 - crates/chrome/src/file_picker.rs: shared SDL-rendered Import/Open/Save
   chooser, visible search and hidden-file filtering, SDL shortcut handling,
   filtered keyboard navigation, generic file-type icons, and rendering tests.
+- crates/appkit/src/panel/portal.rs: Linux XDG Desktop Portal FileChooser
+  requests, panel option mapping including Qt's filter accessory, local URI
+  conversion, cancellation, fallback eligibility, and diagnostic logging.
 - crates/corefoundation: collection singletons, run-loop and timer lifetime.
 - crates/objc: Objective-C messaging and autorelease-pool safety.
 - crates/metal_translate: Metal/SPIR-V translation support.

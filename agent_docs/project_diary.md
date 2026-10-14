@@ -183,3 +183,24 @@ different early selector failure.
   event tests and a clean pinned-base application passed; Studio validation is
   still user-driven. The reusable lesson is to map the modifier at the event
   boundary rather than maintain a per-command list.
+
+- On 2026-10-14, Linux AppKit file panels gained an XDG Desktop Portal
+  integration. The implementation maps expressible Open and Save options with
+  `ashpd`/`zbus`, converts only local `file://` URIs, and treats cancellation
+  separately from portal failure. Missing services, errors, and unsupported
+  panel options use the existing shared SDL/Chrome chooser. This keeps the
+  patch free of GTK/libportal linkage and preserves the upstreamable fallback
+  path. Automated tests and the Release build passed, but no session D-Bus or
+  Studio GUI was available; portal appearance and fallback behavior still need
+  manual validation.
+
+- On 2026-10-14, the user reported that Open from File still opened the SDL
+  chooser. Inspection of the bundled Qt Cocoa plugin showed that Qt attaches a
+  filter popup and label as an accessory view when multiple name filters are
+  configured. The portal eligibility check previously rejected every accessory
+  view, so it selected the fallback. The patch now recognizes exactly that
+  filter-only shape, maps filter titles/globs and the current selection to XDG
+  filters, and retains fallback with diagnostic reasons for arbitrary or
+  unsupported accessories. Automated tests and the v0.2.3 build passed; the
+  user still needs to restart Studio and test Open from File with a working
+  session portal.

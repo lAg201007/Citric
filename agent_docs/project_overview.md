@@ -73,6 +73,14 @@ false default and a real getter/setter, preventing Qt Cocoa's Save to File
 configuration from aborting on the missing selector. Automated coverage is
 complete; manual Save to File validation remains pending.
 
+On Linux, AppKit file panels first try the XDG Desktop Portal FileChooser via
+the Rust `ashpd`/`zbus` client. Expressible Open and Save options are mapped to
+the portal, including Qt Cocoa's filter-only accessory view (one popup and one
+label), while cancellation stays cancelled. Portal absence, errors, non-local
+URIs, or unsupported options use the existing shared SDL/Chrome chooser. The
+implementation has no GTK or `libportal` link dependency. Manual portal and
+Studio validation remains pending.
+
 On Linux, the AppKit event bridge maps Control chords to their macOS Command
 shortcut equivalents for non-modifier keys, so Windows-style Studio shortcuts
 such as Ctrl+S, Ctrl+O, Ctrl+F, and Ctrl+Z work through the same dispatch path.

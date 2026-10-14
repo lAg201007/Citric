@@ -1,5 +1,75 @@
 # Latest session work
 
+Deployment: `xdg_open_portal_qt_filter_accessory_20261014`
+
+State: complete in source and installed binary; manual Open from File portal
+validation remains pending.
+
+Outcome: Qt Cocoa's filter-only accessory view is now recognized when it has
+exactly one popup button and one label. Its filter titles, globs, and selected
+filter are mapped to XDG FileChooser filters. Arbitrary or unsupported
+accessories and selection modes retain the shared SDL/Chrome fallback, and
+fallback reasons are logged. This fixes the previously observed silent
+fallback for Open from File.
+
+Verification: 331 AppKit unit tests plus the theme integration test and seven
+focused portal tests passed; `cargo fmt --all -- --check`, patched-source
+`git diff --check`, `./scripts/build-studio.sh --check-only`, and the locked
+offline Release build/install passed. Installed `bin/rosemary` reports v0.2.3,
+SHA-256 `9021b8d129adc78a755a6fbff25fdbec3a152f51ab41b5ab3bee857f914ec3c6`,
+ELF build ID `a99a35bb9f8857b26eaa5f7d0a09de79b25b5b42`.
+
+Blocker: no source blocker. The current environment's session bus is
+unreachable, so no Studio or portal UI test was possible.
+
+Exact next entry point: fully restart Studio through Citric, open Open from
+File with a working portal, verify the portal and filter selection, then verify
+cancellation. Test an unavailable-portal case to confirm the SDL fallback.
+
+Deployment token report: `xdg_open_portal_qt_filter_accessory_20261014`
+(unavailable; no session record matched this deployment ID).
+
+Deployment: `xdg_file_chooser_portal_20261014`
+
+State: complete in source and installed binary; manual portal and Studio
+validation remains pending.
+
+Outcome: Linux `NSOpenPanel` and `NSSavePanel` now prefer the XDG Desktop
+Portal FileChooser through the Rust `ashpd`/`zbus` client. Titles, prompts,
+initial folders, save names, extension filters, and expressible selection
+options are mapped to `OpenFile` and `SaveFile`. Portal cancellation remains
+cancellation. Missing portals, D-Bus errors, non-local URIs, and unsupported
+options use the existing shared SDL/Chrome chooser. No GTK or `libportal`
+link dependency was added.
+
+Verification: 329 AppKit unit tests plus the theme integration test and 55
+Chrome tests passed; `cargo fmt --all -- --check`, source `git diff --check`,
+clean application to pinned Rosemary v0.2.3, and the locked offline Release
+build passed. Installed `bin/rosemary` reports v0.2.3, SHA-256
+`234aa881598a2a522433b0e1110bac78af2904d947daac1fe4c0e8a2b975aebf`, ELF
+build ID `a38787081ce80a766a5da89757fce32aea120b1a`.
+
+The root diff check reports only lines containing one leading space in blank
+context rows of the generated unified patch; this is required patch syntax.
+The applied Rosemary source diff is clean.
+
+Blockers: no source blocker. No session D-Bus portal interaction or Studio
+launch was available, so portal appearance, Open, Save, cancellation, and
+fallback behavior are unverified manually.
+
+Exact next entry point: launch Studio through Citric with a working desktop
+portal, test Open from File and Save to File, cancel both, then exercise a
+fallback case with the portal unavailable or an unsupported panel option.
+
+Deployment token report: `xdg_file_chooser_portal_20261014` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID
+
 Deployment: `rosemary_v023_base_migration_20261014`
 
 State: complete in source and installed binary; manual Studio validation

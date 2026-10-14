@@ -1,5 +1,13 @@
 # Project progress
 
+Latest completed deployment: `xdg_open_portal_qt_filter_accessory_20261014`.
+The portal path now accepts Qt Cocoa's filter-only accessory view, maps its
+name filters and selected filter to XDG filters, and logs unsupported
+accessory/selection fallback reasons. The installed Rosemary v0.2.3 binary is
+updated and automated validation passed. No session D-Bus or Studio GUI was
+available, so Open from File still requires a full manual restart through
+Citric. There is no active deployment.
+
 Latest completed deployment: `rosemary_v023_base_migration_20261014`. Citric
 is now pinned to Rosemary v0.2.3 at commit
 `91e2de231604237ed5faa81513ba441d7b0a79bb`. The canonical overlay was
@@ -26,6 +34,14 @@ Latest source follow-up: `save_panel_hidden_extension_20261014`. The missing
 NSSavePanel `canSelectHiddenExtension` getter/setter is implemented and tested,
 and the Release binary is installed. Save to File manual validation remains
 pending; there is no active deployment.
+
+Latest completed deployment: `xdg_file_chooser_portal_20261014`. Linux AppKit
+Open and Save panels prefer the XDG Desktop Portal FileChooser through
+`ashpd`/`zbus`, preserving cancellation and falling back to the shared SDL
+chooser for unavailable portals, errors, non-local URIs, or unsupported panel
+options. Automated validation and the v0.2.3 Release build passed; no session
+D-Bus or Studio GUI was available, so portal behavior remains pending manual
+validation. There is no active deployment.
 
 Latest completed deployment: file_picker_qol_20261013. Its patch and focused
 automated checks are complete; no GUI visual test was run. There is no active

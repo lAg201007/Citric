@@ -97,6 +97,52 @@ On 2026-10-12, the user restarted this build through Citric, ran an empty Basepl
 3. Confirm `scripts/patch-color-dialog.py` accepts an already-patched bundle without modifying it.
 4. Check the RobloxStudio.app and Rosemary hashes against `docs/bundle.md` and validate the full manifest.
 
+## XDG FileChooser portal integration
+
+### Qt filter accessory follow-up (2026-10-14)
+
+The user's Open from File retest still showed the SDL/Chrome chooser. Inspection
+of Qt Cocoa showed that multiple name filters create an accessory view with one
+`NSPopUpButton` and one `NSTextField`; the previous portal eligibility check
+rejected all accessories. The portal path now recognizes this exact filter-only
+shape, maps each Qt filter title/glob and the selected filter to XDG filters,
+and logs unsupported accessory or selection fallback reasons. Arbitrary
+accessories continue to use the shared chooser.
+
+Seven focused portal tests passed, along with 331 AppKit unit tests and the
+theme integration test, `cargo fmt --all -- --check`, patched-source
+`git diff --check`, `./scripts/build-studio.sh --check-only`, and the locked
+offline Release build/install. The installed v0.2.3 binary has SHA-256
+`9021b8d129adc78a755a6fbff25fdbec3a152f51ab41b5ab3bee857f914ec3c6` and ELF
+build ID `a99a35bb9f8857b26eaa5f7d0a09de79b25b5b42`.
+
+No Studio or portal UI test was possible because the current environment's
+session bus is unreachable. Fully restart Studio through Citric and test Open
+from File with a working portal; confirm that the portal opens, filters work,
+and cancellation remains cancellation.
+
+The current canonical patch prefers the XDG Desktop Portal FileChooser on Linux
+for expressible `NSOpenPanel` and `NSSavePanel` requests. It uses the Rust
+`ashpd`/`zbus` client without linking GTK or `libportal`, maps local `file://`
+URIs back to host paths before guest translation, and preserves cancellation.
+Requests with arbitrary accessory views, forced hidden-file visibility, mixed
+file and directory selection, or other unsupported options use the existing
+shared SDL chooser. Qt Cocoa's filter-only accessory is translated into portal
+filters. Portal errors and unavailable session services also use that fallback.
+
+Verification completed: 329 AppKit unit tests plus the theme integration test,
+55 Chrome tests, `cargo fmt --all -- --check`, source `git diff --check`, clean
+application to pinned Rosemary v0.2.3, and the locked offline Release build.
+The installed binary is v0.2.3 with SHA-256
+`234aa881598a2a522433b0e1110bac78af2904d947daac1fe4c0e8a2b975aebf` and ELF
+build ID `a38787081ce80a766a5da89757fce32aea120b1a`.
+
+Manual validation remains pending because this environment had no session
+D-Bus portal interaction and Studio was not launched. Launch through Citric and
+test Open from File and Save to File with a working portal, cancellation, and a
+fallback case where the portal is unavailable or the panel requests an
+unsupported option.
+
 
 ## Migração para patches
 

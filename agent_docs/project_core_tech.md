@@ -79,9 +79,17 @@ in Play on an empty Baseplate. The latest run still logs full-window
 invalidation about every 500 ms, so the optimization resolved the reported
 visual symptom without eliminating the periodic damage event.
 
-AppKit `NSOpenPanel` and `NSSavePanel` use the shared `chrome::FilePicker` on
-the SDL window backend. It handles navigation, filtering, selection, save-name
-entry, and guest/host path conversion without depending on a desktop portal.
+On Linux, AppKit `NSOpenPanel` and `NSSavePanel` first use the XDG Desktop
+Portal FileChooser through `ashpd`/`zbus` when the panel options are
+representable. Titles, prompts, initial folders, save names, extension filters,
+and supported selection modes are mapped; local `file://` URIs are converted
+back to host paths before guest translation. Cancellation is preserved.
+The Qt filter-only accessory view is recognized when it contains exactly one
+popup button and one label; its filter titles, globs, and current selection are
+mapped to the portal. The shared `chrome::FilePicker` on the SDL window backend
+remains the fallback for missing or failing portals, arbitrary accessories, and
+unsupported options, and is used directly on other host platforms. No GTK or
+`libportal` link dependency was added; fallback reasons are logged.
 `Theme::panel_input_background` keeps dark-mode file names readable against the
 chooser fields and list.
 

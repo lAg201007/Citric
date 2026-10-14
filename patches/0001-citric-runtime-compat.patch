@@ -1,3 +1,711 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 853c8d1..a8cc0bc 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -159,6 +159,8 @@ checksum = "e149dc73cd30538307e7ffa2acd3d2221148eaeed4871f246657b1c3eaa1cbd2"
+ name = "appkit"
+ version = "0.2.3"
+ dependencies = [
++ "ashpd",
++ "async-io",
+  "chrome",
+  "corefoundation",
+  "darwin",
+@@ -171,6 +173,7 @@ dependencies = [
+  "prefix",
+  "sdl3",
+  "static_init",
++ "url",
+ ]
+ 
+ [[package]]
+@@ -205,6 +208,157 @@ dependencies = [
+  "libloading",
+ ]
+ 
++[[package]]
++name = "ashpd"
++version = "0.13.13"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fb8421aaa9644a5faf26735f258b669b15f063313ef8f8e2bdb28912a1a6f111"
++dependencies = [
++ "enumflags2",
++ "futures-util",
++ "getrandom 0.4.3",
++ "serde",
++ "serde_repr",
++ "zbus",
++]
++
++[[package]]
++name = "async-broadcast"
++version = "0.7.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "435a87a52755b8f27fcf321ac4f04b2802e337c8c4872923137471ec39c37532"
++dependencies = [
++ "event-listener",
++ "event-listener-strategy",
++ "futures-core",
++ "pin-project-lite",
++]
++
++[[package]]
++name = "async-channel"
++version = "2.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "924ed96dd52d1b75e9c1a3e6275715fd320f5f9439fb5a4a11fa51f4221158d2"
++dependencies = [
++ "concurrent-queue",
++ "event-listener-strategy",
++ "futures-core",
++ "pin-project-lite",
++]
++
++[[package]]
++name = "async-executor"
++version = "1.14.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
++dependencies = [
++ "async-task",
++ "concurrent-queue",
++ "fastrand",
++ "futures-lite",
++ "pin-project-lite",
++ "slab",
++]
++
++[[package]]
++name = "async-io"
++version = "2.6.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "456b8a8feb6f42d237746d4b3e9a178494627745c3c56c6ea55d92ba50d026fc"
++dependencies = [
++ "autocfg",
++ "cfg-if",
++ "concurrent-queue",
++ "futures-io",
++ "futures-lite",
++ "parking",
++ "polling",
++ "rustix 1.1.5",
++ "slab",
++ "windows-sys 0.61.2",
++]
++
++[[package]]
++name = "async-lock"
++version = "3.4.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "290f7f2596bd5b78a9fec8088ccd89180d7f9f55b94b0576823bbbdc72ee8311"
++dependencies = [
++ "event-listener",
++ "event-listener-strategy",
++ "pin-project-lite",
++]
++
++[[package]]
++name = "async-process"
++version = "2.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fc50921ec0055cdd8a16de48773bfeec5c972598674347252c0399676be7da75"
++dependencies = [
++ "async-channel",
++ "async-io",
++ "async-lock",
++ "async-signal",
++ "async-task",
++ "blocking",
++ "cfg-if",
++ "event-listener",
++ "futures-lite",
++ "rustix 1.1.5",
++]
++
++[[package]]
++name = "async-recursion"
++version = "1.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4f8abc12baad266b1c8cec146854c195b5864b4221d4b2ca7296a7ae82d9e451"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 3.0.3",
++]
++
++[[package]]
++name = "async-signal"
++version = "0.2.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "52b5aaafa020cf5053a01f2a60e8ff5dccf550f0f77ec54a4e47285ac2bab485"
++dependencies = [
++ "async-io",
++ "async-lock",
++ "atomic-waker",
++ "cfg-if",
++ "futures-core",
++ "futures-io",
++ "rustix 1.1.5",
++ "signal-hook-registry",
++ "slab",
++ "windows-sys 0.61.2",
++]
++
++[[package]]
++name = "async-task"
++version = "4.7.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
++
++[[package]]
++name = "async-trait"
++version = "0.1.92"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 3.0.3",
++]
++
++[[package]]
++name = "atomic-waker"
++version = "1.1.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
++
+ [[package]]
+ name = "atomic_float"
+ version = "1.1.0"
+@@ -313,6 +467,19 @@ dependencies = [
+  "hybrid-array",
+ ]
+ 
++[[package]]
++name = "blocking"
++version = "1.7.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a70e4329df6cb94385eed412ec92375c3cdd8a6e502493d1229b6414e4036dfa"
++dependencies = [
++ "async-channel",
++ "async-task",
++ "futures-io",
++ "futures-lite",
++ "piper",
++]
++
+ [[package]]
+ name = "blowfish"
+ version = "0.10.0"
+@@ -1048,6 +1215,12 @@ dependencies = [
+  "simdutf8",
+ ]
+ 
++[[package]]
++name = "endi"
++version = "1.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
++
+ [[package]]
+ name = "enumflags2"
+ version = "0.7.12"
+@@ -1055,6 +1228,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "1027f7680c853e056ebcec683615fb6fbbc07dbaa13b4d5d9442b146ded4ecef"
+ dependencies = [
+  "enumflags2_derive",
++ "serde",
+ ]
+ 
+ [[package]]
+@@ -1084,6 +1258,26 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "event-listener"
++version = "5.4.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
++dependencies = [
++ "parking",
++ "pin-project-lite",
++]
++
++[[package]]
++name = "event-listener-strategy"
++version = "0.5.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
++dependencies = [
++ "event-listener",
++ "pin-project-lite",
++]
++
+ [[package]]
+ name = "exports"
+ version = "0.2.3"
+@@ -1188,6 +1382,63 @@ version = "2.0.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
+ 
++[[package]]
++name = "futures-core"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
++
++[[package]]
++name = "futures-io"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
++
++[[package]]
++name = "futures-lite"
++version = "2.6.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f78e10609fe0e0b3f4157ffab1876319b5b0db102a2c60dc4626306dc46b44ad"
++dependencies = [
++ "fastrand",
++ "futures-core",
++ "futures-io",
++ "parking",
++ "pin-project-lite",
++]
++
++[[package]]
++name = "futures-macro"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 3.0.3",
++]
++
++[[package]]
++name = "futures-task"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cd417de3d1d015fc3bfd2b1ea46dfc7bab72ef86f1cc7cc9c78e728b34a6d1fd"
++
++[[package]]
++name = "futures-util"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
++dependencies = [
++ "futures-core",
++ "futures-io",
++ "futures-macro",
++ "futures-task",
++ "memchr",
++ "pin-project-lite",
++ "slab",
++]
++
+ [[package]]
+ name = "gamecontroller"
+ version = "0.2.3"
+@@ -1229,10 +1480,21 @@ checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
+ dependencies = [
+  "cfg-if",
+  "libc",
+- "r-efi",
++ "r-efi 5.3.0",
+  "wasip2",
+ ]
+ 
++[[package]]
++name = "getrandom"
++version = "0.4.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
++dependencies = [
++ "cfg-if",
++ "libc",
++ "r-efi 6.0.0",
++]
++
+ [[package]]
+ name = "gimli"
+ version = "0.32.3"
+@@ -1324,6 +1586,12 @@ version = "0.5.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
+ 
++[[package]]
++name = "hex"
++version = "0.4.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
++
+ [[package]]
+ name = "http"
+ version = "1.5.0"
+@@ -1513,6 +1781,17 @@ version = "1.0.18"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+ 
++[[package]]
++name = "js-sys"
++version = "0.3.106"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7883d941dae510fb2d978fc3fe018c71c9e2892fd38854de3e8b92c2e5ad9cc5"
++dependencies = [
++ "cfg-if",
++ "futures-util",
++ "wasm-bindgen",
++]
++
+ [[package]]
+ name = "khronos_api"
+ version = "3.1.0"
+@@ -1662,6 +1941,15 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "memoffset"
++version = "0.9.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
++dependencies = [
++ "autocfg",
++]
++
+ [[package]]
+ name = "metal"
+ version = "0.2.3"
+@@ -1846,6 +2134,16 @@ dependencies = [
+  "exports",
+ ]
+ 
++[[package]]
++name = "ordered-stream"
++version = "0.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
++dependencies = [
++ "futures-core",
++ "pin-project-lite",
++]
++
+ [[package]]
+ name = "ouroboros"
+ version = "0.18.5"
+@@ -1879,6 +2177,12 @@ dependencies = [
+  "ttf-parser",
+ ]
+ 
++[[package]]
++name = "parking"
++version = "2.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
++
+ [[package]]
+ name = "parking_lot"
+ version = "0.12.5"
+@@ -1933,6 +2237,17 @@ version = "0.2.17"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+ 
++[[package]]
++name = "piper"
++version = "0.2.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c835479a4443ded371d6c535cbfd8d31ad92c5d23ae9770a61bc155e4992a3c1"
++dependencies = [
++ "atomic-waker",
++ "fastrand",
++ "futures-io",
++]
++
+ [[package]]
+ name = "pkg-config"
+ version = "0.3.34"
+@@ -2068,6 +2383,12 @@ version = "5.3.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
+ 
++[[package]]
++name = "r-efi"
++version = "6.0.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
++
+ [[package]]
+ name = "radium"
+ version = "0.7.0"
+@@ -2410,6 +2731,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
+ dependencies = [
+  "serde_core",
++ "serde_derive",
+ ]
+ 
+ [[package]]
+@@ -2432,6 +2754,17 @@ dependencies = [
+  "syn 3.0.3",
+ ]
+ 
++[[package]]
++name = "serde_repr"
++version = "0.1.21"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8d3b1629de253c70a0508c3899572da79ca359fdab27c7920ff00406df418906"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 3.0.3",
++]
++
+ [[package]]
+ name = "server"
+ version = "0.2.3"
+@@ -2479,6 +2812,16 @@ version = "2.0.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+ 
++[[package]]
++name = "signal-hook-registry"
++version = "1.4.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
++dependencies = [
++ "errno",
++ "libc",
++]
++
+ [[package]]
+ name = "simd-adler32"
+ version = "0.3.10"
+@@ -2865,6 +3208,17 @@ version = "0.1.7"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "2896d95c02a80c6d6a5d6e953d479f5ddf2dfdb6a244441010e373ac0fb88971"
+ 
++[[package]]
++name = "uds_windows"
++version = "1.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
++dependencies = [
++ "memoffset",
++ "tempfile",
++ "windows-sys 0.61.2",
++]
++
+ [[package]]
+ name = "unicode-canonical-combining-class"
+ version = "1.0.0"
+@@ -2956,6 +3310,17 @@ version = "0.2.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+ 
++[[package]]
++name = "uuid"
++version = "1.28.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7cc1186384beb7dd8eedea376413fd654937285ea6c9cfbb928dc3043ea4b606"
++dependencies = [
++ "js-sys",
++ "serde_core",
++ "wasm-bindgen",
++]
++
+ [[package]]
+ name = "version_check"
+ version = "0.9.5"
+@@ -2977,6 +3342,51 @@ dependencies = [
+  "wit-bindgen",
+ ]
+ 
++[[package]]
++name = "wasm-bindgen"
++version = "0.2.129"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9bb54f33acc68fd454578d9820b0bde1a1a3d17aa17bb7b6595806d02886d409"
++dependencies = [
++ "cfg-if",
++ "once_cell",
++ "rustversion",
++ "wasm-bindgen-macro",
++ "wasm-bindgen-shared",
++]
++
++[[package]]
++name = "wasm-bindgen-macro"
++version = "0.2.129"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2e29d0c35b16e224a7eeb5cd2d25e3e1968fbd65604117b44d3b789d00ee8535"
++dependencies = [
++ "quote",
++ "wasm-bindgen-macro-support",
++]
++
++[[package]]
++name = "wasm-bindgen-macro-support"
++version = "0.2.129"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6f501a8bc3719dba86ef8ae4728879c08001bea749eb1333ac5b91e040e2a6b7"
++dependencies = [
++ "bumpalo",
++ "proc-macro2",
++ "quote",
++ "syn 3.0.3",
++ "wasm-bindgen-shared",
++]
++
++[[package]]
++name = "wasm-bindgen-shared"
++version = "0.2.129"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "23f0c9c52aa7cd7d77769a4cfe2a9adb1b331f489a41d912ce14513d5ab995c6"
++dependencies = [
++ "unicode-ident",
++]
++
+ [[package]]
+ name = "wasmtime-internal-core"
+ version = "51.0.0-dev"
+@@ -3341,6 +3751,76 @@ dependencies = [
+  "synstructure",
+ ]
+ 
++[[package]]
++name = "zbus"
++version = "5.19.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5db4be7c075cb421e4b7ee645541604239bd243ba7c357511f4ff3a74b555907"
++dependencies = [
++ "async-broadcast",
++ "async-executor",
++ "async-io",
++ "async-lock",
++ "async-process",
++ "async-recursion",
++ "async-task",
++ "async-trait",
++ "blocking",
++ "enumflags2",
++ "event-listener",
++ "futures-core",
++ "futures-lite",
++ "hex",
++ "libc",
++ "ordered-stream",
++ "rustix 1.1.5",
++ "serde",
++ "serde_repr",
++ "tracing",
++ "uds_windows",
++ "uuid",
++ "windows-sys 0.61.2",
++ "winnow",
++ "zbus_macros",
++ "zbus_names",
++ "zvariant",
++]
++
++[[package]]
++name = "zbus_macros"
++version = "5.19.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2990635d09ade6df1868f72f8cac69a876a90981e8bd3c40b1be413f8dc88f40"
++dependencies = [
++ "proc-macro-crate",
++ "proc-macro2",
++ "quote",
++ "syn 3.0.3",
++ "zbus_names",
++ "zvariant",
++ "zvariant_utils",
++]
++
++[[package]]
++name = "zbus_names"
++version = "4.3.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d8bf88b4a3ff53e883001e0e0115b297a9d53c31b9c1edd2bfdd853e3428624e"
++dependencies = [
++ "serde",
++ "winnow",
++ "zvariant",
++]
++
++[[package]]
++name = "zcheapstr"
++version = "1.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d1afec51604565183aeb5c54c20aeab286120d4e4460f7f76e3e8bb8c0d99473"
++dependencies = [
++ "serde",
++]
++
+ [[package]]
+ name = "zerocopy"
+ version = "0.8.59"
+@@ -3420,3 +3900,44 @@ dependencies = [
+  "quote",
+  "syn 3.0.3",
+ ]
++
++[[package]]
++name = "zvariant"
++version = "5.15.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c1d34c27cc6cdd1f458427519dd6b8612f7b7e3f7b9a0b2355d041dda9869147"
++dependencies = [
++ "endi",
++ "enumflags2",
++ "serde",
++ "winnow",
++ "zcheapstr",
++ "zvariant_derive",
++ "zvariant_utils",
++]
++
++[[package]]
++name = "zvariant_derive"
++version = "5.15.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "864155e69b4352db0c7f374917bf45d1e0c8d17659c8b3dbf9795f3673f8c497"
++dependencies = [
++ "proc-macro-crate",
++ "proc-macro2",
++ "quote",
++ "syn 3.0.3",
++ "zvariant_utils",
++]
++
++[[package]]
++name = "zvariant_utils"
++version = "4.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "bad0294361a320b694a328460dc73add56c306150f5cb6bfafc44446120008a3"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "serde",
++ "syn 3.0.3",
++ "winnow",
++]
+diff --git a/crates/appkit/Cargo.toml b/crates/appkit/Cargo.toml
+index fc93071..29b202e 100644
+--- a/crates/appkit/Cargo.toml
++++ b/crates/appkit/Cargo.toml
+@@ -18,3 +18,8 @@ gamecontroller.workspace = true
+ iosurface.workspace = true
+ static_init.workspace = true
+ owned_ttf_parser.workspace = true
++
++[target.'cfg(target_os = "linux")'.dependencies]
++ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "file_chooser"] }
++async-io = "2"
++url = "2"
 diff --git a/crates/appkit/src/application.rs b/crates/appkit/src/application.rs
 index 9764ad6..7fae524 100644
 --- a/crates/appkit/src/application.rs
@@ -3318,10 +4026,10 @@ index cf2184c..644aec8 100644
              => enter_exit_event, c"@96@0:8Q16{CGPoint=dd}24Q40d48q56@64q72q80^v88";
          "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"
 diff --git a/crates/appkit/src/panel.rs b/crates/appkit/src/panel.rs
-index 597b4c1..f713ca8 100644
+index 597b4c1..a07438d 100644
 --- a/crates/appkit/src/panel.rs
 +++ b/crates/appkit/src/panel.rs
-@@ -1,89 +1,1337 @@
+@@ -1,89 +1,1403 @@
 +use std::collections::HashMap;
 +use std::path::{Path, PathBuf};
 +use std::sync::{Mutex, OnceLock};
@@ -3333,6 +4041,9 @@ index 597b4c1..f713ca8 100644
  use crate::define::{class_methods, methods};
  
 -/// `NSModalResponseCancel`, which is also `NSFileHandlingPanelCancelButton`.
++#[cfg(target_os = "linux")]
++mod portal;
++
  const CANCEL: i64 = 0;
 +const ACCEPT: i64 = 1;
 +const WINDOW_WIDTH: i32 = 720;
@@ -3358,7 +4069,13 @@ index 597b4c1..f713ca8 100644
 +    guest_path: String,
 +    is_directory: bool,
 +}
-+
+ 
+-/// `+openPanel` / `+savePanel`: an autoreleased panel of the receiving class.
+-///
+-/// The receiver is the class the message was sent to, so one function serves
+-/// both and an `NSOpenPanel` comes back for `+openPanel`.
+-unsafe extern "C" fn panel(class: Id, _sel: Sel) -> Id {
+-    // SAFETY: `class` is the class object the message was sent to.
 +#[derive(Clone, Debug, Default)]
 +struct PanelState {
 +    save: bool,
@@ -3388,13 +4105,7 @@ index 597b4c1..f713ca8 100644
 +fn last_directory() -> &'static Mutex<Option<PathBuf>> {
 +    LAST_DIRECTORY.get_or_init(|| Mutex::new(None))
 +}
- 
--/// `+openPanel` / `+savePanel`: an autoreleased panel of the receiving class.
--///
--/// The receiver is the class the message was sent to, so one function serves
--/// both and an `NSOpenPanel` comes back for `+openPanel`.
--unsafe extern "C" fn panel(class: Id, _sel: Sel) -> Id {
--    // SAFETY: `class` is the class object the message was sent to.
++
 +fn state(receiver: Id) -> PanelState {
 +    panels()
 +        .lock()
@@ -3745,6 +4456,30 @@ index 597b4c1..f713ca8 100644
 +struct PickerResult {
 +    selected: Option<Vec<PathBuf>>,
 +    shows_hidden_files: bool,
++}
++
++enum PortalOutcome {
++    Selected(Vec<PathBuf>),
++    Cancelled,
++    Unavailable,
++}
++
++fn resolve_picker_result(
++    outcome: PortalOutcome,
++    shows_hidden_files: bool,
++    fallback: impl FnOnce() -> Option<PickerResult>,
++) -> Option<PickerResult> {
++    match outcome {
++        PortalOutcome::Selected(selected) => Some(PickerResult {
++            selected: Some(selected),
++            shows_hidden_files,
++        }),
++        PortalOutcome::Cancelled => Some(PickerResult {
++            selected: None,
++            shows_hidden_files,
++        }),
++        PortalOutcome::Unavailable => fallback(),
++    }
 +}
 +
 +fn picker_shortcut(scancode: u32, modifiers: u16) -> Option<PickerShortcut> {
@@ -4173,7 +4908,13 @@ index 597b4c1..f713ca8 100644
 +fn select(receiver: Id) -> i64 {
 +    let mut panel = state(receiver);
 +    panel.selected.clear();
-+    let Some(result) = run_picker(&panel) else {
++    #[cfg(target_os = "linux")]
++    let portal_outcome = portal::show(&panel);
++    #[cfg(not(target_os = "linux"))]
++    let portal_outcome = PortalOutcome::Unavailable;
++    let Some(result) = resolve_picker_result(portal_outcome, panel.shows_hidden_files, || {
++        run_picker(&panel)
++    }) else {
 +        update(receiver, |state| state.selected.clear());
 +        return CANCEL;
 +    };
@@ -4268,10 +5009,8 @@ index 597b4c1..f713ca8 100644
 +        objc::arc::release(value as Id);
 +    }
 +    unsafe { corefoundation::api::CFAutorelease(array) as Id }
- }
- 
--unsafe extern "C" fn nothing(_receiver: Id, _sel: Sel) -> Id {
--    std::ptr::null_mut()
++}
++
 +unsafe extern "C" fn urls(receiver: Id, _sel: Sel) -> Id {
 +    let urls: Vec<Id> = selected(receiver)
 +        .into_iter()
@@ -4329,8 +5068,10 @@ index 597b4c1..f713ca8 100644
 +        .and_then(|path| path.to_str().map(str::to_owned))
 +        .map(|path| objc::arc::autorelease(corefoundation::url::new_file_url(&path, true) as Id))
 +        .unwrap_or(std::ptr::null_mut())
-+}
-+
+ }
+ 
+-unsafe extern "C" fn nothing(_receiver: Id, _sel: Sel) -> Id {
+-    std::ptr::null_mut()
 +unsafe extern "C" fn empty_array(_receiver: Id, _sel: Sel) -> Id {
 +    autoreleased_array(&[])
 +}
@@ -4668,6 +5409,39 @@ index 597b4c1..f713ca8 100644
 +    }
 +
 +    #[test]
++    fn an_unavailable_portal_uses_the_internal_picker() {
++        let fallback_calls = std::cell::Cell::new(0);
++        let result = resolve_picker_result(PortalOutcome::Unavailable, false, || {
++            fallback_calls.set(fallback_calls.get() + 1);
++            Some(PickerResult {
++                selected: Some(vec![PathBuf::from("/tmp/place.rbxl")]),
++                shows_hidden_files: false,
++            })
++        })
++        .unwrap();
++
++        assert_eq!(fallback_calls.get(), 1);
++        assert_eq!(
++            result.selected,
++            Some(vec![PathBuf::from("/tmp/place.rbxl")])
++        );
++    }
++
++    #[test]
++    fn cancelling_the_portal_does_not_open_the_internal_picker() {
++        let fallback_calls = std::cell::Cell::new(0);
++        let result = resolve_picker_result(PortalOutcome::Cancelled, true, || {
++            fallback_calls.set(fallback_calls.get() + 1);
++            None
++        })
++        .unwrap();
++
++        assert_eq!(fallback_calls.get(), 0);
++        assert!(result.selected.is_none());
++        assert!(result.shows_hidden_files);
++    }
++
++    #[test]
 +    fn selected_open_entries_keep_multiple_selection_order() {
 +        let panel = PanelState {
 +            multiple: true,
@@ -4707,6 +5481,428 @@ index 597b4c1..f713ca8 100644
 +
 +        assert_eq!(CALLBACK_COUNT.load(Ordering::SeqCst), 1);
 +        assert_eq!(CALLBACK_RESPONSE.load(Ordering::SeqCst), ACCEPT);
++    }
++}
+diff --git a/crates/appkit/src/panel/portal.rs b/crates/appkit/src/panel/portal.rs
+new file mode 100644
+index 0000000..4394100
+--- /dev/null
++++ b/crates/appkit/src/panel/portal.rs
+@@ -0,0 +1,416 @@
++use std::path::PathBuf;
++
++use ashpd::desktop::ResponseError;
++use ashpd::desktop::file_chooser::{FileFilter, SelectedFiles};
++use ashpd::{Error as PortalError, PortalError as PortalDbusError};
++use objc::object::Id;
++use url::Url;
++
++use super::{PanelState, PortalOutcome, initial_directory, recognized_extensions};
++
++pub(super) fn show(panel: &PanelState) -> PortalOutcome {
++    if !supports_selection_options(panel) {
++        eprintln!(
++            "rosemary: appkit: XDG file chooser cannot represent this panel's selection options; using the built-in chooser"
++        );
++        return PortalOutcome::Unavailable;
++    }
++    let Some(filters) = panel_filters(panel) else {
++        eprintln!(
++            "rosemary: appkit: XDG file chooser cannot represent this panel's accessory view; using the built-in chooser"
++        );
++        return PortalOutcome::Unavailable;
++    };
++    async_io::block_on(show_async(panel, filters))
++}
++
++fn supports_selection_options(panel: &PanelState) -> bool {
++    if panel.shows_hidden_files {
++        return false;
++    }
++    if panel.save {
++        return !panel.multiple;
++    }
++    panel.can_choose_files ^ panel.can_choose_directories
++}
++
++struct PortalFilters {
++    values: Vec<FileFilter>,
++    current: Option<FileFilter>,
++}
++
++fn panel_filters(panel: &PanelState) -> Option<PortalFilters> {
++    if panel.accessory_view != 0 {
++        return accessory_filters(panel.accessory_view as Id);
++    }
++
++    let values = portal_filters(&panel.allowed_file_types);
++    Some(PortalFilters {
++        current: values.first().cloned(),
++        values,
++    })
++}
++
++fn accessory_filters(accessory: Id) -> Option<PortalFilters> {
++    if !is_kind_of(accessory, "NSView") {
++        return None;
++    }
++    let subviews = send_object(accessory, "subviews")?;
++    let subviews = unsafe { corefoundation::collections::array(subviews as _) }?;
++    let mut kinds = Vec::with_capacity(subviews.values.len());
++    let mut popup = None;
++    for subview in &subviews.values {
++        let subview = *subview as Id;
++        if is_kind_of(subview, "NSPopUpButton") {
++            if popup.replace(subview).is_some() {
++                return None;
++            }
++            kinds.push("NSPopUpButton".to_owned());
++        } else if is_kind_of(subview, "NSTextField") {
++            kinds.push("NSTextField".to_owned());
++        } else {
++            return None;
++        }
++    }
++    if kinds.len() != 2 || popup.is_none() {
++        return None;
++    }
++
++    let popup = popup?;
++    let titles = send_object(popup, "itemTitles")?;
++    let titles = unsafe { corefoundation::collections::array(titles as _) }?;
++    let labels = titles
++        .values
++        .iter()
++        .map(|title| object_string(*title as Id))
++        .collect::<Option<Vec<_>>>()?;
++    let selected = object_string(send_object(popup, "titleOfSelectedItem")?);
++    qt_accessory_filters(&kinds, &labels, selected.as_deref())
++}
++
++fn is_kind_of(object: Id, expected: &str) -> bool {
++    if object.is_null() {
++        return false;
++    }
++    unsafe { objc::object::class_of(object) }
++        .is_some_and(|class| class.chain().any(|class| class.name_str() == expected))
++}
++
++fn send_object(receiver: Id, selector: &str) -> Option<Id> {
++    if receiver.is_null() {
++        return None;
++    }
++    let selector = objc::sel::get(selector);
++    let class = unsafe { objc::object::class_of(receiver) }?;
++    if !class.chain().any(|class| class.method(selector).is_some()) {
++        return None;
++    }
++    let send: unsafe extern "C" fn(Id, objc::sel::Sel) -> Id =
++        unsafe { std::mem::transmute(objc::msg::entry()) };
++    Some(unsafe { send(receiver, selector) })
++}
++
++fn object_string(object: Id) -> Option<String> {
++    if object.is_null() {
++        return None;
++    }
++    Some(String::from_utf8_lossy(&unsafe { foundation::string::bytes(object) }).into_owned())
++}
++
++fn qt_accessory_filters(
++    subview_kinds: &[String],
++    labels: &[String],
++    selected: Option<&str>,
++) -> Option<PortalFilters> {
++    if subview_kinds.len() != 2
++        || !subview_kinds.iter().any(|kind| kind == "NSPopUpButton")
++        || !subview_kinds.iter().any(|kind| kind == "NSTextField")
++        || labels.is_empty()
++    {
++        return None;
++    }
++    let values = labels
++        .iter()
++        .map(|label| qt_name_filter(label))
++        .collect::<Option<Vec<_>>>()?;
++    let current = selected.and_then(|selected| {
++        values
++            .iter()
++            .find(|filter| filter.label() == selected)
++            .cloned()
++    });
++    Some(PortalFilters { values, current })
++}
++
++fn qt_name_filter(label: &str) -> Option<FileFilter> {
++    let patterns = qt_glob_patterns(label)?;
++    let mut filter = FileFilter::new(&label.replace('\0', " "));
++    for pattern in patterns {
++        filter = filter.glob(&pattern);
++    }
++    Some(filter)
++}
++
++fn qt_glob_patterns(label: &str) -> Option<Vec<String>> {
++    let bytes = label.as_bytes();
++    let mut patterns = Vec::new();
++    let mut index = 0;
++    while index + 1 < bytes.len() {
++        if bytes[index] != b'*' || bytes[index + 1] != b'.' {
++            index += 1;
++            continue;
++        }
++        index += 2;
++        if bytes.get(index) == Some(&b'*') {
++            patterns.push("*.*".to_owned());
++            index += 1;
++            continue;
++        }
++        let start = index;
++        while bytes.get(index).is_some_and(|byte| {
++            byte.is_ascii_alphanumeric() || matches!(*byte, b'_' | b'-' | b'+' | b'.')
++        }) {
++            index += 1;
++        }
++        if start == index {
++            return None;
++        }
++        if bytes.get(index).is_some_and(|byte| {
++            !byte.is_ascii_whitespace() && !matches!(*byte, b',' | b';' | b')' | b']')
++        }) {
++            return None;
++        }
++        let extension = std::str::from_utf8(&bytes[start..index]).ok()?;
++        patterns.push(format!("*.{extension}"));
++    }
++    if patterns.is_empty() && label.contains("(*)") {
++        patterns.push("*".to_owned());
++    }
++    (!patterns.is_empty()).then_some(patterns)
++}
++
++async fn show_async(panel: &PanelState, filters: PortalFilters) -> PortalOutcome {
++    let title = panel
++        .title
++        .as_deref()
++        .unwrap_or(if panel.save { "Save File" } else { "Open File" })
++        .replace('\0', " ");
++    let accept_label = panel
++        .prompt
++        .as_deref()
++        .unwrap_or(if panel.save { "Save" } else { "Open" })
++        .replace('\0', " ");
++    let PortalFilters { values, current } = filters;
++
++    let request = if panel.save {
++        let mut request = SelectedFiles::save_file()
++            .title(title.as_str())
++            .accept_label(accept_label.as_str())
++            .modal(true);
++        if let Some(filename) = panel.filename.as_deref() {
++            let filename = filename.replace('\0', " ");
++            request = request.current_name(filename.as_str());
++        }
++        request = match request.current_folder(initial_directory(panel)) {
++            Ok(request) => request,
++            Err(error) => return failed(error.into()),
++        };
++        request.filters(values).current_filter(current).send().await
++    } else {
++        let mut request = SelectedFiles::open_file()
++            .title(title.as_str())
++            .accept_label(accept_label.as_str())
++            .modal(true)
++            .multiple(panel.multiple)
++            .directory(panel.can_choose_directories);
++        request = match request.current_folder(initial_directory(panel)) {
++            Ok(request) => request,
++            Err(error) => return failed(error.into()),
++        };
++        request.filters(values).current_filter(current).send().await
++    };
++
++    let request = match request {
++        Ok(request) => request,
++        Err(error) => return failed(error),
++    };
++    let selected = match request.response() {
++        Ok(selected) => selected,
++        Err(error) => return failed(error),
++    };
++    let Some(paths) = selected
++        .uris()
++        .iter()
++        .map(|uri| local_file_path(uri.as_str()))
++        .collect::<Option<Vec<_>>>()
++        .filter(|paths| !paths.is_empty())
++    else {
++        eprintln!("rosemary: appkit: XDG file chooser returned no local file paths");
++        return PortalOutcome::Unavailable;
++    };
++    PortalOutcome::Selected(paths)
++}
++
++fn portal_filters(types: &[String]) -> Vec<FileFilter> {
++    let extensions = recognized_extensions(types);
++    if extensions.is_empty() {
++        return Vec::new();
++    }
++    let patterns: Vec<String> = extensions
++        .iter()
++        .map(|extension| format!("*.{extension}"))
++        .collect();
++    let label = format!("Supported files ({})", patterns.join(", "));
++    let mut filter = FileFilter::new(&label);
++    for pattern in patterns {
++        filter = filter.glob(&pattern);
++    }
++    vec![filter]
++}
++
++fn local_file_path(uri: &str) -> Option<PathBuf> {
++    let scheme_separator = uri.find("://")?;
++    if !uri[..scheme_separator].eq_ignore_ascii_case("file") {
++        return None;
++    }
++    let uri = Url::parse(uri).ok()?;
++    if uri.scheme() != "file" {
++        return None;
++    }
++    let path = uri.to_file_path().ok()?;
++    path.is_absolute().then_some(path)
++}
++
++fn failed(error: PortalError) -> PortalOutcome {
++    match error {
++        PortalError::Response(ResponseError::Cancelled)
++        | PortalError::Portal(PortalDbusError::Cancelled(_)) => PortalOutcome::Cancelled,
++        error => {
++            eprintln!(
++                "rosemary: appkit: XDG file chooser unavailable or failed ({error}); using the built-in chooser"
++            );
++            PortalOutcome::Unavailable
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn file_uris_decode_spaces_and_unicode() {
++        assert_eq!(
++            local_file_path("file:///tmp/Studio%20Projects/%E2%98%83.rbxl"),
++            Some(PathBuf::from("/tmp/Studio Projects/☃.rbxl"))
++        );
++    }
++
++    #[test]
++    fn non_file_uris_are_rejected() {
++        assert_eq!(local_file_path("https://example.com/place.rbxl"), None);
++        assert_eq!(local_file_path("file:relative/place.rbxl"), None);
++        assert_eq!(local_file_path("file://remote/share/place.rbxl"), None);
++    }
++
++    #[test]
++    fn portal_filter_combines_allowed_extensions() {
++        let types = vec!["rbxl".to_owned(), ".rbxm".to_owned()];
++        let filters = portal_filters(&types);
++        assert_eq!(filters.len(), 1);
++        assert_eq!(filters[0].label(), "Supported files (*.rbxl, *.rbxm)");
++        assert_eq!(filters[0].pattern_filters(), ["*.rbxl", "*.rbxm"]);
++    }
++
++    #[test]
++    fn panels_with_unsupported_selection_options_use_the_internal_chooser() {
++        let open = PanelState {
++            can_choose_files: true,
++            ..PanelState::default()
++        };
++        assert!(supports_selection_options(&open));
++
++        let save = PanelState {
++            save: true,
++            ..PanelState::default()
++        };
++        assert!(supports_selection_options(&save));
++
++        let mixed = PanelState {
++            can_choose_files: true,
++            can_choose_directories: true,
++            ..PanelState::default()
++        };
++        assert!(!supports_selection_options(&mixed));
++        assert!(!supports_selection_options(&PanelState {
++            shows_hidden_files: true,
++            can_choose_files: true,
++            ..PanelState::default()
++        }));
++    }
++
++    #[test]
++    fn qt_name_filter_accessory_maps_filter_labels_and_selection() {
++        let kinds = vec!["NSPopUpButton".to_owned(), "NSTextField".to_owned()];
++        let labels = vec![
++            "Studio Places (*.rbxl *.rbxlx)".to_owned(),
++            "Studio Models (*.rbxm)".to_owned(),
++            "All Files (*)".to_owned(),
++        ];
++        let filters = qt_accessory_filters(&kinds, &labels, Some("Studio Models (*.rbxm)"))
++            .expect("Qt's file-type accessory should map to portal filters");
++
++        assert_eq!(
++            filters
++                .values
++                .iter()
++                .map(FileFilter::label)
++                .collect::<Vec<_>>(),
++            [
++                "Studio Places (*.rbxl *.rbxlx)",
++                "Studio Models (*.rbxm)",
++                "All Files (*)"
++            ]
++        );
++        assert_eq!(filters.values[0].pattern_filters(), ["*.rbxl", "*.rbxlx"]);
++        assert_eq!(filters.values[2].pattern_filters(), ["*"]);
++        assert_eq!(
++            filters.current.as_ref().map(FileFilter::label),
++            Some("Studio Models (*.rbxm)")
++        );
++    }
++
++    #[test]
++    fn custom_accessories_and_unrecognized_name_filters_still_fall_back() {
++        let qt_kinds = vec!["NSPopUpButton".to_owned(), "NSTextField".to_owned()];
++        assert!(
++            qt_accessory_filters(
++                &["NSPopUpButton".to_owned(), "NSButton".to_owned()],
++                &["Studio Places (*.rbxl)".to_owned()],
++                None
++            )
++            .is_none()
++        );
++        assert!(
++            qt_accessory_filters(&qt_kinds, &["Studio Files (*.rbxl?)".to_owned()], None).is_none()
++        );
++        assert_eq!(
++            qt_glob_patterns("All Files (*.*)"),
++            Some(vec!["*.*".to_owned()])
++        );
++    }
++
++    #[test]
++    fn portal_cancellation_is_distinct_from_portal_failure() {
++        assert!(matches!(
++            failed(PortalError::Response(ResponseError::Cancelled)),
++            PortalOutcome::Cancelled
++        ));
++        assert!(matches!(
++            failed(PortalError::Portal(PortalDbusError::Failed(
++                "backend unavailable".into()
++            ))),
++            PortalOutcome::Unavailable
++        ));
 +    }
 +}
 diff --git a/crates/appkit/src/pasteboard.rs b/crates/appkit/src/pasteboard.rs
