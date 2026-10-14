@@ -129,3 +129,9 @@ before exposing general text and HTML, and key-equivalent dispatch walks the
 focused responder's ancestor views. Manual validation remains incomplete:
 Toolbox and Explorer copy/cut work, while paste there and clipboard shortcuts
 in other controls still fail.
+
+For upstream review, these clipboard changes are isolated into two Rosemary
+v0.2.3 branches. The first changes only the Carbon/Cocoa pasteboard bridge;
+the second layers native AppKit and WebKit editing actions on top, keeping the
+two concerns independently reviewable. Both commits are included in open
+Rosemary PR #42.

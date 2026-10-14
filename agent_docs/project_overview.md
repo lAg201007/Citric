@@ -59,12 +59,13 @@ The AppKit file-panel compatibility layer now uses Rosemary's shared SDL-backed
 reached the chooser and navigated with Up; readable entries, selection, and
 cancellation still need confirmation after the theme contrast fix.
 
-The file-panel work is prepared for upstream review as two stacked branches in
-the Rosemary fork `lAg201007/rosemary-citric-fixes`: the SDL-backed chooser
-branch `citric/sdl-file-picker`, followed by the XDG Desktop Portal branch
-`citric/xdg-file-chooser`. The official Rosemary repository has not received a
-pull request. The SDL branch keeps the shared fallback independently usable;
-the portal branch adds portal preference and fallback routing on top of it.
+The file-panel work is prepared as two stacked branches in the Rosemary fork
+`lAg201007/rosemary-citric-fixes`: the SDL-backed chooser branch
+`citric/sdl-file-picker`, followed by the XDG Desktop Portal branch
+`citric/xdg-file-chooser`. Both commits are included in open Rosemary PR #40.
+The SDL branch keeps the shared fallback independently usable; the portal
+branch adds portal preference and fallback routing on top of it. Manual
+Studio/portal validation is still pending.
 
 The shared file chooser now includes a visible case-insensitive live name
 search, hidden dotfile visibility toggled with Ctrl/Command+H, refresh with
@@ -114,3 +115,10 @@ required 32-bit ABI. Privacy-safe diagnostics are gated by
 ROSEMARY_TRACE_CLIPBOARD and ROSEMARY_INPUT_TRACE. Manual validation remains
 incomplete: Studio-to-search paste works, while cut, search-to-other-control
 paste, and transfers involving external Linux applications still fail.
+
+The reusable clipboard work is prepared for upstream review as two stacked
+Rosemary v0.2.3 branches in `lAg201007/rosemary-citric-fixes`:
+`citric/pasteboard-bridge` contains the Carbon/Cocoa bridge and
+`citric/clipboard-text-actions` adds native AppKit and WebKit text actions.
+Both commits are included in open Rosemary PR #42. Full manual Studio and
+external-application validation is still pending.

@@ -1,5 +1,13 @@
 # Project diary
 
+- On 2026-10-14, the reusable clipboard fixes were split from the Citric
+  overlay into two stacked Rosemary v0.2.3 branches. `citric/pasteboard-bridge`
+  keeps the Carbon/Cocoa pasteboard and promised-flavor work independently
+  reviewable; `citric/clipboard-text-actions` layers native AppKit and WebKit
+  editing actions on it. Both branches were pushed to the user's Rosemary
+  fork. This preserves a clean upstream review path without opening official
+  pull requests before manual validation.
+
 - On 2026-10-14, the file-panel changes were split for future Rosemary review.
   `citric/sdl-file-picker` contains the shared SDL-backed Open/Save chooser and
   its QoL behavior; `citric/xdg-file-chooser` is based on that branch and adds
@@ -7,6 +15,12 @@
   pushed to the user's Rosemary fork. The official repository was deliberately
   left unchanged so the branches can be reviewed and tested before opening
   stacked pull requests.
+
+- Later on 2026-10-14, the official Rosemary PRs were opened: PR #40 includes
+  both the SDL file-picker and XDG portal commits, and PR #42 includes both
+  clipboard commits. This supersedes the earlier plan to wait for manual
+  validation before opening them. Manual Studio/portal and full clipboard
+  validation remain pending; the results should be reported on the open PRs.
 
 - The destination was made as a local clone of Rosemary source at base commit
   c14275b, then the complete working diff was applied. CaseSolved content was

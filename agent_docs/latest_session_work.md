@@ -1,9 +1,40 @@
 # Latest session work
 
+Deployment: `clipboard_upstream_20261014`
+
+State: complete; both upstream-ready branches are pushed to the user's fork
+and are included in official Rosemary PR #42, which is open.
+
+Outcome: clipboard compatibility was separated into two stacked Rosemary
+v0.2.3 branches. `citric/pasteboard-bridge` contains Carbon/Cocoa named
+pasteboard aliasing, legacy `NSStringPboardType` handling, external clipboard
+synchronization, promised flavor materialization, and the 32-bit Carbon item
+count/item ID ABI. `citric/clipboard-text-actions` adds native AppKit and
+WebKit Control/Command copy, cut, paste, and select-all behavior on top of the
+bridge. The branches are available in
+`lAg201007/rosemary-citric-fixes`.
+
+Verification: both branches have clean commit boundaries and are based on the
+pinned Rosemary v0.2.3 checkout. Existing focused clipboard coverage and the
+Citric Release validation are the supporting automated evidence. Manual
+validation is still required for the full Studio and external-Linux-app
+clipboard matrix; the latest recorded validation confirms several transfers
+but still reports failures in some paste and shortcut paths.
+
+Blockers: no source blocker. Manual Studio and external-Linux-app clipboard
+validation remains incomplete while the official PR is open.
+
+Exact next entry point: test both branches in a rebuilt Rosemary runtime and
+report the results on PR #42; add a focused follow-up commit only if validation
+finds a source issue.
+
+Deployment token report: `clipboard_upstream_20261014` (unavailable; the
+deployment-token-report skill and matching session record were not available).
+
 Deployment: `open_portal_fork_20261014`
 
-State: complete; fork branches are pushed, while official Rosemary PRs remain
-intentionally unopened.
+State: complete; both fork branches are included in official Rosemary PR #40,
+which is open.
 
 Outcome: the upstreamable file-panel work was separated into two stacked
 Rosemary v0.2.3 branches. `citric/sdl-file-picker` contains the shared SDL
@@ -20,14 +51,13 @@ was pushed after these checks. No session D-Bus or Studio GUI was available,
 so portal appearance, Open/Save interaction, cancellation, and fallback
 behavior still require manual validation.
 
-Blockers: no source blocker. The session bus is unavailable in this
-environment.
+Blockers: no source blocker. The session bus was unavailable during automated
+validation, so manual portal and Studio testing remains pending while PR #40
+is open.
 
-Exact next entry point: test `citric/sdl-file-picker` independently if desired,
-then test the stacked `citric/xdg-file-chooser` branch in a desktop session
-with an XDG portal. After review and manual validation, open stacked PRs in
-the official Rosemary repository, with the SDL PR as the base for the portal
-PR.
+Exact next entry point: test `citric/sdl-file-picker` and the XDG portal branch
+in a desktop session with a working portal. Confirm Open, Save, filters,
+cancellation, and SDL fallback, then report the results on PR #40.
 
 Deployment token report: `open_portal_fork_20261014` (unavailable; no session
 record matched this deployment ID).

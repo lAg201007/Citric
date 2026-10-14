@@ -71,6 +71,12 @@ synchronization in `crates/webkit/src/web_view.rs`, and focused-responder
 ancestor traversal for key equivalents. Diagnostics are environment-gated in
 the existing AppKit and WebKit input paths.
 
+The upstream-ready clipboard branches live in the separate Rosemary checkout:
+`citric/pasteboard-bridge` owns the Carbon/Cocoa bridge, and
+`citric/clipboard-text-actions` owns native AppKit and WebKit text actions on
+top of that bridge. They are pushed to the user's fork and are not part of
+Citric's current branch history. Both are included in open Rosemary PR #42.
+
 The Save panel hidden-extension preference is owned by the AppKit panel bridge
 in the canonical patch; its getter and setter are covered by panel tests.
 

@@ -4,10 +4,19 @@ Latest completed deployment: `open_portal_fork_20261014`. The SDL file-picker
 fallback and XDG Desktop Portal integration were split into two upstreamable
 branches based on Rosemary v0.2.3 and pushed to the user's Rosemary fork:
 `citric/sdl-file-picker` and `citric/xdg-file-chooser`. The second branch is
-stacked on the first. The official Rosemary repository has not received a PR.
+stacked on the first. Both commits are included in open Rosemary PR #40.
 Automated validation passed for the isolated branches and the integrated
 Citric patch. Manual portal/UI validation remains pending because no session
 D-Bus was available. There is no active deployment.
+
+Latest completed deployment: `clipboard_upstream_20261014`. The useful
+clipboard fixes were isolated into two stacked Rosemary v0.2.3 branches and
+pushed to `lAg201007/rosemary-citric-fixes`: `citric/pasteboard-bridge` and
+`citric/clipboard-text-actions`. The first isolates Carbon/Cocoa pasteboard
+aliasing, promised flavors, stale-format handling, and the 32-bit Carbon ABI;
+the second adds native AppKit and WebKit copy, cut, paste, and select-all
+actions. Both commits are included in open Rosemary PR #42. Manual Studio
+validation remains incomplete while the PR is under review.
 
 Latest completed deployment: `xdg_open_portal_qt_filter_accessory_20261014`.
 The portal path now accepts Qt Cocoa's filter-only accessory view, maps its
