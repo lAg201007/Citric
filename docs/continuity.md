@@ -28,7 +28,7 @@ Para abrir uma place local:
 
     ./scripts/run-studio.sh -task EditFile -localPlaceFile /caminho/para/place.rbxl
 
-O launcher permite substituir ROSEMARY_BIN, ROSEMARY_PREFIX, ROSEMARY_ROOTFS_CACHE, STUDIO_APP, STUDIO_SDL_DRIVER, STUDIO_LOG_NAME e STUDIO_TIMEOUT. Por padrão ele usa o backend SDL X11, a cópia local do app e o cache Darwin desta árvore.
+O launcher permite substituir ROSEMARY_BIN, ROSEMARY_PREFIX, ROSEMARY_ROOTFS_CACHE, STUDIO_APP, STUDIO_SDL_DRIVER, STUDIO_LOG_NAME e STUDIO_TIMEOUT. Por padrão ele recomenda e usa o backend SDL Wayland, a cópia local do app e o cache Darwin desta árvore.
 
 ## Documentação de continuidade
 
@@ -40,4 +40,4 @@ O launcher permite substituir ROSEMARY_BIN, ROSEMARY_PREFIX, ROSEMARY_ROOTFS_CAC
 - docs/bundle.md: conteúdo, versões e política dos artefatos locais.
 - docs/patches/README.md: relação entre o diff atual e os snapshots de patch.
 
-O último teste da sessão terminou em crash durante a abertura da place. Consulte docs/current-state.md antes de reproduzir; não trate a sessão anterior como uma validação de estabilidade.
+The latest Import retest (`run-20261013T213755-38660.log`) no longer crashed. The user confirmed that Up works and navigates, but reported white file entries with invisible names. The dark appearance used white text on a hardcoded white list surface. The chooser now uses a theme-specific input background, and a rendering regression test covers dark-mode filenames. The patch applies to the pinned v0.2.2 base and the updated release binary is installed. See `docs/current-state.md` and `docs/validation.md`; the user has confirmed that Import displays readable entries, selection returns to Studio without a crash, and cancellation works. Open from File still needs a separate retest.

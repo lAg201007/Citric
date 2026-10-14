@@ -84,6 +84,12 @@ The transparent-row regression, clipping/stride, translucent blending, and mixed
 
 On 2026-10-12, the user restarted this build through Citric, ran an empty Baseplate in Play for about 10 seconds, and reported that the visible stutter disappeared. The captured run still logged full-window damage for a 1920x1052 region at a median interval of about 499.9 ms. This confirms the reported visual symptom is resolved in the tested session; it does not show that the periodic invalidation itself stopped.
 
+## File chooser crash follow-up
+
+- The first Import/Open from File retest crashed because `NSTextFieldCell` lacked the forwarded `setFont:` selector (`run-20261013T140253-47595.log`). Moving generic cell forwarding after label method registration fixed it; `text_field_cells_forward_font_accessors` covers setter/getter dispatch.
+- The next Studio retest crashed on `NSOpenPanel -setAccessoryView:` (`run-20261013T141034-51949.log`); the following retest crashed on `NSOpenPanel -setAccessoryViewDisclosed:` (`run-20261013T211950-4680.log`). Added retained accessory-view accessors and disclosure-state setter/getters with regression tests for replacement, release, default value, and round-trip behavior.
+- `cargo fmt -p appkit -p chrome -- --check`, all 293 AppKit unit tests, the AppKit theme integration test, source `git diff --check`, and the locked offline Rosemary Release build passed. The full patch applies to a clean worktree at pinned commit `04dce85b63154d6451adf74e3f7bacf40add08bd`; the new binary was installed atomically. Manual Import/Open, selection, and cancel validation remains pending. Arbitrary accessory-view rendering is not yet validated.
+
 ## Verificações ainda pendentes
 
 1. Reproduce the large-place crash in a normal launcher session with a fresh log. Do not perform complex mouse drags without asking the user.
@@ -109,3 +115,29 @@ Validated on 2026-10-12 against the official `v0.2.2` tag, commit `04dce85b63154
 - `cargo fmt --all -- --check` reports one module-order formatting difference in `crates/darwin/src/lib.rs`, which is already present in the unmodified upstream v0.2.2 tree.
 
 The already-open Studio process was left running. A fresh launch through Citric will use the installed v0.2.2 binary.
+
+
+## Foundation file-type globals
+
+The next Import retest (`run-20261013T212430-18786.log`) faulted at `libqcocoa.dylib+0x6da0e` while Qt Cocoa evaluated `-[QNSOpenSavePanelDelegate panel:shouldEnableURL:]`. Mach-O binding data and the faulting instruction identify `_NSFileTypeDirectory` as the unresolved Foundation data import. Added the seven standard Foundation `NSFileType*` string globals to `foundation::data_symbols()` with a regression test that reads the exported pointer cells and validates their string values. `cargo test --locked --offline -p foundation` passed all 143 unit tests and its integration/doc tests; `cargo fmt -p foundation -- --check` and `git diff --check` passed. `cargo build --locked --offline --release -p rosemary` succeeded. The complete patch applied to a clean worktree at pinned commit `04dce85b63154d6451adf74e3f7bacf40add08bd`. Release binary SHA-256: `44e357aa49203a9cacfc2c55de0c7094a606fafe8451af0ddfd6beea10707a1e`; build ID: `6a63da5967ecb4527e1d75e58cbd460b27424b5a`. The Studio retest is still pending.
+
+
+## File-package panel property
+
+The next manual Import test reached Qt Cocoa's file URL filtering, then the runtime aborted on an unimplemented `NSOpenPanel.treatsFilePackagesAsDirectories` getter (`run-20261013T212922-22816.log`). The bundled Qt plugin contains that property reference and the setters for other panel options. Implemented the getter and setter with retained per-panel state, and made the shared picker classify common package directories according to the property. Apple's documented behavior is that `true` displays file packages as directories. `cargo test --locked --offline -p appkit` passed all 294 unit tests and the theme integration test, including the new property/listing regression; `cargo fmt -p appkit -- --check` and the source `git diff --check` passed. The locked offline Rosemary Release build succeeded, the complete patch applied to a clean worktree at pinned commit `04dce85b63154d6451adf74e3f7bacf40add08bd`, and the binary was installed. SHA-256: `b65e193b55e104050d832d3b034440803aa7be5011ff1de82366180f16b6cbd2`; build ID: `ee0592d8caba10bae82168168e4c0b69aff45295`. Manual Import/Open, selection, and cancel validation is pending.
+
+## NSWorkspace file-package query
+
+The Import retest (`run-20261013T213235-25905.log`) advanced past the panel property checks and aborted because Qt Cocoa sent the unimplemented `NSWorkspace -isFilePackageAtPath:` selector. Rosemary now registers the AppKit method, maps the guest path through the active prefix, rejects nil, missing, and non-directory paths, and reuses the file chooser's package classification. The regression test checks an existing `.app` directory, an ordinary directory, a missing path, nil input, and selector registration. All 295 AppKit unit tests and the AppKit theme integration test passed; `cargo fmt -p appkit -- --check`, the source `git diff --check`, and a locked offline Release build passed. The complete patch applies to a clean worktree at pinned commit `04dce85b63154d6451adf74e3f7bacf40add08bd`, and the focused test passed there as well. Manual Import/Open, selected-file return, and cancel behavior remain unverified.
+
+## File chooser dark-appearance fix
+
+The latest Studio retest (`run-20261013T213755-38660.log`) no longer crashed. The user confirmed that Up navigation worked, but the file entries appeared white without visible names. Inspection identified white list and field backgrounds paired with white dark-theme text. The chooser now uses `Theme::panel_input_background` for its location, list, and save-name surfaces, and the new `dark_mode_file_names_have_contrast_against_the_list_background` test paints a filename and checks its contrast.
+
+- `cargo test --locked --offline -p chrome`: 52 passed.
+- `cargo test --locked --offline -p appkit`: 295 unit tests and 1 theme integration test passed.
+- `cargo fmt -p chrome -p appkit -- --check` and source `git diff --check` passed. The repository-wide format check still reports a pre-existing module-order difference in `crates/darwin/src/lib.rs`.
+- `cargo build --locked --offline --release -p rosemary` passed.
+- The complete patch applied cleanly to a fresh worktree at pinned base `04dce85b63154d6451adf74e3f7bacf40add08bd`; the focused dark-mode rendering regression passed there.
+- The updated binary is installed as `bin/rosemary`; its SHA-256 is `592bc22553f478bfe789a4682f9c20b69f198e107b050a370fce4c043799f1a2`, and its ELF build ID is `6a26d3da4529fa69d8f925ead1f7cef178459666`.
+- The user restarted Studio through Citric and confirmed that Import shows readable names, selecting a file returns to Studio without a crash, and cancelling returns cleanly. Open from File still needs a separate manual retest.

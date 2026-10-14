@@ -676,6 +676,45 @@ index 6b2019f..8693436 100644
      /// A hidden view is placed nowhere, and takes its subviews with it.
      #[test]
      fn a_hidden_view_is_not_placed() {
+diff --git a/crates/appkit/src/cell.rs b/crates/appkit/src/cell.rs
+index b08da9c..8403f44 100644
+--- a/crates/appkit/src/cell.rs
++++ b/crates/appkit/src/cell.rs
+@@ -214,3 +214,34 @@ pub(crate) fn install() {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn text_field_cells_forward_font_accessors() {
++        crate::bootstrap();
++        let field_class = objc::class::lookup(c"NSTextField").expect("NSTextField");
++        let field = objc::object::create_instance(field_class, 0);
++        let cell = cell_of(field);
++        let cell_class = unsafe { objc::object::class_of(cell) }.expect("NSTextFieldCell");
++        let setter = objc::sel::get("setFont:");
++        let getter = objc::sel::get("font");
++        assert!(cell_class.method(setter).is_some());
++        assert!(cell_class.method(getter).is_some());
++
++        let send: unsafe extern "C" fn(Id, Sel, Id) =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let read: unsafe extern "C" fn(Id, Sel) -> Id =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        unsafe {
++            send(cell, setter, std::ptr::null_mut());
++            assert!(read(cell, getter).is_null());
++        }
++
++        forget(field);
++        crate::label::forget(field);
++        objc::arc::release(field);
++    }
++}
 diff --git a/crates/appkit/src/cgevent.rs b/crates/appkit/src/cgevent.rs
 index 701b53a..6249778 100644
 --- a/crates/appkit/src/cgevent.rs
@@ -1648,6 +1687,70 @@ index 7b15fa7..ff8b1ca 100644
      for level in tracking.levels.into_iter().rev() {
          close_level(level);
      }
+diff --git a/crates/appkit/src/dialog.rs b/crates/appkit/src/dialog.rs
+index 8465ebb..b411dbf 100644
+--- a/crates/appkit/src/dialog.rs
++++ b/crates/appkit/src/dialog.rs
+@@ -441,7 +441,7 @@ fn dump(id: u32, surface: &sdl3::video::Presentation, pixels: &[u8]) {
+ }
+ 
+ /// The window a dialog is modal for: the key window, or any of the program's.
+-fn parent() -> sdl3::Window {
++pub(crate) fn parent() -> sdl3::Window {
+     // SDL leaves a child of a hidden window unmapped, so a program that
+     // ordered its only window out before alerting would get no dialog at all.
+     let shown = |window: sdl3::Window| {
+@@ -482,6 +482,41 @@ pub(crate) fn deliver_modal(event: &sdl3::video::Event) -> bool {
+     })
+ }
+ 
++pub(crate) fn run_modal_window<T: Clone>(
++    window: sdl3::Window,
++    dismissed: T,
++    mut handle: impl FnMut(&sdl3::video::Event) -> Option<T>,
++) -> (T, bool) {
++    use sdl3::video::Event;
++
++    let outer = MODAL.replace(Some((window, Default::default())));
++    let result = loop {
++        crate::opengl::release_for_other_threads();
++        crate::script::run();
++        let scripted = MODAL.with_borrow_mut(|modal| modal.as_mut()?.1.pop_front());
++        let Some(event) = scripted.or_else(|| sdl3::video::wait(50)) else {
++            continue;
++        };
++        if let Some(answer) = handle(&event) {
++            break (answer, false);
++        }
++        match event {
++            Event::Quit => break (dismissed.clone(), true),
++            Event::Key { .. }
++            | Event::Text { .. }
++            | Event::TextEditing { .. }
++            | Event::MouseMotion { .. }
++            | Event::MouseButton { .. }
++            | Event::MouseWheel { .. }
++            | Event::WindowClosed { .. }
++            | Event::WindowHitTest { .. } => {}
++            other => crate::event::deliver_past_modal(other),
++        }
++    };
++    MODAL.set(outer);
++    result
++}
++
+ /// Show `request` and wait for a button: its index, or `None` when no dialog
+ /// could be shown at all, which is the caller's cue to ask some other way.
+ ///
+@@ -582,7 +617,7 @@ pub(crate) fn deliver(event: &sdl3::video::Event) -> bool {
+ 
+ /// Over the parent's middle, or the primary display's. Wayland places a
+ /// window itself and ignores this.
+-fn center(window: sdl3::Window, parent: sdl3::Window, width: f32, height: f32) {
++pub(crate) fn center(window: sdl3::Window, parent: sdl3::Window, width: f32, height: f32) {
+     let area = match parent.is_null() {
+         false => sdl3::video::window_position(parent).zip(sdl3::video::window_size(parent)),
+         true => None,
 diff --git a/crates/appkit/src/displaylink.rs b/crates/appkit/src/displaylink.rs
 index f395984..3c43a56 100644
 --- a/crates/appkit/src/displaylink.rs
@@ -2915,6 +3018,26 @@ index bca585e..d2f4542 100644
      #[test]
      fn the_modifier_keys_are_the_modifiers() {
          assert!(is_modifier(scancode::LSHIFT));
+diff --git a/crates/appkit/src/lib.rs b/crates/appkit/src/lib.rs
+index 24061e1..ba30cb1 100644
+--- a/crates/appkit/src/lib.rs
++++ b/crates/appkit/src/lib.rs
+@@ -111,13 +111,13 @@ pub fn bootstrap() {
+         segmented::install();
+         table::install();
+         view_animation::install();
+-        // Last of the controls: a cell forwards what its control implements.
+-        cell::install();
+         bezier::install();
+         layer::install();
+         coreanimation::install();
+         text::install();
+         label::install();
++        // Last of the controls: a cell forwards what its control implements.
++        cell::install();
+         input_context::install();
+         opengl::install();
+         darwin::idle::on_idle(opengl::going_idle);
 diff --git a/crates/appkit/src/nsevent.rs b/crates/appkit/src/nsevent.rs
 index cf2184c..644aec8 100644
 --- a/crates/appkit/src/nsevent.rs
@@ -2968,6 +3091,1143 @@ index cf2184c..644aec8 100644
          "enterExitEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:trackingNumber:userData:"
              => enter_exit_event, c"@96@0:8Q16{CGPoint=dd}24Q40d48q56@64q72q80^v88";
          "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"
+diff --git a/crates/appkit/src/panel.rs b/crates/appkit/src/panel.rs
+index 597b4c1..585ae34 100644
+--- a/crates/appkit/src/panel.rs
++++ b/crates/appkit/src/panel.rs
+@@ -1,89 +1,1083 @@
++use std::collections::HashMap;
++use std::path::{Path, PathBuf};
++use std::sync::{Mutex, OnceLock};
++
++use chrome::View;
+ use objc::object::Id;
+ use objc::sel::Sel;
+ 
+ use crate::define::{class_methods, methods};
+ 
+-/// `NSModalResponseCancel`, which is also `NSFileHandlingPanelCancelButton`.
+ const CANCEL: i64 = 0;
++const ACCEPT: i64 = 1;
++const WINDOW_WIDTH: i32 = 720;
++const WINDOW_HEIGHT: i32 = 500;
++const FILE_PACKAGE_EXTENSIONS: &[&str] = &[
++    "app",
++    "appex",
++    "bundle",
++    "framework",
++    "key",
++    "numbers",
++    "pages",
++    "pkg",
++    "plugin",
++    "playground",
++    "rtfd",
++    "xcworkspace",
++    "xcodeproj",
++];
++
++#[derive(Clone, Debug, PartialEq, Eq)]
++struct SelectedPath {
++    guest_path: String,
++    is_directory: bool,
++}
++
++#[derive(Clone, Debug, Default)]
++struct PanelState {
++    save: bool,
++    multiple: bool,
++    can_choose_files: bool,
++    can_choose_directories: bool,
++    directory: Option<String>,
++    filename: Option<String>,
++    title: Option<String>,
++    prompt: Option<String>,
++    allowed_file_types: Vec<String>,
++    accessory_view: usize,
++    accessory_view_disclosed: bool,
++    treats_file_packages_as_directories: bool,
++    selected: Vec<SelectedPath>,
++}
++
++static PANELS: OnceLock<Mutex<HashMap<usize, PanelState>>> = OnceLock::new();
++static LAST_DIRECTORY: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
++
++fn panels() -> &'static Mutex<HashMap<usize, PanelState>> {
++    PANELS.get_or_init(|| Mutex::new(HashMap::new()))
++}
++
++fn last_directory() -> &'static Mutex<Option<PathBuf>> {
++    LAST_DIRECTORY.get_or_init(|| Mutex::new(None))
++}
++
++fn state(receiver: Id) -> PanelState {
++    panels()
++        .lock()
++        .unwrap_or_else(|error| error.into_inner())
++        .get(&(receiver as usize))
++        .cloned()
++        .unwrap_or_default()
++}
++
++fn update(receiver: Id, update: impl FnOnce(&mut PanelState)) {
++    update(
++        panels()
++            .lock()
++            .unwrap_or_else(|error| error.into_inner())
++            .entry(receiver as usize)
++            .or_default(),
++    );
++}
++
++unsafe extern "C" fn open_panel(class: Id, _sel: Sel) -> Id {
++    create_panel(class, false)
++}
+ 
+-/// `+openPanel` / `+savePanel`: an autoreleased panel of the receiving class.
+-///
+-/// The receiver is the class the message was sent to, so one function serves
+-/// both and an `NSOpenPanel` comes back for `+openPanel`.
+-unsafe extern "C" fn panel(class: Id, _sel: Sel) -> Id {
+-    // SAFETY: `class` is the class object the message was sent to.
++unsafe extern "C" fn save_panel(class: Id, _sel: Sel) -> Id {
++    create_panel(class, true)
++}
++
++fn create_panel(class: Id, save: bool) -> Id {
+     let Some(class) = (unsafe { objc::class::from_ptr(class as *const objc::class::Class) }) else {
+         return std::ptr::null_mut();
+     };
+-    objc::arc::autorelease(objc::object::create_instance(class, 0))
++    let receiver = objc::object::create_instance(class, 0);
++    if !receiver.is_null() {
++        update(receiver, |state| {
++            state.save = save;
++            state.can_choose_files = !save;
++        });
++    }
++    objc::arc::autorelease(receiver)
+ }
+ 
+-/// `-runModal`, and the `-beginSheetModalForWindow:completionHandler:`-free
+-/// half of the family: nothing was chosen.
+-unsafe extern "C" fn run_modal(receiver: Id, _sel: Sel) -> i64 {
+-    static SAID: std::sync::Once = std::sync::Once::new();
+-    SAID.call_once(|| {
++unsafe extern "C" fn dealloc(receiver: Id, _sel: Sel) {
++    let accessory_view = panels()
++        .lock()
++        .unwrap_or_else(|error| error.into_inner())
++        .remove(&(receiver as usize))
++        .map_or(std::ptr::null_mut(), |state| state.accessory_view as Id);
++    objc::arc::release(accessory_view);
++    objc::arc::finalize(receiver);
++}
++
++unsafe fn string_text(value: Id) -> Option<String> {
++    if value.is_null() {
++        return None;
++    }
++    let bytes = unsafe { foundation::string::bytes(value) };
++    Some(String::from_utf8_lossy(&bytes).into_owned())
++}
++
++unsafe fn file_url_path(value: Id) -> Option<String> {
++    unsafe { corefoundation::url::as_url(value as corefoundation::base::CFTypeRef) }?.file_path()
++}
++
++unsafe fn array_strings(value: Id) -> Vec<String> {
++    let Some(array) =
++        (unsafe { corefoundation::collections::array(value as corefoundation::base::CFTypeRef) })
++    else {
++        return Vec::new();
++    };
++    array
++        .values
++        .iter()
++        .filter_map(|value| unsafe { string_text(*value as Id) })
++        .collect()
++}
++
++unsafe extern "C" fn set_directory_url(receiver: Id, _sel: Sel, value: Id) {
++    let path = unsafe { file_url_path(value) };
++    update(receiver, |state| state.directory = path);
++}
++
++unsafe extern "C" fn set_filename(receiver: Id, _sel: Sel, value: Id) {
++    let filename = unsafe { string_text(value) };
++    update(receiver, |state| state.filename = filename);
++}
++
++unsafe extern "C" fn set_title(receiver: Id, _sel: Sel, value: Id) {
++    let title = unsafe { string_text(value) };
++    update(receiver, |state| state.title = title);
++}
++
++unsafe extern "C" fn set_prompt(receiver: Id, _sel: Sel, value: Id) {
++    let prompt = unsafe { string_text(value) };
++    update(receiver, |state| state.prompt = prompt);
++}
++
++unsafe extern "C" fn set_allowed_file_types(receiver: Id, _sel: Sel, value: Id) {
++    let types = unsafe { array_strings(value) };
++    update(receiver, |state| state.allowed_file_types = types);
++}
++
++unsafe extern "C" fn set_accessory_view(receiver: Id, _sel: Sel, view: Id) {
++    let retained = objc::arc::retain(view);
++    let previous = {
++        let mut panels = panels().lock().unwrap_or_else(|error| error.into_inner());
++        let state = panels.entry(receiver as usize).or_default();
++        std::mem::replace(&mut state.accessory_view, retained as usize) as Id
++    };
++    objc::arc::release(previous);
++}
++
++unsafe extern "C" fn accessory_view(receiver: Id, _sel: Sel) -> Id {
++    state(receiver).accessory_view as Id
++}
++
++unsafe extern "C" fn set_accessory_view_disclosed(receiver: Id, _sel: Sel, disclosed: u8) {
++    update(receiver, |state| {
++        state.accessory_view_disclosed = disclosed != 0
++    });
++}
++
++unsafe extern "C" fn accessory_view_disclosed(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(state(receiver).accessory_view_disclosed)
++}
++
++unsafe extern "C" fn set_multiple(receiver: Id, _sel: Sel, value: u8) {
++    update(receiver, |state| state.multiple = value != 0);
++}
++
++unsafe extern "C" fn allows_multiple(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(state(receiver).multiple)
++}
++
++unsafe extern "C" fn set_can_choose_files(receiver: Id, _sel: Sel, value: u8) {
++    update(receiver, |state| state.can_choose_files = value != 0);
++}
++
++unsafe extern "C" fn can_choose_files(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(state(receiver).can_choose_files)
++}
++
++unsafe extern "C" fn set_can_choose_directories(receiver: Id, _sel: Sel, value: u8) {
++    update(receiver, |state| state.can_choose_directories = value != 0);
++}
++
++unsafe extern "C" fn can_choose_directories(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(state(receiver).can_choose_directories)
++}
++
++fn initial_directory(panel: &PanelState) -> PathBuf {
++    if let Some(guest) = panel.directory.as_deref() {
++        let path = prefix::ns::host_path(guest);
++        if path.is_dir() {
++            return path;
++        }
++        if let Some(parent) = path.parent() {
++            return parent.to_path_buf();
++        }
++    }
++    if let Some(directory) = last_directory()
++        .lock()
++        .unwrap_or_else(|error| error.into_inner())
++        .clone()
++        && directory.is_dir()
++    {
++        return directory;
++    }
++    std::env::var_os("HOME")
++        .map(PathBuf::from)
++        .filter(|directory| directory.is_dir())
++        .or_else(|| std::env::current_dir().ok())
++        .unwrap_or_else(|| PathBuf::from("/"))
++}
++
++fn recognized_extensions(types: &[String]) -> Vec<String> {
++    types
++        .iter()
++        .filter_map(|value| {
++            let extension = value.trim().trim_start_matches('.');
++            (!extension.is_empty()
++                && !extension.starts_with("public.")
++                && extension.chars().all(|character| {
++                    character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')
++                }))
++            .then(|| extension.to_ascii_lowercase())
++        })
++        .collect()
++}
++
++fn allowed_file(path: &Path, types: &[String]) -> bool {
++    let extensions = recognized_extensions(types);
++    if extensions.is_empty() {
++        return true;
++    }
++    path.extension().is_some_and(|extension| {
++        let extension = extension.to_string_lossy().to_ascii_lowercase();
++        extensions.iter().any(|allowed| allowed == &extension)
++    })
++}
++
++pub(crate) fn is_file_package(path: &Path) -> bool {
++    let has_package_extension = path.extension().is_some_and(|extension| {
++        let extension = extension.to_string_lossy().to_ascii_lowercase();
++        FILE_PACKAGE_EXTENSIONS.contains(&extension.as_str())
++    });
++    has_package_extension
++        || path.join("Contents/Info.plist").is_file()
++        || path.join("Info.plist").is_file()
++}
++
++fn displayed_as_directory(path: &Path, is_directory: bool, panel: &PanelState) -> bool {
++    is_directory && (panel.treats_file_packages_as_directories || !is_file_package(path))
++}
++
++fn read_entries(directory: &Path, panel: &PanelState) -> Vec<chrome::file_picker::Entry> {
++    let mut entries: Vec<(bool, String)> = std::fs::read_dir(directory)
++        .into_iter()
++        .flatten()
++        .filter_map(Result::ok)
++        .filter_map(|entry| {
++            let path = entry.path();
++            let metadata = entry.metadata().ok()?;
++            let directory = displayed_as_directory(&path, metadata.is_dir(), panel);
++            if !directory && !allowed_file(&path, &panel.allowed_file_types) {
++                return None;
++            }
++            Some((directory, entry.file_name().to_string_lossy().into_owned()))
++        })
++        .collect();
++    entries.sort_by(|left, right| {
++        right
++            .0
++            .cmp(&left.0)
++            .then_with(|| left.1.to_lowercase().cmp(&right.1.to_lowercase()))
++    });
++    entries
++        .into_iter()
++        .map(|(directory, name)| chrome::file_picker::Entry { name, directory })
++        .collect()
++}
++
++fn refresh_picker(
++    picker: &mut chrome::file_picker::FilePicker,
++    directory: &Path,
++    panel: &PanelState,
++) {
++    picker.location = directory.display().to_string();
++    picker.entries = read_entries(directory, panel);
++    picker.selected.clear();
++    picker.scroll = 0;
++}
++
++fn selected_paths(
++    picker: &chrome::file_picker::FilePicker,
++    panel: &PanelState,
++    directory: &Path,
++) -> Option<Vec<PathBuf>> {
++    if panel.save {
++        let name = picker.filename.trim();
++        if name.is_empty() {
++            return None;
++        }
++        return Some(vec![directory.join(name)]);
++    }
++    let paths: Vec<PathBuf> = picker
++        .selected
++        .iter()
++        .filter_map(|index| {
++            let entry = picker.entries.get(*index)?;
++            if entry.directory {
++                panel
++                    .can_choose_directories
++                    .then(|| directory.join(&entry.name))
++            } else {
++                panel.can_choose_files.then(|| directory.join(&entry.name))
++            }
++        })
++        .collect();
++    (!paths.is_empty()).then_some(paths)
++}
++
++fn navigate_to(
++    directory: &mut PathBuf,
++    target: PathBuf,
++    picker: &mut chrome::file_picker::FilePicker,
++    panel: &PanelState,
++) {
++    if target.is_dir() {
++        *directory = target;
++        refresh_picker(picker, directory, panel);
++    }
++}
++
++fn paint_picker(
++    window: sdl3::Window,
++    picker: &chrome::file_picker::FilePicker,
++    theme: &chrome::Theme,
++) {
++    let Some((width, height)) = sdl3::video::window_size(window) else {
++        return;
++    };
++    sdl3::video::present_window(window, |surface| {
++        let scale = if width > 0 {
++            surface.width as f32 / width as f32
++        } else {
++            1.0
++        };
++        let length = surface.pitch as usize * surface.height as usize;
++        let pixels = unsafe { std::slice::from_raw_parts_mut(surface.pixels, length) };
++        let mut canvas = chrome::Canvas::new(
++            pixels,
++            surface.width as usize,
++            surface.height as usize,
++            surface.pitch as usize,
++            scale,
++        );
++        canvas.clear(chrome::Color::rgba(0, 0, 0, 0.0));
++        let layout = picker.layout(
++            chrome::Rect::new(0.0, 0.0, width as f32, height as f32),
++            theme,
++        );
++        picker.paint(&mut canvas, &layout, theme);
++        true
++    });
++}
++
++fn run_picker(panel: &PanelState) -> Option<Vec<PathBuf>> {
++    if chrome::Font::system(400).is_none() {
++        eprintln!("rosemary: appkit: no system font is available for the file chooser");
++        return None;
++    }
++    let started_video = !sdl3::video::video_up();
++    if !sdl3::video::init_video() {
++        return None;
++    }
++    let title =
++        panel
++            .title
++            .as_deref()
++            .unwrap_or(if panel.save { "Save File" } else { "Open File" });
++    let title = std::ffi::CString::new(title.replace('\0', " ")).unwrap_or_default();
++    let flags = sdl3::video::flags::HIDDEN
++        | sdl3::video::flags::RESIZABLE
++        | sdl3::video::flags::HIGH_PIXEL_DENSITY;
++    let Some(window) = sdl3::video::create_window(&title, WINDOW_WIDTH, WINDOW_HEIGHT, flags)
++    else {
+         eprintln!(
+-            "rosemary: appkit: the guest asked for a file panel, and nothing here draws one - \
+-             so it is answered as cancelled"
++            "rosemary: appkit: could not open file chooser: {}",
++            sdl3::error()
++        );
++        if started_video {
++            sdl3::video::quit_video();
++        }
++        return None;
++    };
++    let parent = crate::dialog::parent();
++    if !parent.is_null() {
++        sdl3::video::set_window_modal_for(window, parent);
++    }
++    sdl3::video::set_window_minimum_size(window, 480, 320);
++    crate::icon::apply(window);
++    crate::dialog::center(window, parent, WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32);
++
++    let mut directory = initial_directory(panel);
++    let mut picker = chrome::file_picker::FilePicker {
++        title: title.to_string_lossy().into_owned(),
++        location: String::new(),
++        entries: Vec::new(),
++        selected: Vec::new(),
++        scroll: 0,
++        filename: panel.filename.clone().unwrap_or_default(),
++        save: panel.save,
++        multiple: panel.multiple,
++        accept_title: panel
++            .prompt
++            .clone()
++            .unwrap_or_else(|| if panel.save { "Save" } else { "Open" }.into()),
++        pressed: None,
++        filename_focused: panel.save,
++    };
++    refresh_picker(&mut picker, &directory, panel);
++    let mut filename_focused = panel.save;
++    if filename_focused {
++        sdl3::video::start_text_input(window);
++    }
++    paint_picker(
++        window,
++        &picker,
++        &chrome::Theme::for_appearance(
++            sdl3::video::system_theme() == sdl3::video::SystemTheme::Dark,
++        ),
++    );
++    sdl3::video::show_window(window);
++    sdl3::video::raise_window(window);
++    let id = sdl3::video::window_id(window);
++    let mut theme = chrome::Theme::for_appearance(
++        sdl3::video::system_theme() == sdl3::video::SystemTheme::Dark,
++    );
++    let (selected, quit) = crate::dialog::run_modal_window(window, None, |event| {
++        use chrome::file_picker::Part;
++        use sdl3::keycodes::scancode;
++        use sdl3::video::Event;
++
++        let layout = picker.layout(
++            chrome::Rect::new(
++                0.0,
++                0.0,
++                sdl3::video::window_size(window).map_or(WINDOW_WIDTH as f32, |size| size.0 as f32),
++                sdl3::video::window_size(window).map_or(WINDOW_HEIGHT as f32, |size| size.1 as f32),
++            ),
++            &theme,
+         );
++        match event {
++            Event::MouseButton {
++                window: event_window,
++                button: sdl3::mouse::LEFT,
++                down,
++                clicks,
++                x,
++                y,
++                ..
++            } if *event_window == id => {
++                let hit = picker.hit(&layout, chrome::Point::new(*x, *y));
++                if *down {
++                    picker.pressed = hit;
++                    if hit == Some(Part::Filename) {
++                        filename_focused = true;
++                        picker.filename_focused = true;
++                        sdl3::video::start_text_input(window);
++                    } else if hit.is_some() {
++                        filename_focused = false;
++                        picker.filename_focused = false;
++                        sdl3::video::stop_text_input(window);
++                    }
++                    paint_picker(window, &picker, &theme);
++                    return None;
++                }
++                let pressed = picker.pressed.take();
++                if pressed != hit {
++                    paint_picker(window, &picker, &theme);
++                    return None;
++                }
++                match hit {
++                    Some(Part::Parent) => {
++                        if let Some(parent) = directory.parent().map(Path::to_path_buf) {
++                            navigate_to(&mut directory, parent, &mut picker, panel);
++                        }
++                    }
++                    Some(Part::Entry(index)) => {
++                        let Some(entry) = picker.entries.get(index).cloned() else {
++                            return None;
++                        };
++                        let can_select = if entry.directory {
++                            true
++                        } else {
++                            panel.can_choose_files
++                        };
++                        if *clicks >= 2 {
++                            if entry.directory {
++                                if !panel.can_choose_files && panel.can_choose_directories {
++                                    picker.selected = vec![index];
++                                    if let Some(paths) = selected_paths(&picker, panel, &directory)
++                                    {
++                                        paint_picker(window, &picker, &theme);
++                                        return Some(Some(paths));
++                                    }
++                                }
++                                let target = directory.join(&entry.name);
++                                navigate_to(&mut directory, target, &mut picker, panel);
++                            } else if can_select {
++                                picker.selected = vec![index];
++                                if let Some(paths) = selected_paths(&picker, panel, &directory) {
++                                    paint_picker(window, &picker, &theme);
++                                    return Some(Some(paths));
++                                }
++                            }
++                        } else if can_select {
++                            let modifiers = sdl3::video::keyboard_modifiers();
++                            let control = modifiers
++                                & (sdl3::keycodes::keymod::CTRL | sdl3::keycodes::keymod::GUI)
++                                != 0;
++                            if picker.multiple && control {
++                                if picker.selected.contains(&index) {
++                                    picker.selected.retain(|selected| *selected != index);
++                                } else {
++                                    picker.selected.push(index);
++                                }
++                            } else {
++                                picker.selected = vec![index];
++                            }
++                            filename_focused = false;
++                            picker.filename_focused = false;
++                            sdl3::video::stop_text_input(window);
++                        } else {
++                            picker.selected.clear();
++                        }
++                    }
++                    Some(Part::Filename) => {
++                        filename_focused = true;
++                        picker.filename_focused = true;
++                        sdl3::video::start_text_input(window);
++                    }
++                    Some(Part::Cancel) => {
++                        paint_picker(window, &picker, &theme);
++                        return Some(None);
++                    }
++                    Some(Part::Accept) => {
++                        if let Some(paths) = selected_paths(&picker, panel, &directory) {
++                            paint_picker(window, &picker, &theme);
++                            return Some(Some(paths));
++                        }
++                    }
++                    None => {}
++                }
++                paint_picker(window, &picker, &theme);
++            }
++            Event::MouseWheel {
++                window: event_window,
++                y,
++                ..
++            } if *event_window == id => {
++                let visible = layout.rows.len();
++                let maximum = picker.entries.len().saturating_sub(visible);
++                if *y > 0.0 {
++                    picker.scroll = picker.scroll.saturating_sub(y.ceil() as usize);
++                } else if *y < 0.0 {
++                    picker.scroll = (picker.scroll + (-y).ceil() as usize).min(maximum);
++                }
++                paint_picker(window, &picker, &theme);
++            }
++            Event::Text {
++                window: event_window,
++                text,
++            } if *event_window == id && filename_focused => {
++                picker.filename.push_str(text);
++                paint_picker(window, &picker, &theme);
++            }
++            Event::Key {
++                window: event_window,
++                scancode: key,
++                down: true,
++                ..
++            } if *event_window == id => match *key {
++                scancode::ESCAPE => return Some(None),
++                scancode::RETURN | scancode::KP_ENTER => {
++                    if let Some(index) = picker.selected.first().copied()
++                        && picker
++                            .entries
++                            .get(index)
++                            .is_some_and(|entry| entry.directory)
++                        && !panel.can_choose_directories
++                    {
++                        let target = directory.join(&picker.entries[index].name);
++                        navigate_to(&mut directory, target, &mut picker, panel);
++                        paint_picker(window, &picker, &theme);
++                        return None;
++                    }
++                    if let Some(paths) = selected_paths(&picker, panel, &directory) {
++                        return Some(Some(paths));
++                    }
++                }
++                scancode::BACKSPACE if filename_focused => {
++                    picker.filename.pop();
++                    paint_picker(window, &picker, &theme);
++                }
++                scancode::BACKSPACE => {
++                    if let Some(parent) = directory.parent().map(Path::to_path_buf) {
++                        navigate_to(&mut directory, parent, &mut picker, panel);
++                    }
++                    paint_picker(window, &picker, &theme);
++                }
++                scancode::UP | scancode::DOWN => {
++                    if picker.entries.is_empty() {
++                        return None;
++                    }
++                    let next = match (picker.selected.first().copied(), *key) {
++                        (Some(current), scancode::UP) => current.saturating_sub(1),
++                        (Some(current), _) => (current + 1).min(picker.entries.len() - 1),
++                        (None, scancode::UP) => picker.entries.len() - 1,
++                        (None, _) => 0,
++                    };
++                    picker.selected = vec![next];
++                    if next < picker.scroll {
++                        picker.scroll = next;
++                    } else if next >= picker.scroll + layout.rows.len() {
++                        picker.scroll = next + 1 - layout.rows.len().max(1);
++                    }
++                    filename_focused = false;
++                    picker.filename_focused = false;
++                    sdl3::video::stop_text_input(window);
++                    paint_picker(window, &picker, &theme);
++                }
++                _ => {}
++            },
++            Event::WindowResized {
++                window: event_window,
++                ..
++            }
++            | Event::WindowBackingChanged {
++                window: event_window,
++            } if *event_window == id => paint_picker(window, &picker, &theme),
++            Event::Other(sdl3::video::event_type::WINDOW_EXPOSED) => {
++                paint_picker(window, &picker, &theme);
++            }
++            Event::WindowClosed {
++                window: event_window,
++            } if *event_window == id => {
++                return Some(None);
++            }
++            Event::Other(sdl3::video::event_type::SYSTEM_THEME_CHANGED) => {
++                theme = chrome::Theme::for_appearance(
++                    sdl3::video::system_theme() == sdl3::video::SystemTheme::Dark,
++                );
++                paint_picker(window, &picker, &theme);
++            }
++            _ => {}
++        }
++        None
+     });
+-    let _ = receiver;
+-    CANCEL
+-}
+-
+-/// `-URLs`, `-URL`, `-filenames` and `-filename`: nothing was chosen, so there
+-/// is nothing to hand back.
+-///
+-/// An empty array rather than nil for the plural forms, because a caller that
+-/// checks the response and then counts is entitled to count something.
+-unsafe extern "C" fn urls(_receiver: Id, _sel: Sel) -> Id {
+-    let empty = corefoundation::collections::new_array(
+-        &[],
++    sdl3::video::stop_text_input(window);
++    sdl3::video::destroy_window(window);
++    if started_video {
++        sdl3::video::quit_video();
++    }
++    if quit && !started_video {
++        crate::event::deliver(sdl3::video::Event::Quit);
++    }
++    selected
++}
++
++fn select(receiver: Id) -> i64 {
++    let mut panel = state(receiver);
++    panel.selected.clear();
++    let Some(host_paths) = run_picker(&panel) else {
++        update(receiver, |state| state.selected.clear());
++        return CANCEL;
++    };
++    let mut selected = Vec::new();
++    for host_path in host_paths {
++        let Some(guest_path) = prefix::ns::to_guest(&host_path) else {
++            eprintln!("rosemary: appkit: selected path is outside the guest filesystem");
++            continue;
++        };
++        let Some(guest_path) = guest_path.to_str().map(str::to_owned) else {
++            continue;
++        };
++        let is_directory = host_path.is_dir();
++        let remembered_directory = if is_directory {
++            host_path.clone()
++        } else {
++            host_path
++                .parent()
++                .unwrap_or_else(|| Path::new("/"))
++                .to_path_buf()
++        };
++        *last_directory()
++            .lock()
++            .unwrap_or_else(|error| error.into_inner()) = Some(remembered_directory);
++        selected.push(SelectedPath {
++            guest_path,
++            is_directory,
++        });
++        if !panel.multiple {
++            break;
++        }
++    }
++    let response = if selected.is_empty() { CANCEL } else { ACCEPT };
++    update(receiver, |state| state.selected = selected);
++    response
++}
++
++fn complete(handler: Id, response: i64) {
++    if let Some(invoke) = unsafe { crate::animation::invoke(handler) } {
++        let callback: unsafe extern "C" fn(Id, isize) = unsafe { std::mem::transmute(invoke) };
++        unsafe { callback(handler, response as isize) };
++    }
++}
++
++unsafe extern "C" fn run_modal(receiver: Id, _sel: Sel) -> i64 {
++    select(receiver)
++}
++
++unsafe extern "C" fn begin_with_completion(receiver: Id, _sel: Sel, handler: Id) {
++    let response = select(receiver);
++    complete(handler, response);
++}
++
++unsafe extern "C" fn begin_sheet_with_completion(
++    receiver: Id,
++    _sel: Sel,
++    _window: Id,
++    handler: Id,
++) {
++    let response = select(receiver);
++    complete(handler, response);
++}
++
++fn selected(receiver: Id) -> Vec<SelectedPath> {
++    state(receiver).selected
++}
++
++fn autoreleased_array(values: &[Id]) -> Id {
++    let values: Vec<corefoundation::base::CFTypeRef> = values
++        .iter()
++        .map(|value| *value as corefoundation::base::CFTypeRef)
++        .collect();
++    let array = corefoundation::collections::new_array(
++        &values,
+         corefoundation::callbacks::Policy::from_type_callbacks(),
+         false,
+     );
+-    // SAFETY: a fresh array this call made.
+-    unsafe { corefoundation::api::CFAutorelease(empty) as Id }
++    for value in values {
++        objc::arc::release(value as Id);
++    }
++    unsafe { corefoundation::api::CFAutorelease(array) as Id }
++}
++
++unsafe extern "C" fn urls(receiver: Id, _sel: Sel) -> Id {
++    let urls: Vec<Id> = selected(receiver)
++        .into_iter()
++        .map(|selection| {
++            corefoundation::url::new_file_url(&selection.guest_path, selection.is_directory) as Id
++        })
++        .collect();
++    autoreleased_array(&urls)
++}
++
++unsafe extern "C" fn filenames(receiver: Id, _sel: Sel) -> Id {
++    let filenames: Vec<Id> = selected(receiver)
++        .into_iter()
++        .map(|selection| foundation::string::from_str(&selection.guest_path))
++        .collect();
++    autoreleased_array(&filenames)
+ }
+ 
+-unsafe extern "C" fn nothing(_receiver: Id, _sel: Sel) -> Id {
+-    std::ptr::null_mut()
++unsafe extern "C" fn url(receiver: Id, _sel: Sel) -> Id {
++    selected(receiver)
++        .first()
++        .map(|selection| {
++            objc::arc::autorelease(corefoundation::url::new_file_url(
++                &selection.guest_path,
++                selection.is_directory,
++            ) as Id)
++        })
++        .unwrap_or(std::ptr::null_mut())
++}
++
++unsafe extern "C" fn filename(receiver: Id, _sel: Sel) -> Id {
++    selected(receiver)
++        .first()
++        .map(|selection| {
++            objc::arc::autorelease(foundation::string::from_str(&selection.guest_path))
++        })
++        .unwrap_or(std::ptr::null_mut())
++}
++
++unsafe extern "C" fn directory_url(receiver: Id, _sel: Sel) -> Id {
++    let panel = state(receiver);
++    let guest_directory = panel
++        .selected
++        .first()
++        .and_then(|selection| {
++            let path = Path::new(&selection.guest_path);
++            if selection.is_directory {
++                Some(path.to_path_buf())
++            } else {
++                path.parent().map(Path::to_path_buf)
++            }
++        })
++        .or_else(|| panel.directory.map(PathBuf::from));
++    guest_directory
++        .and_then(|path| path.to_str().map(str::to_owned))
++        .map(|path| objc::arc::autorelease(corefoundation::url::new_file_url(&path, true) as Id))
++        .unwrap_or(std::ptr::null_mut())
++}
++
++unsafe extern "C" fn empty_array(_receiver: Id, _sel: Sel) -> Id {
++    autoreleased_array(&[])
++}
++
++unsafe extern "C" fn allowed_file_types(receiver: Id, _sel: Sel) -> Id {
++    let values: Vec<Id> = state(receiver)
++        .allowed_file_types
++        .iter()
++        .map(|value| foundation::string::from_str(value))
++        .collect();
++    autoreleased_array(&values)
+ }
+ 
+-/// The setters a program calls before it runs the panel. Each records nothing:
+-/// there is no panel for them to configure.
+ unsafe extern "C" fn ignored_object(_receiver: Id, _sel: Sel, _value: Id) {}
+ 
++unsafe extern "C" fn set_treats_file_packages_as_directories(receiver: Id, _sel: Sel, value: u8) {
++    update(receiver, |state| {
++        state.treats_file_packages_as_directories = value != 0
++    });
++}
++
++unsafe extern "C" fn treats_file_packages_as_directories(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(state(receiver).treats_file_packages_as_directories)
++}
++
+ unsafe extern "C" fn ignored_flag(_receiver: Id, _sel: Sel, _value: u8) {}
+ 
+ pub(crate) fn install() {
+     for name in [c"NSOpenPanel", c"NSSavePanel"] {
+-        let class = objc::class::lookup(name).expect("declared in `classes`");
++        let class = objc::class::lookup(name).expect("declared class");
+         class_methods!(class, {
+-            "openPanel" => panel, c"@16@0:8";
+-            "savePanel" => panel, c"@16@0:8";
++            "openPanel" => open_panel, c"@16@0:8";
++            "savePanel" => save_panel, c"@16@0:8";
+         });
+         methods!(class, {
+             "runModal" => run_modal, c"q16@0:8";
++            "beginWithCompletionHandler:" => begin_with_completion, c"v24@0:8@?16";
++            "beginSheetModalForWindow:completionHandler:" => begin_sheet_with_completion, c"v32@0:8@16@?24";
+             "URLs" => urls, c"@16@0:8";
+-            "filenames" => urls, c"@16@0:8";
+-            "URL" => nothing, c"@16@0:8";
+-            "filename" => nothing, c"@16@0:8";
+-            "directoryURL" => nothing, c"@16@0:8";
+-            "setDirectoryURL:" => ignored_object, c"v24@0:8@16";
+-            "setAllowedFileTypes:" => ignored_object, c"v24@0:8@16";
+-            "setNameFieldStringValue:" => ignored_object, c"v24@0:8@16";
+-            "setTitle:" => ignored_object, c"v24@0:8@16";
++            "filenames" => filenames, c"@16@0:8";
++            "URL" => url, c"@16@0:8";
++            "filename" => filename, c"@16@0:8";
++            "directoryURL" => directory_url, c"@16@0:8";
++            "allowedContentTypes" => empty_array, c"@16@0:8";
++            "allowedFileTypes" => allowed_file_types, c"@16@0:8";
++            "accessoryView" => accessory_view, c"@16@0:8";
++            "setAccessoryView:" => set_accessory_view, c"v24@0:8@16";
++            "isAccessoryViewDisclosed" => accessory_view_disclosed, c"c16@0:8";
++            "accessoryViewDisclosed" => accessory_view_disclosed, c"c16@0:8";
++            "setAccessoryViewDisclosed:" => set_accessory_view_disclosed, c"v20@0:8c16";
++            "setDirectoryURL:" => set_directory_url, c"v24@0:8@16";
++            "setAllowedFileTypes:" => set_allowed_file_types, c"v24@0:8@16";
++            "setAllowedContentTypes:" => ignored_object, c"v24@0:8@16";
++            "setNameFieldStringValue:" => set_filename, c"v24@0:8@16";
++            "setTitle:" => set_title, c"v24@0:8@16";
+             "setMessage:" => ignored_object, c"v24@0:8@16";
+-            "setPrompt:" => ignored_object, c"v24@0:8@16";
+-            "setCanChooseFiles:" => ignored_flag, c"v20@0:8c16";
+-            "setCanChooseDirectories:" => ignored_flag, c"v20@0:8c16";
+-            "setAllowsMultipleSelection:" => ignored_flag, c"v20@0:8c16";
++            "setPrompt:" => set_prompt, c"v24@0:8@16";
++            "setCanChooseFiles:" => set_can_choose_files, c"v20@0:8c16";
++            "canChooseFiles" => can_choose_files, c"c16@0:8";
++            "setCanChooseDirectories:" => set_can_choose_directories, c"v20@0:8c16";
++            "canChooseDirectories" => can_choose_directories, c"c16@0:8";
++            "setAllowsMultipleSelection:" => set_multiple, c"v20@0:8c16";
++            "allowsMultipleSelection" => allows_multiple, c"c16@0:8";
+             "setCanCreateDirectories:" => ignored_flag, c"v20@0:8c16";
+             "setResolvesAliases:" => ignored_flag, c"v20@0:8c16";
+             "setShowsHiddenFiles:" => ignored_flag, c"v20@0:8c16";
+-            "setTreatsFilePackagesAsDirectories:" => ignored_flag, c"v20@0:8c16";
++            "treatsFilePackagesAsDirectories" => treats_file_packages_as_directories, c"c16@0:8";
++            "setTreatsFilePackagesAsDirectories:" => set_treats_file_packages_as_directories, c"v20@0:8c16";
++            "dealloc" => dealloc, c"v16@0:8";
+         });
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
++
++    static CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
++    static CALLBACK_RESPONSE: AtomicI64 = AtomicI64::new(0);
++
++    unsafe extern "C" fn record_response(_block: Id, response: isize) {
++        CALLBACK_COUNT.fetch_add(1, Ordering::SeqCst);
++        CALLBACK_RESPONSE.store(response as i64, Ordering::SeqCst);
++    }
++
++    #[test]
++    fn accessory_view_is_retained_replaced_and_released_with_panel() {
++        crate::bootstrap();
++        let panel = objc::object::create_instance(objc::class::lookup(c"NSOpenPanel").unwrap(), 0);
++        let first = objc::object::create_instance(objc::class::lookup(c"NSView").unwrap(), 0);
++        let second = objc::object::create_instance(objc::class::lookup(c"NSView").unwrap(), 0);
++        let setter: unsafe extern "C" fn(Id, Sel, Id) =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let getter: unsafe extern "C" fn(Id, Sel) -> Id =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let set_accessory = objc::sel::get("setAccessoryView:");
++        let get_accessory = objc::sel::get("accessoryView");
++
++        unsafe {
++            setter(panel, set_accessory, first);
++            assert_eq!(objc::arc::retain_count(first), 2);
++            assert_eq!(getter(panel, get_accessory), first);
++
++            setter(panel, set_accessory, second);
++            assert_eq!(objc::arc::retain_count(first), 1);
++            assert_eq!(objc::arc::retain_count(second), 2);
++            assert_eq!(getter(panel, get_accessory), second);
++
++            setter(panel, set_accessory, std::ptr::null_mut());
++            assert_eq!(objc::arc::retain_count(second), 1);
++            assert!(getter(panel, get_accessory).is_null());
++
++            setter(panel, set_accessory, second);
++            objc::arc::release(panel);
++        }
++
++        assert_eq!(objc::arc::retain_count(second), 1);
++        objc::arc::release(first);
++        objc::arc::release(second);
++    }
++
++    #[test]
++    fn accessory_view_disclosure_state_round_trips() {
++        crate::bootstrap();
++        let panel = objc::object::create_instance(objc::class::lookup(c"NSOpenPanel").unwrap(), 0);
++        let setter: unsafe extern "C" fn(Id, Sel, u8) =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let getter: unsafe extern "C" fn(Id, Sel) -> u8 =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let set_disclosed = objc::sel::get("setAccessoryViewDisclosed:");
++        let is_disclosed = objc::sel::get("isAccessoryViewDisclosed");
++        let disclosed = objc::sel::get("accessoryViewDisclosed");
++
++        unsafe {
++            assert_eq!(getter(panel, is_disclosed), 0);
++            setter(panel, set_disclosed, 1);
++            assert_eq!(getter(panel, is_disclosed), 1);
++            assert_eq!(getter(panel, disclosed), 1);
++            setter(panel, set_disclosed, 0);
++            assert_eq!(getter(panel, is_disclosed), 0);
++            objc::arc::release(panel);
++        }
++    }
++
++    #[test]
++    fn file_package_display_preference_round_trips_and_controls_entry_kind() {
++        crate::bootstrap();
++        let panel = objc::object::create_instance(objc::class::lookup(c"NSOpenPanel").unwrap(), 0);
++        let setter: unsafe extern "C" fn(Id, Sel, u8) =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let getter: unsafe extern "C" fn(Id, Sel) -> u8 =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let set_preference = objc::sel::get("setTreatsFilePackagesAsDirectories:");
++        let preference = objc::sel::get("treatsFilePackagesAsDirectories");
++        let package = Path::new("/Applications/Studio.app");
++        let folder = Path::new("/tmp/Assets");
++
++        unsafe {
++            assert_eq!(getter(panel, preference), 0);
++            assert!(!displayed_as_directory(package, true, &state(panel)));
++            setter(panel, set_preference, 1);
++            assert_eq!(getter(panel, preference), 1);
++            assert!(displayed_as_directory(package, true, &state(panel)));
++            assert!(displayed_as_directory(folder, true, &state(panel)));
++            setter(panel, set_preference, 0);
++            assert_eq!(getter(panel, preference), 0);
++            objc::arc::release(panel);
++        }
++    }
++
++    #[test]
++    fn parsed_extensions_are_case_insensitive_and_ignore_uniform_type_identifiers() {
++        assert_eq!(
++            recognized_extensions(&[".RBXL".into(), "rbxm".into(), "public.data".into()]),
++            vec!["rbxl".to_string(), "rbxm".to_string()]
++        );
++        assert!(allowed_file(Path::new("place.RBXL"), &["rbxl".into()]));
++        assert!(!allowed_file(Path::new("image.png"), &["rbxl".into()]));
++        assert!(allowed_file(
++            Path::new("anything.bin"),
++            &["public.data".into()]
++        ));
++    }
++
++    #[test]
++    fn selected_save_name_is_joined_to_the_current_directory() {
++        let panel = PanelState {
++            save: true,
++            ..PanelState::default()
++        };
++        let picker = chrome::file_picker::FilePicker {
++            filename: "place.rbxl".into(),
++            ..chrome::file_picker::FilePicker::default()
++        };
++        assert_eq!(
++            selected_paths(&picker, &panel, Path::new("/tmp")),
++            Some(vec![PathBuf::from("/tmp/place.rbxl")])
++        );
++    }
++
++    #[test]
++    fn selected_open_entries_keep_multiple_selection_order() {
++        let panel = PanelState {
++            multiple: true,
++            can_choose_files: true,
++            ..PanelState::default()
++        };
++        let picker = chrome::file_picker::FilePicker {
++            entries: vec![
++                chrome::file_picker::Entry {
++                    name: "first.rbxl".into(),
++                    directory: false,
++                },
++                chrome::file_picker::Entry {
++                    name: "second.rbxm".into(),
++                    directory: false,
++                },
++            ],
++            selected: vec![1, 0],
++            ..chrome::file_picker::FilePicker::default()
++        };
++        assert_eq!(
++            selected_paths(&picker, &panel, Path::new("/tmp")),
++            Some(vec![
++                PathBuf::from("/tmp/second.rbxm"),
++                PathBuf::from("/tmp/first.rbxl")
++            ])
++        );
++    }
++
++    #[test]
++    fn completion_receives_the_selected_response_once() {
++        let block = [0usize, 0usize, record_response as *const () as usize];
++        CALLBACK_COUNT.store(0, Ordering::SeqCst);
++        CALLBACK_RESPONSE.store(0, Ordering::SeqCst);
++
++        complete(block.as_ptr() as Id, ACCEPT);
++
++        assert_eq!(CALLBACK_COUNT.load(Ordering::SeqCst), 1);
++        assert_eq!(CALLBACK_RESPONSE.load(Ordering::SeqCst), ACCEPT);
++    }
++}
 diff --git a/crates/appkit/src/view.rs b/crates/appkit/src/view.rs
 index ab58227..49308aa 100644
 --- a/crates/appkit/src/view.rs
@@ -3752,6 +5012,591 @@ index 9911d6f..0e2c563 100644
          assert_eq!(TOLD.load(std::sync::atomic::Ordering::Relaxed), 1);
          assert_eq!(window_of(window).shown, 0);
      }
+diff --git a/crates/appkit/src/workspace.rs b/crates/appkit/src/workspace.rs
+index 76459a3..bc88a1a 100644
+--- a/crates/appkit/src/workspace.rs
++++ b/crates/appkit/src/workspace.rs
+@@ -140,6 +140,20 @@ unsafe extern "C" fn icon_for_file_type(_receiver: Id, _sel: Sel, _type: Id) ->
+     objc::arc::autorelease(image)
+ }
+ 
++/// `-[NSWorkspace isFilePackageAtPath:]`.
++///
++/// AppKit's file panels use this query when deciding whether a directory is a
++/// package that should be selectable as a file. Package classification is
++/// shared with the panels so both APIs agree about the same filesystem entry.
++unsafe extern "C" fn is_file_package_at_path(_receiver: Id, _sel: Sel, path: Id) -> u8 {
++    if path.is_null() {
++        return 0;
++    }
++    let path = unsafe { text(path) };
++    let host_path = prefix::ns::existing_host_path(&path);
++    u8::from(host_path.is_dir() && crate::panel::is_file_package(&host_path))
++}
++
+ /// The `NSRunningApplication` for this process, a process-lifetime singleton.
+ fn current() -> Id {
+     *CURRENT.get_or_init(|| {
+@@ -355,6 +369,7 @@ pub(crate) fn install() {
+             c"@48@0:8@16Q24@32^@40";
+         "iconForFileType:" => icon_for_file_type, c"@24@0:8@16";
+         "iconForFile:" => icon_for_file_type, c"@24@0:8@16";
++        "isFilePackageAtPath:" => is_file_package_at_path, c"c24@0:8@16";
+     });
+ 
+     let running =
+@@ -449,6 +464,44 @@ mod tests {
+         assert_eq!(crate::image::declared_size(icon).width, 32.0);
+     }
+ 
++    #[test]
++    fn workspace_reports_existing_file_packages_and_rejects_other_paths() {
++        crate::bootstrap();
++        let class = objc::class::lookup(c"NSWorkspace").unwrap();
++        let selector = objc::sel::get("isFilePackageAtPath:");
++        assert!(class.method(selector).is_some());
++
++        let root = std::env::temp_dir().join(format!(
++            "rosemary-workspace-file-package-{}",
++            std::process::id()
++        ));
++        let package = root.join("Example.app");
++        let folder = root.join("Assets");
++        let missing = root.join("Missing.app");
++        let _ = std::fs::remove_dir_all(&root);
++        std::fs::create_dir_all(&package).unwrap();
++        std::fs::create_dir_all(&folder).unwrap();
++
++        let query = |path: &std::path::Path| {
++            let path = foundation::string::from_str(&path.to_string_lossy());
++            let result = unsafe { is_file_package_at_path(std::ptr::null_mut(), selector, path) };
++            unsafe { corefoundation::api::CFRelease(path as _) };
++            result
++        };
++
++        assert_eq!(query(&package), 1);
++        assert_eq!(query(&folder), 0);
++        assert_eq!(query(&missing), 0);
++        assert_eq!(
++            unsafe {
++                is_file_package_at_path(std::ptr::null_mut(), selector, std::ptr::null_mut())
++            },
++            0
++        );
++
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
+     #[test]
+     fn frontmost_application_is_this_process() {
+         crate::bootstrap();
+diff --git a/crates/chrome/src/file_picker.rs b/crates/chrome/src/file_picker.rs
+new file mode 100644
+index 0000000..0cb9254
+--- /dev/null
++++ b/crates/chrome/src/file_picker.rs
+@@ -0,0 +1,461 @@
++use crate::geometry::{Point, Rect};
++use crate::paint::{Canvas, Color};
++use crate::text::Font;
++use crate::theme::Theme;
++use crate::view::View;
++
++const PADDING: f32 = 14.0;
++const TOOLBAR_HEIGHT: f32 = 32.0;
++const ROW_HEIGHT: f32 = 28.0;
++const BUTTON_HEIGHT: f32 = 30.0;
++const BUTTON_RADIUS: f32 = 6.0;
++
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct Entry {
++    pub name: String,
++    pub directory: bool,
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Part {
++    Parent,
++    Entry(usize),
++    Filename,
++    Cancel,
++    Accept,
++}
++
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct Layout {
++    pub bounds: Rect,
++    pub location: Rect,
++    pub parent: Rect,
++    pub list: Rect,
++    pub rows: Vec<(usize, Rect)>,
++    pub filename: Option<Rect>,
++    pub cancel: Rect,
++    pub accept: Rect,
++}
++
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct FilePicker {
++    pub title: String,
++    pub location: String,
++    pub entries: Vec<Entry>,
++    pub selected: Vec<usize>,
++    pub scroll: usize,
++    pub filename: String,
++    pub save: bool,
++    pub multiple: bool,
++    pub accept_title: String,
++    pub pressed: Option<Part>,
++    pub filename_focused: bool,
++}
++
++impl View for FilePicker {
++    type Part = Part;
++    type Layout = Layout;
++
++    fn layout(&self, bounds: Rect, _theme: &Theme) -> Layout {
++        let width = bounds.width.max(480.0);
++        let height = bounds.height.max(320.0);
++        let parent = Rect::new(bounds.x + PADDING, bounds.y + 52.0, 58.0, TOOLBAR_HEIGHT);
++        let location = Rect::new(
++            parent.right() + 8.0,
++            parent.y,
++            (width - (parent.right() - bounds.x) - PADDING - 8.0).max(80.0),
++            TOOLBAR_HEIGHT,
++        );
++        let footer_height = if self.save { 96.0 } else { 58.0 };
++        let list = Rect::new(
++            bounds.x + PADDING,
++            parent.bottom() + 10.0,
++            width - PADDING * 2.0,
++            (height - footer_height - (parent.bottom() - bounds.y) - 24.0).max(96.0),
++        );
++        let filename = self.save.then(|| {
++            Rect::new(
++                bounds.x + PADDING + 70.0,
++                bounds.y + height - 85.0,
++                width - PADDING * 2.0 - 70.0,
++                TOOLBAR_HEIGHT,
++            )
++        });
++        let buttons_y = bounds.y + height - BUTTON_HEIGHT - 14.0;
++        let accept_width = 88.0;
++        let cancel_width = 84.0;
++        let cancel = Rect::new(
++            bounds.x + width - PADDING - accept_width - 8.0 - cancel_width,
++            buttons_y,
++            cancel_width,
++            BUTTON_HEIGHT,
++        );
++        let accept = Rect::new(
++            bounds.x + width - PADDING - accept_width,
++            buttons_y,
++            accept_width,
++            BUTTON_HEIGHT,
++        );
++        let row_count = (list.height / ROW_HEIGHT).floor().max(0.0) as usize;
++        let rows = (self.scroll..self.entries.len().min(self.scroll + row_count))
++            .enumerate()
++            .map(|(visible, index)| {
++                (
++                    index,
++                    Rect::new(
++                        list.x,
++                        list.y + visible as f32 * ROW_HEIGHT,
++                        list.width,
++                        ROW_HEIGHT,
++                    ),
++                )
++            })
++            .collect();
++        Layout {
++            bounds: Rect::new(bounds.x, bounds.y, width, height),
++            location,
++            parent,
++            list,
++            rows,
++            filename,
++            cancel,
++            accept,
++        }
++    }
++
++    fn paint(&self, canvas: &mut Canvas, layout: &Layout, theme: &Theme) {
++        canvas.fill_rect(layout.bounds, theme.panel_background);
++        canvas.stroke_rounded_rect(
++            layout.bounds.inset(0.5, 0.5),
++            8.0,
++            1.0 / canvas.scale(),
++            theme.panel_border,
++        );
++        let Some(font) = Font::system(400) else {
++            return;
++        };
++        let bold = Font::system(700).unwrap_or_else(|| font.clone());
++        let title_size = 16.0;
++        draw_label(
++            canvas,
++            &bold,
++            title_size,
++            &self.title,
++            Point::new(layout.bounds.x + PADDING, layout.bounds.y + 20.0),
++            theme.panel_text,
++        );
++        draw_button(
++            canvas,
++            &font,
++            layout.parent,
++            "Up",
++            self.pressed == Some(Part::Parent),
++            false,
++            theme,
++        );
++        canvas.fill_rounded_rect(layout.location, 5.0, theme.panel_input_background);
++        canvas.stroke_rounded_rect(
++            layout.location,
++            5.0,
++            1.0 / canvas.scale(),
++            theme.panel_border,
++        );
++        let location = font.truncate(
++            &self.location,
++            theme.panel_text_size,
++            layout.location.width - 16.0,
++        );
++        draw_centered(
++            canvas,
++            &font,
++            theme.panel_text_size,
++            &location,
++            layout.location,
++            theme.panel_text,
++        );
++        canvas.fill_rounded_rect(layout.list, 5.0, theme.panel_input_background);
++        canvas.stroke_rounded_rect(layout.list, 5.0, 1.0 / canvas.scale(), theme.panel_border);
++        canvas.push_clip(layout.list.inset(1.0, 1.0));
++        if layout.rows.is_empty() {
++            draw_centered(
++                canvas,
++                &font,
++                theme.panel_text_size,
++                "This folder is empty",
++                layout.list,
++                theme.panel_text_disabled,
++            );
++        }
++        for (index, row) in &layout.rows {
++            let selected = self.selected.contains(index);
++            if selected {
++                canvas.fill_rect(*row, theme.panel_selection);
++            } else if index % 2 == 1 {
++                canvas.fill_rect(*row, Color::rgba(0, 0, 0, 0.025));
++            }
++            let Some(entry) = self.entries.get(*index) else {
++                continue;
++            };
++            let foreground = if selected {
++                theme.panel_selection_text
++            } else {
++                theme.panel_text
++            };
++            let icon_color = if entry.directory {
++                Color::rgb(0xE0, 0xAC, 0x31)
++            } else {
++                Color::rgb(0x7C, 0x9B, 0xC5)
++            };
++            canvas.fill_rounded_rect(
++                Rect::new(row.x + 10.0, row.y + 8.0, 13.0, 12.0),
++                2.0,
++                icon_color,
++            );
++            let name = font.truncate(&entry.name, theme.panel_text_size, row.width - 40.0);
++            draw_label(
++                canvas,
++                &font,
++                theme.panel_text_size,
++                &name,
++                Point::new(row.x + 32.0, row.y + 6.0),
++                foreground,
++            );
++        }
++        canvas.pop_clip();
++        if let Some(filename) = layout.filename {
++            draw_label(
++                canvas,
++                &font,
++                theme.panel_text_size,
++                "Save as:",
++                Point::new(layout.bounds.x + PADDING, filename.y + 8.0),
++                theme.panel_text,
++            );
++            let focused = self.filename_focused;
++            canvas.fill_rounded_rect(filename, 5.0, theme.panel_input_background);
++            canvas.stroke_rounded_rect(
++                filename,
++                5.0,
++                if focused { 2.0 } else { 1.0 } / canvas.scale(),
++                if focused {
++                    theme.panel_selection
++                } else {
++                    theme.panel_border
++                },
++            );
++            let name = font.truncate(&self.filename, theme.panel_text_size, filename.width - 16.0);
++            draw_label(
++                canvas,
++                &font,
++                theme.panel_text_size,
++                &name,
++                Point::new(filename.x + 8.0, filename.y + 8.0),
++                theme.panel_text,
++            );
++        }
++        draw_button(
++            canvas,
++            &font,
++            layout.cancel,
++            "Cancel",
++            self.pressed == Some(Part::Cancel),
++            false,
++            theme,
++        );
++        draw_button(
++            canvas,
++            &font,
++            layout.accept,
++            &self.accept_title,
++            self.pressed == Some(Part::Accept),
++            true,
++            theme,
++        );
++    }
++
++    fn hit(&self, layout: &Layout, point: Point) -> Option<Part> {
++        if layout.parent.contains(point) {
++            return Some(Part::Parent);
++        }
++        if let Some((index, _)) = layout.rows.iter().find(|(_, rect)| rect.contains(point)) {
++            return Some(Part::Entry(*index));
++        }
++        if layout.filename.is_some_and(|rect| rect.contains(point)) {
++            return Some(Part::Filename);
++        }
++        if layout.cancel.contains(point) {
++            return Some(Part::Cancel);
++        }
++        if layout.accept.contains(point) {
++            return Some(Part::Accept);
++        }
++        None
++    }
++}
++
++fn draw_label(
++    canvas: &mut Canvas,
++    font: &Font,
++    size: f32,
++    text: &str,
++    origin: Point,
++    color: Color,
++) {
++    canvas.draw_text(
++        text,
++        font,
++        size,
++        Point::new(
++            origin.x.round(),
++            font.centered_baseline(size, origin.y, size * 1.5),
++        ),
++        color,
++    );
++}
++
++fn draw_centered(
++    canvas: &mut Canvas,
++    font: &Font,
++    size: f32,
++    text: &str,
++    rect: Rect,
++    color: Color,
++) {
++    let text = font.truncate(text, size, rect.width - 16.0);
++    let advance = font.measure(&text, size);
++    draw_label(
++        canvas,
++        font,
++        size,
++        &text,
++        Point::new(rect.center().x - advance / 2.0, rect.y),
++        color,
++    );
++}
++
++fn draw_button(
++    canvas: &mut Canvas,
++    font: &Font,
++    rect: Rect,
++    label: &str,
++    pressed: bool,
++    primary: bool,
++    theme: &Theme,
++) {
++    let (background, foreground) = match (primary, pressed) {
++        (true, true) => (theme.alert_default_pressed, theme.alert_default_text),
++        (true, false) => (theme.alert_default, theme.alert_default_text),
++        (false, true) => (theme.alert_button_pressed, theme.alert_button_text),
++        (false, false) => (theme.alert_button, theme.alert_button_text),
++    };
++    canvas.fill_rounded_rect(rect, BUTTON_RADIUS, background);
++    draw_centered(canvas, font, theme.panel_text_size, label, rect, foreground);
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn rows_and_footer_controls_do_not_overlap() {
++        let picker = FilePicker {
++            save: true,
++            entries: (0..20)
++                .map(|index| Entry {
++                    name: format!("file-{index}.rbxl"),
++                    directory: false,
++                })
++                .collect(),
++            ..FilePicker::default()
++        };
++        let layout = picker.layout(Rect::new(0.0, 0.0, 720.0, 500.0), &Theme::light());
++        assert!(
++            layout
++                .rows
++                .iter()
++                .all(|(_, row)| { row.y >= layout.list.y && row.bottom() <= layout.list.bottom() })
++        );
++        assert!(layout.list.bottom() < layout.filename.unwrap().y);
++        assert!(layout.filename.unwrap().bottom() < layout.cancel.y);
++        assert!(layout.cancel.right() < layout.accept.x);
++    }
++
++    #[test]
++    fn hit_testing_uses_the_same_visible_rows_that_are_painted() {
++        let picker = FilePicker {
++            entries: vec![
++                Entry {
++                    name: "folder".into(),
++                    directory: true,
++                },
++                Entry {
++                    name: "place.rbxl".into(),
++                    directory: false,
++                },
++            ],
++            ..FilePicker::default()
++        };
++        let layout = picker.layout(Rect::new(0.0, 0.0, 720.0, 500.0), &Theme::light());
++        assert_eq!(
++            picker.hit(&layout, layout.rows[1].1.center()),
++            Some(Part::Entry(1))
++        );
++        assert_eq!(
++            picker.hit(&layout, layout.accept.center()),
++            Some(Part::Accept)
++        );
++        assert_eq!(
++            picker.hit(&layout, layout.cancel.center()),
++            Some(Part::Cancel)
++        );
++    }
++
++    #[test]
++    fn layout_respects_its_origin() {
++        let picker = FilePicker::default();
++        let bounds = Rect::new(20.0, 30.0, 720.0, 500.0);
++        let layout = picker.layout(bounds, &Theme::light());
++        assert_eq!(layout.parent.x, 20.0 + PADDING);
++        assert_eq!(layout.parent.y, 30.0 + 52.0);
++        assert!(layout.cancel.x >= bounds.x);
++        assert!(layout.accept.right() <= bounds.right());
++    }
++
++    #[test]
++    fn dark_mode_file_names_have_contrast_against_the_list_background() {
++        if Font::system(400).is_none() {
++            return;
++        }
++        let theme = Theme::dark();
++        let picker = FilePicker {
++            entries: vec![Entry {
++                name: "visible-file.rbxl".into(),
++                directory: false,
++            }],
++            ..FilePicker::default()
++        };
++        let bounds = Rect::new(0.0, 0.0, 720.0, 500.0);
++        let layout = picker.layout(bounds, &theme);
++        let mut pixels = vec![0; 720 * 500 * 4];
++        let mut canvas = Canvas::new(&mut pixels, 720, 500, 720 * 4, 1.0);
++        picker.paint(&mut canvas, &layout, &theme);
++        drop(canvas);
++
++        let row = layout.rows[0].1;
++        let has_dark_background = (row.y as usize..row.bottom() as usize).any(|y| {
++            ((row.x as usize + 32)..(row.x as usize + 180)).any(|x| {
++                let pixel = &pixels[(y * 720 + x) * 4..][..4];
++                pixel[0] < 90 && pixel[1] < 90 && pixel[2] < 90
++            })
++        });
++        let has_light_text = (row.y as usize..row.bottom() as usize).any(|y| {
++            ((row.x as usize + 32)..(row.x as usize + 180)).any(|x| {
++                let pixel = &pixels[(y * 720 + x) * 4..][..4];
++                pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200
++            })
++        });
++
++        assert!(has_dark_background);
++        assert!(has_light_text);
++    }
++}
+diff --git a/crates/chrome/src/lib.rs b/crates/chrome/src/lib.rs
+index 643a828..e1a7b27 100644
+--- a/crates/chrome/src/lib.rs
++++ b/crates/chrome/src/lib.rs
+@@ -6,6 +6,7 @@
+ pub mod alert;
+ pub mod checkbox;
+ pub mod corners;
++pub mod file_picker;
+ pub mod fonts;
+ pub mod geometry;
+ pub mod menu;
+diff --git a/crates/chrome/src/theme.rs b/crates/chrome/src/theme.rs
+index b27e9fa..569eaa0 100644
+--- a/crates/chrome/src/theme.rs
++++ b/crates/chrome/src/theme.rs
+@@ -38,6 +38,7 @@ pub struct Theme {
+     pub menu_title_padding: f32,
+ 
+     pub panel_background: Color,
++    pub panel_input_background: Color,
+     pub panel_border: Color,
+     pub panel_text: Color,
+     pub panel_text_disabled: Color,
+@@ -114,6 +115,7 @@ impl Theme {
+             menu_title_size: 13.0,
+             menu_title_padding: 9.0,
+             panel_background: Color::rgb(0xF2, 0xF2, 0xF2),
++            panel_input_background: Color::rgb(0xFF, 0xFF, 0xFF),
+             panel_border: Color::rgb(0xC4, 0xC4, 0xC4),
+             panel_text: Color::rgba(0, 0, 0, 0.85),
+             panel_text_disabled: Color::rgba(0, 0, 0, 0.3),
+@@ -172,6 +174,7 @@ impl Theme {
+             menu_title_disabled: Color::rgba(255, 255, 255, 0.3),
+             menu_title_highlight: Color::rgba(255, 255, 255, 0.14),
+             panel_background: Color::rgb(0x2A, 0x2A, 0x2B),
++            panel_input_background: Color::rgb(0x3A, 0x3A, 0x3A),
+             panel_border: Color::rgb(0x55, 0x55, 0x55),
+             panel_text: Color::rgba(255, 255, 255, 0.88),
+             panel_text_disabled: Color::rgba(255, 255, 255, 0.28),
 diff --git a/crates/corefoundation/src/collections.rs b/crates/corefoundation/src/collections.rs
 index b34a9da..17c463b 100644
 --- a/crates/corefoundation/src/collections.rs
@@ -4020,6 +5865,54 @@ index 6f8ab70..78ccb37 100644
  }
  
  exports::exports! {
+diff --git a/crates/foundation/src/lib.rs b/crates/foundation/src/lib.rs
+index da53390..24ed8e7 100644
+--- a/crates/foundation/src/lib.rs
++++ b/crates/foundation/src/lib.rs
+@@ -346,6 +346,13 @@ pub const STRING_GLOBALS: &[(&str, &str)] = &[
+     ("_NSFileSystemFreeSize", "NSFileSystemFreeSize"),
+     ("_NSFileSystemSize", "NSFileSystemSize"),
+     ("_NSFileSystemNumber", "NSFileSystemNumber"),
++    ("_NSFileTypeDirectory", "NSFileTypeDirectory"),
++    ("_NSFileTypeRegular", "NSFileTypeRegular"),
++    ("_NSFileTypeSymbolicLink", "NSFileTypeSymbolicLink"),
++    ("_NSFileTypeSocket", "NSFileTypeSocket"),
++    ("_NSFileTypeCharacterSpecial", "NSFileTypeCharacterSpecial"),
++    ("_NSFileTypeBlockSpecial", "NSFileTypeBlockSpecial"),
++    ("_NSFileTypeUnknown", "NSFileTypeUnknown"),
+     ("_NSPOSIXErrorDomain", "NSPOSIXErrorDomain"),
+     ("_NSCocoaErrorDomain", "NSCocoaErrorDomain"),
+     ("_NSFilePathErrorKey", "NSFilePath"),
+@@ -396,6 +403,29 @@ mod tests {
+         objc::class::ptr(objc::class::lookup(name).expect("registered")) as Id
+     }
+ 
++    #[test]
++    fn file_type_constants_are_exported_as_string_globals() {
++        let symbols = data_symbols();
++        for (symbol, expected) in [
++            ("_NSFileTypeDirectory", "NSFileTypeDirectory"),
++            ("_NSFileTypeRegular", "NSFileTypeRegular"),
++            ("_NSFileTypeSymbolicLink", "NSFileTypeSymbolicLink"),
++            ("_NSFileTypeSocket", "NSFileTypeSocket"),
++            ("_NSFileTypeCharacterSpecial", "NSFileTypeCharacterSpecial"),
++            ("_NSFileTypeBlockSpecial", "NSFileTypeBlockSpecial"),
++            ("_NSFileTypeUnknown", "NSFileTypeUnknown"),
++        ] {
++            let (_, cell) = symbols
++                .iter()
++                .find(|(name, _)| name == symbol)
++                .unwrap_or_else(|| panic!("missing Foundation data symbol {symbol}"));
++            let object = unsafe { *(*cell as *const u64) } as corefoundation::base::CFTypeRef;
++            let value = unsafe { corefoundation::string::as_string(object) }
++                .unwrap_or_else(|| panic!("{symbol} does not point to a CFString"));
++            assert_eq!(value.utf8(), expected.as_bytes(), "{symbol}");
++        }
++    }
++
+     #[test]
+     fn every_class_this_crate_claims_is_registered() {
+         bootstrap();
 diff --git a/crates/metal_translate/src/spirv/half.rs b/crates/metal_translate/src/spirv/half.rs
 index 358b043..8c2ffa1 100644
 --- a/crates/metal_translate/src/spirv/half.rs

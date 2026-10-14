@@ -133,8 +133,7 @@ Git, then isolate the require path failure before changing camera behavior.
 
 Deployment: citric_dark_picker_20261013
 
-State: code and automated verification complete; manual visual validation is
-pending.
+State: code and automated verification complete; Import manual validation passed.
 
 Outcome: the Import/Open chooser no longer crashed after Rosemary implemented
 the missing AppKit and Foundation compatibility calls. The user confirmed that
@@ -148,10 +147,7 @@ clean pinned-base patch application, and the focused dark-mode rendering test
 passed. The updated binary is installed. The latest evidence is
 `logs/run-20261013T213755-38660.log`; raw logs remain outside Git.
 
-Pending: restart through Citric and verify readable names, selecting a file,
-and cancelling in Import and Open from File. Arbitrary accessory-view rendering
-remains unverified. Continue from `docs/current-state.md` and the file chooser
-sections in `docs/validation.md`.
+Pending: test Open from File separately. The user confirmed that Import shows readable names, selecting a file returns to Studio without a crash, and cancellation works. Arbitrary accessory-view rendering remains unverified. Continue from `docs/current-state.md` and `docs/validation.md` if that scope resumes.
 
 Token report for `citric_dark_picker_20261013`:
 

@@ -1,7 +1,8 @@
 # Project progress
 
 Latest deployment: citric_dark_picker_20261013; code and automated validation
-are complete, while the final manual chooser retest is pending.
+are complete, and the user confirmed the Import chooser manually. Open from File
+remains to be tested separately.
 
 The user confirmed that a periodic roughly 0.5 second stutter occurs in Play
 even in an empty Baseplate. A per-view trace isolated pixel-content copying
@@ -63,6 +64,4 @@ had invisible names because list and fields were white while dark-theme text was
 white. The chooser now uses a theme-specific input background. Chrome tests
 (52), AppKit tests (295 plus the theme integration test), formatting, patch
 application, source diff checks, and the locked offline Release build passed;
-the updated binary is installed. The user still needs to confirm readable
-entries, selecting a file, and cancelling in Studio. There is no active
-deployment after that retest.
+the updated binary is installed. The user restarted Studio through Citric and confirmed readable Import entries, file selection returning without a crash, and cancellation working. Separate Open from File validation remains pending. There is no active deployment after this retest.

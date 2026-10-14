@@ -88,5 +88,6 @@ different early selector failure.
   paths and reuses the chooser's package classifier.
 - The next retest stopped crashing and confirmed that Up navigated. Dark mode
   used white list and field surfaces with white text, making entries appear
-  blank. The theme-aware surface fix and regression test are installed; manual
-  confirmation of visible names, selection, and cancellation remains pending.
+  blank. The theme-aware surface fix and regression test are installed. The user
+  confirmed readable Import names, file selection returning without a crash, and
+  cancellation working. Open from File remains unverified separately.

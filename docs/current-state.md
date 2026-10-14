@@ -1,6 +1,6 @@
 # Estado atual
 
-Data do snapshot: 12 de outubro de 2026, horário local America/Recife.
+Snapshot date: October 13, 2026 (America/Recife).
 
 ## Ponto de partida
 
@@ -14,7 +14,7 @@ A solicitação original de execução no Linux está fora do repositório CaseS
 - Uma place local vazia chegou ao editor com viewport 3D e árvore de serviços.
 - A falta de NSView clipsToBounds causava abort ao abrir place; a API foi implementada com comportamento de recorte e teste de regressão.
 - O ciclo de vida do timer CADisplayLink e o acesso ao autorelease pool após destruição do TLS receberam correções e testes.
-- O XWayland evitou que o diálogo não modal Initializing plugins reaparecesse na observação documentada; o launcher usa SDL X11 como padrão.
+- Uma observação com XWayland evitou que o diálogo não modal Initializing plugins reaparecesse. Por preferência do usuário, o launcher agora recomenda e usa SDL Wayland por padrão; o comportamento desse diálogo no Wayland deve ser reavaliado.
 - O seletor de câmera invisível que interceptava a faixa superior do viewport deixou de bloquear os cliques em uma sessão Edit e depois em Play, conforme os testes manuais do usuário.
 - A janela de escolher FillColor, que antes não aparecia e deixava a interface bloqueada, foi confirmada funcionando pelo usuário depois de uma correção do fallback de QColorDialog no plugin Qt Cocoa.
 - Os botões do menu Roblox, Settings e Exit da UI do Rank Office foram reportados funcionando numa build posterior. Os sintomas voltaram em builds diagnósticas anteriores ao diagnóstico do View Selector.
@@ -32,8 +32,12 @@ A solicitação original de execução no Linux está fora do repositório CaseS
 - O projeto grande foi usado em testes Edit. Play e execução completa de scripts ainda não têm validação estável e repetível nesta cópia.
 - Outros aborts de Objective-C e panic do runtime estão listados em docs/crashes.md.
 
+## Implemented; remaining manual validation
+
+- The pinned Rosemary v0.2.2 patch contains an internal file chooser rendered by the shared `chrome` toolkit and SDL backend for AppKit `NSOpenPanel` and `NSSavePanel`. Studio retests successively exposed missing `NSTextFieldCell -setFont:`, `NSOpenPanel -setAccessoryView:`, `NSOpenPanel -setAccessoryViewDisclosed:`, Foundation `_NSFileTypeDirectory`, `NSOpenPanel treatsFilePackagesAsDirectories`, and `NSWorkspace -isFilePackageAtPath:` support; each now has implementation and regression coverage. The latest Import retest (`run-20261013T213755-38660.log`) no longer crashed, and the user confirmed that Up navigates, but reported white entries with invisible names. The cause was white list/field surfaces paired with white text in dark appearance. The chooser now uses a theme-specific input background, with a regression test for visible dark-mode filenames. All 52 chrome tests and 295 AppKit tests plus the theme integration test pass; the locked offline Release build succeeds, and the full patch applies to a clean checkout of pinned commit `04dce85b63154d6451adf74e3f7bacf40add08bd`. The updated binary is installed. The user manually confirmed that Import displays readable names, selecting a file returns to Studio without a crash, and cancellation returns cleanly. Open from File still needs separate confirmation; arbitrary accessory-view rendering remains unverified.
+
 ## Próximo passo sugerido
 
-The visible Play stutter is currently confirmed resolved. If it returns, inspect transparent-row counts and the caller locations in a fresh damage trace. The separate camera and docking issues remain deferred.
+The visible Play stutter is currently confirmed resolved. If it returns, inspect transparent-row counts and the caller locations in a fresh damage trace. The separate camera and docking issues remain deferred. Retest Open from File separately; arbitrary accessory-view rendering also remains unverified.
 
 Não repetir testes complexos de mouse automaticamente. Para qualquer novo teste de arraste, perguntar ao usuário e deixar que ele interaja na janela.

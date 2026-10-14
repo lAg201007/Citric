@@ -14,8 +14,10 @@ Esta lista separa falhas reproduzidas, falhas corrigidas e erros que continuam a
 | Crash ao abrir place, require com prefixo inválido | Log camera-sensitivity-003-retry-20261012.log: OpenPlaceDataModelTaskTelemetry registrou AllDmTasksSuccess=true; depois surgiu “require path must start with valid prefix: ./, ../, or @”. Código de saída 133. | Último crash da sessão; investigar com novo log no launcher normal. |
 | setBackgroundStyle: não reconhecido em NSButtonCell | Lançamento direto pelo GDB abortou ainda na inicialização, antes de abrir place. | API ausente observada; não prova a causa do crash de require. |
 | Saídas 133, 134 e 139 em testes distintos | Houve crashes em tentativas de abertura, edição e Play; nem todos têm stack ou log preservado no novo repo. | Não agrupar como uma única causa. Capturar cada caso com log novo. |
-| Janela “Initializing plugins” reaparece | Reproduzida no Wayland após ser escondida. Com SDL X11/XWayland não reapareceu na observação, e não bloqueava outras partes do Studio. | Contornada pelo launcher X11; não há correção interna de modal/lifecycle confirmada. |
+| Janela “Initializing plugins” reaparece | Reproduzida no Wayland após ser escondida. Com SDL X11/XWayland não reapareceu numa observação, sem bloquear outras partes do Studio. | Não há correção interna de modal/lifecycle confirmada. O launcher agora recomenda Wayland conforme preferência do usuário; reavaliar esse sintoma nesse backend. |
 | Janela preta sem título | Várias janelas vazias foram observadas em uma sessão antiga, associadas a Studio/plugins/emulador. Numa observação XWayland posterior, apenas a janela principal permaneceu. | Observação melhorou; não há prova de que todas as janelas vazias estejam resolvidas. |
+
+| Import/Open chooser entries were white with invisible names | In `run-20261013T213755-38660.log`, the chooser opened and Up navigated, but dark appearance paired white text with a hardcoded white list/field surface. The user later retested the corrected build and confirmed readable names, successful file selection, and clean cancellation in Import. | Fixed in the latest patch and release binary with a theme-specific input background and a dark-mode filename rendering regression test. Open from File still needs separate manual confirmation. |
 
 ## Próxima captura recomendada
 
