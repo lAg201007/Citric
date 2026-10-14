@@ -24,8 +24,8 @@ O manifesto usa caminhos relativos à raiz do repositório, então um comando da
 
 - Binário: bin/rosemary.
 - Arquitetura: ELF x86_64.
-- SHA-256: 592bc22553f478bfe789a4682f9c20b69f198e107b050a370fce4c043799f1a2.
-- ELF build ID: 6a26d3da4529fa69d8f925ead1f7cef178459666.
+- SHA-256: 0d0bfa64c5bc459ff0eacae006cae742de3578326880791cdf920fc091bafca5.
+- ELF build ID: 6a5e46b4761beb1a0d1c65b09a74282625ee07da.
 - The local binary enables `ROSEMARY_PERF_TRACE` through the launcher by default. Trace records include elapsed timestamps, deduplicate display-link schedule messages, and split window composition into smaller stages. The latest image-copy path copies opaque pixels directly, skips transparent pixels and transparent rows, and blends partial-alpha pixels. Damage logs retain the Core Animation setter call site. The file chooser uses theme-aware field backgrounds so its entries remain readable in dark appearance. The user restarted an earlier build through Citric and confirmed that the visible stutter disappeared during a 10-second empty-Baseplate Play test; the trace still records periodic full-window damage.
 - The source is fetched from the pinned upstream commit and Citric patch series by scripts/build-studio.sh; source files are not stored in the current working tree.
 

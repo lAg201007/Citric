@@ -25,6 +25,12 @@ The launcher clears inherited `LC_ALL` and forces `LC_NUMERIC=C` for Studio.
 Launch metadata records both the incoming and effective numeric locale values
 so decimal-literal failures can be diagnosed.
 
+In `crates/appkit/src/event.rs`, printable key-down characters are removed from
+the event delivered to an active text input client when SDL will also deliver a
+layout-resolved text commit. The original characters remain available to key
+equivalent processing; controls, shortcuts, key-up events, and non-text
+responders retain their existing behavior.
+
 Before Studio starts, `scripts/patch_plugin_compatibility.py` scans cached
 `Plugin.rbxm` models across every plugin ID and version in InstalledPlugins.
 It replaces only the exact legacy `requireany("bit", "bit32", ...)`

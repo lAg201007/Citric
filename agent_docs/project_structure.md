@@ -2,6 +2,8 @@
 
 - crates/appkit: NSView, window, event, input, display-link, controls, font,
   file-panel, and AppKit diagnostic behavior.
+- crates/appkit/src/event.rs: key event normalization for text clients and
+  regression coverage for printable text, editing keys, and shortcuts.
 - crates/chrome/src/file_picker.rs: shared SDL-rendered Import/Open/Save
   chooser and navigation, filtering, and rendering tests.
 - crates/corefoundation: collection singletons, run-loop and timer lifetime.

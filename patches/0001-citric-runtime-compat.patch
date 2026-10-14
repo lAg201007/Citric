@@ -1868,10 +1868,10 @@ index f395984..3c43a56 100644
  }
  
 diff --git a/crates/appkit/src/event.rs b/crates/appkit/src/event.rs
-index 0b8441c..15c7604 100644
+index 0b8441c..5308bed 100644
 --- a/crates/appkit/src/event.rs
 +++ b/crates/appkit/src/event.rs
-@@ -1,14 +1,29 @@
+@@ -1,14 +1,47 @@
  use foundation::geometry::NSPoint;
  use objc::object::Id;
 +use std::collections::VecDeque;
@@ -1892,6 +1892,24 @@ index 0b8441c..15c7604 100644
 +    }
 +}
 +
++fn key_event_characters<'a>(
++    text: &'a str,
++    down: bool,
++    input_client: bool,
++    scancode: u32,
++    modifiers: u16,
++) -> &'a str {
++    let printable = !text.is_empty()
++        && text.chars().all(|character| {
++            !character.is_control() && !('\u{f700}'..='\u{f8ff}').contains(&character)
++        });
++    let shortcut = modifiers & (sdl3::keycodes::keymod::CTRL | sdl3::keycodes::keymod::GUI) != 0;
++    match down && input_client && !crate::keymap::is_modifier(scancode) && !shortcut && printable {
++        true => "",
++        false => text,
++    }
++}
++
  /// Drain SDL's queue once, delivering what this tree can deliver.
  ///
  /// `app` is the application, which is the object a window notification is posted
@@ -1901,7 +1919,7 @@ index 0b8441c..15c7604 100644
      let _ = app;
      // Before anything else: a thread waiting for a GL context this one holds is
      // a thread that is not drawing, and reaching here is what says this one has
-@@ -17,19 +32,28 @@ pub fn pump(app: Id) {
+@@ -17,19 +50,28 @@ pub fn pump(app: Id) {
      gamecontroller::pump();
      debug_resize();
      debug_key();
@@ -1930,7 +1948,7 @@ index 0b8441c..15c7604 100644
  }
  
  static PUMP_HOOKS: std::sync::Mutex<Vec<fn()>> = std::sync::Mutex::new(Vec::new());
-@@ -205,10 +229,16 @@ fn trace_views() {
+@@ -205,10 +247,16 @@ fn trace_views() {
      for object in window::all() {
          // SAFETY: a window this crate made.
          let sdl = unsafe { window::sdl_window(object) };
@@ -1950,7 +1968,7 @@ index 0b8441c..15c7604 100644
          ));
          // SAFETY: null or a view this runtime allocated.
          unsafe { crate::view::describe(window::content_view_of(object), 1, &mut out) };
-@@ -251,6 +281,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -251,6 +299,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
          // title bar's close button is on a Mac: `-performClose:`, so the
          // delegate may refuse and `-close` does the rest.
          Event::WindowClosed { window } => {
@@ -1959,7 +1977,7 @@ index 0b8441c..15c7604 100644
              if crate::decor::window_closed(window) {
                  return;
              }
-@@ -341,6 +373,10 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -341,6 +391,10 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              }
          }
          Event::WindowFocus { window, gained } => {
@@ -1970,7 +1988,7 @@ index 0b8441c..15c7604 100644
              crate::decor::focus_changed(window, gained);
              let object = object_for(window);
              if !object.is_null() && gained {
-@@ -366,7 +402,14 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -366,37 +420,55 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              down,
              repeat,
          } => {
@@ -1985,7 +2003,37 @@ index 0b8441c..15c7604 100644
                  return;
              }
              let text = crate::keymap::characters(
-@@ -393,10 +436,14 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+                 scancode,
+                 crate::keymap::typed_key(scancode, key, modifiers),
+             );
++            let responder = responder_of(object_for(id));
++            let key_characters = key_event_characters(
++                &text,
++                down,
++                crate::text::is_input_client(responder),
++                scancode,
++                modifiers,
++            );
+             let modifiers = crate::keymap::modifiers(modifiers);
+             let code = crate::keymap::virtual_key(scancode);
+             if down && !crate::keymap::is_modifier(scancode) {
+-                let window = object_for(id);
+-                crate::text::begin_key_interpretation(responder_of(window));
++                crate::text::begin_key_interpretation(responder);
+             }
+-            let fields = |window| Fields {
++            let fields = |window, characters| Fields {
+                 kind: match down {
+                     true => kind::KEY_DOWN,
+                     false => kind::KEY_UP,
+                 },
+                 modifiers,
+                 key_code: code,
+-                characters: objc::arc::autorelease(foundation::string::from_str(&text)),
++                characters: objc::arc::autorelease(foundation::string::from_str(characters)),
+                 repeat,
+                 window,
+                 ..Fields::default()
              };
              // A key equivalent is the menu's, offered before the key reaches
              // the first responder, as `-[NSApplication sendEvent:]` does.
@@ -1994,7 +2042,7 @@ index 0b8441c..15c7604 100644
                  && !crate::keymap::is_modifier(scancode)
 -                && key_equivalent(object_for(id), fields(object_for(id)), &text)
 -            {
-+                && key_equivalent(object_for(id), fields(object_for(id)), &text);
++                && key_equivalent(object_for(id), fields(object_for(id), &text), &text);
 +            input_trace(&format!(
 +                "stage=key_equivalent window_id={id} scancode={scancode} virtual_key={code} down={down} repeat={repeat} text_length={} handled={equivalent_handled}",
 +                text.len(),
@@ -2003,7 +2051,19 @@ index 0b8441c..15c7604 100644
                  return;
              }
              // A modifier is `-flagsChanged:`, not a key down: AppKit has no
-@@ -441,11 +488,54 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -405,9 +477,9 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+             match crate::keymap::is_modifier(scancode) {
+                 true => send(id, None, |w, _| Fields {
+                     kind: kind::FLAGS_CHANGED,
+-                    ..fields(w)
++                    ..fields(w, key_characters)
+                 }),
+-                false => send(id, None, |w, _| fields(w)),
++                false => send(id, None, |w, _| fields(w, key_characters)),
+             }
+         }
+         // A key event describes a physical key. Text input is the separate,
+@@ -441,11 +513,54 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              buttons,
          } => {
              crate::cursor::mouse_moved();
@@ -2060,7 +2120,7 @@ index 0b8441c..15c7604 100644
              // SDL's position keeps integrating the deltas of a disassociated
              // pointer, so it wanders over the chrome while the cursor the
              // program sees sits still. The chrome is for a pointer that moves.
-@@ -454,21 +544,21 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -454,21 +569,21 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
                  false => false,
              };
              crate::cursor::set_over_chrome(on_chrome);
@@ -2087,7 +2147,7 @@ index 0b8441c..15c7604 100644
              // Before the drop below: a cursor rectangle applies whether or not
              // anything asked for `-mouseMoved:`, and AppKit re-decides the
              // pointer on every move rather than only when a rectangle changes.
-@@ -479,8 +569,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -479,8 +594,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
                  modifiers: current_modifiers(),
                  location,
                  delta: NSPoint {
@@ -2098,7 +2158,7 @@ index 0b8441c..15c7604 100644
                  },
                  button: held.map_or(0, crate::button::number),
                  window,
-@@ -488,32 +578,12 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -488,32 +603,12 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
                  ..Fields::default()
              };
              if held.is_none() {
@@ -2115,7 +2175,12 @@ index 0b8441c..15c7604 100644
 -                    areas.into_iter().for_each(objc::arc::release);
 -                    return;
 -                }
--            }
++                deliver_unbuttoned_mouse_motion(id, x, y, &fields);
++            } else {
++                send(id, Some((x, y)), |window, location| {
++                    fields(window, location, std::ptr::null_mut())
++                });
+             }
 -            if held.is_none() && !wants_mouse_moved(object_for(id)) {
 -                if tracing() {
 -                    eprintln!(
@@ -2124,19 +2189,14 @@ index 0b8441c..15c7604 100644
 -                    );
 -                }
 -                return;
-+                deliver_unbuttoned_mouse_motion(id, x, y, &fields);
-+            } else {
-+                send(id, Some((x, y)), |window, location| {
-+                    fields(window, location, std::ptr::null_mut())
-+                });
-             }
+-            }
 -            send(id, Some((x, y)), |window, location| {
 -                fields(window, location, std::ptr::null_mut())
 -            });
          }
          Event::MouseButton {
              window: id,
-@@ -523,20 +593,36 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -523,20 +618,36 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              x,
              y,
          } => {
@@ -2180,7 +2240,7 @@ index 0b8441c..15c7604 100644
              let (x, y) = track_pointer(id, x, y);
              send(id, Some((x, y)), |window, location| Fields {
                  kind,
-@@ -655,7 +741,7 @@ fn key_equivalent(window: Id, fields: Fields, text: &str) -> bool {
+@@ -655,7 +766,7 @@ fn key_equivalent(window: Id, fields: Fields, text: &str) -> bool {
  ///
  /// The base coordinate system is the whole frame, so a titlebar this runtime
  /// draws is above the content view's top.
@@ -2189,7 +2249,7 @@ index 0b8441c..15c7604 100644
      let content = window::content_view_of(window);
      let height = match content.is_null() {
          true => 0.0,
-@@ -669,7 +755,7 @@ fn location(window: Id, x: f32, y: f32) -> NSPoint {
+@@ -669,7 +780,7 @@ fn location(window: Id, x: f32, y: f32) -> NSPoint {
          },
      };
      let height = height + window::content_inset(window);
@@ -2198,7 +2258,7 @@ index 0b8441c..15c7604 100644
  }
  
  /// Hand one input event to its window, as `-[NSApplication sendEvent:]` does.
-@@ -678,10 +764,37 @@ fn send(id: u32, at: Option<(f32, f32)>, fields: impl FnOnce(Id, NSPoint) -> Fie
+@@ -678,10 +789,37 @@ fn send(id: u32, at: Option<(f32, f32)>, fields: impl FnOnce(Id, NSPoint) -> Fie
      if window.is_null() {
          return;
      }
@@ -2237,7 +2297,7 @@ index 0b8441c..15c7604 100644
  /// Hand a built event to its window's `-sendEvent:`, after the local monitors.
  pub(crate) fn dispatch(window: Id, event: Id) {
      // Before the window sees it, which is where AppKit runs a local monitor: a
-@@ -699,7 +812,25 @@ pub(crate) fn dispatch(window: Id, event: Id) {
+@@ -699,7 +837,25 @@ pub(crate) fn dispatch(window: Id, event: Id) {
      unsafe {
          let f: unsafe extern "C" fn(Id, objc::sel::Sel, Id) =
              std::mem::transmute(objc::msg::entry());
@@ -2264,7 +2324,7 @@ index 0b8441c..15c7604 100644
      }
  }
  
-@@ -716,6 +847,94 @@ pub(crate) fn dispatch(window: Id, event: Id) {
+@@ -716,6 +872,94 @@ pub(crate) fn dispatch(window: Id, event: Id) {
  /// log file once it is running - takes every later trace line with it, and
  /// input arrives long after that.
  pub const LOG_ENV: &str = "ROSEMARY_EVENT_LOG";
@@ -2359,7 +2419,7 @@ index 0b8441c..15c7604 100644
  
  fn log_path() -> Option<&'static std::path::Path> {
      static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-@@ -737,10 +956,69 @@ pub fn debug_log(line: &str) {
+@@ -737,10 +981,69 @@ pub fn debug_log(line: &str) {
      }
  }
  
@@ -2430,7 +2490,7 @@ index 0b8441c..15c7604 100644
          return;
      }
      let at = nsevent::location_of(event);
-@@ -763,6 +1041,45 @@ fn log_route(window: Id, event: Id, kind: u64) {
+@@ -763,6 +1066,45 @@ fn log_route(window: Id, event: Id, kind: u64) {
          local.x,
          local.y,
      ));
@@ -2476,7 +2536,7 @@ index 0b8441c..15c7604 100644
  }
  
  pub fn route(window: Id, event: Id) {
-@@ -790,12 +1107,37 @@ pub fn route(window: Id, event: Id) {
+@@ -790,12 +1132,37 @@ pub fn route(window: Id, event: Id) {
              );
          }
          if let Some(method) = method {
@@ -2514,7 +2574,7 @@ index 0b8441c..15c7604 100644
          }
          return;
      }
-@@ -807,11 +1149,43 @@ pub fn route(window: Id, event: Id) {
+@@ -807,11 +1174,43 @@ pub fn route(window: Id, event: Id) {
          false => responder_of(window),
      };
      let Some((responder, method)) = chain(start, sel) else {
@@ -2558,7 +2618,7 @@ index 0b8441c..15c7604 100644
      if tracing() {
          // SAFETY: a live object this runtime allocated.
          let class = unsafe { objc::object::class_of(responder) };
-@@ -820,12 +1194,32 @@ pub fn route(window: Id, event: Id) {
+@@ -820,12 +1219,32 @@ pub fn route(window: Id, event: Id) {
              class.map_or("no class", |c| c.name_str()),
          );
      }
@@ -2591,7 +2651,7 @@ index 0b8441c..15c7604 100644
  }
  
  /// The responder method an event type is delivered through.
-@@ -910,23 +1304,131 @@ pub(crate) fn warp_pointer(x: f32, y: f32) {
+@@ -910,23 +1329,131 @@ pub(crate) fn warp_pointer(x: f32, y: f32) {
  /// synchronously, X11 reports the server's MotionNotify), with a delta of
  /// `target - previous`. A game that recentres the cursor after every
  /// `-mouseMoved:` would read that delta as the player undoing their own motion.
@@ -2644,8 +2704,14 @@ index 0b8441c..15c7604 100644
 +            Instant::now(),
 +        );
 +    }
-+}
+ }
+-
 +
+-fn take_warp_echo(x: f32, y: f32) -> bool {
+-    let mut echo = WARP_ECHO.lock().unwrap_or_else(|e| e.into_inner());
+-    let hit = echo.is_some_and(|target| lands_on(target, (x, y)));
+-    if hit {
+-        *echo = None;
 +fn pending_warp_target() -> Option<(f32, f32)> {
 +    WARP_ECHOES
 +        .lock()
@@ -2658,13 +2724,8 @@ index 0b8441c..15c7604 100644
 +    let now = Instant::now();
 +    let mut echoes = WARP_ECHOES.lock().unwrap_or_else(|e| e.into_inner());
 +    take_warp_echo_from_queue(&mut echoes, x, y, dx, dy, now)
- }
- 
--fn take_warp_echo(x: f32, y: f32) -> bool {
--    let mut echo = WARP_ECHO.lock().unwrap_or_else(|e| e.into_inner());
--    let hit = echo.is_some_and(|target| lands_on(target, (x, y)));
--    if hit {
--        *echo = None;
++}
++
 +fn enqueue_warp_echo(
 +    echoes: &mut VecDeque<WarpEcho>,
 +    from: (f32, f32),
@@ -2731,7 +2792,7 @@ index 0b8441c..15c7604 100644
  }
  
  /// Within half a pixel: SDL converts between desktop and window coordinates.
-@@ -950,25 +1452,35 @@ pub(crate) fn pointer_position() -> (f32, f32) {
+@@ -950,25 +1477,35 @@ pub(crate) fn pointer_position() -> (f32, f32) {
  /// cursor never was - which is a hit test, and so a first responder, against the
  /// wrong view.
  fn track_pointer(window: u32, x: f32, y: f32) -> (f32, f32) {
@@ -2775,7 +2836,7 @@ index 0b8441c..15c7604 100644
  }
  
  /// The SDL id of the window the last pointer event came from; `0` before any.
-@@ -1131,6 +1643,77 @@ fn delegate_selector(name: &str) -> &'static str {
+@@ -1131,6 +1668,77 @@ fn delegate_selector(name: &str) -> &'static str {
  mod tests {
      use super::*;
  
@@ -2853,7 +2914,7 @@ index 0b8441c..15c7604 100644
      #[test]
      fn a_programmatic_warp_updates_the_reported_pointer() {
          let previous = pointer_position();
-@@ -1143,12 +1726,74 @@ mod tests {
+@@ -1143,12 +1751,95 @@ mod tests {
  
      #[test]
      fn a_warp_echo_is_taken_once() {
@@ -2931,6 +2992,27 @@ index 0b8441c..15c7604 100644
 +            mouse_look_delta_scale(sdl3::mouse::mask(sdl3::mouse::LEFT), true),
 +            1.0
 +        );
++    }
++
++    #[test]
++    fn text_clients_receive_printable_text_only_from_the_text_input_event() {
++        use sdl3::keycodes::{keymod, scancode};
++
++        assert_eq!(key_event_characters("a", true, true, scancode::A, 0), "");
++        assert_eq!(
++            key_event_characters("A", true, true, scancode::A, keymod::SHIFT),
++            ""
++        );
++        assert_eq!(
++            key_event_characters("\u{8}", true, true, scancode::BACKSPACE, 0),
++            "\u{8}"
++        );
++        assert_eq!(
++            key_event_characters("a", true, true, scancode::A, keymod::CTRL),
++            "a"
++        );
++        assert_eq!(key_event_characters("a", true, false, scancode::A, 0), "a");
++        assert_eq!(key_event_characters("a", false, true, scancode::A, 0), "a");
      }
  
      /// Every name this crate publishes has a delegate method, so a notification
@@ -5865,6 +5947,41 @@ index 6f8ab70..78ccb37 100644
  }
  
  exports::exports! {
+diff --git a/crates/darwin/src/commoncrypto.rs b/crates/darwin/src/commoncrypto.rs
+index 497594d..d2f8252 100644
+--- a/crates/darwin/src/commoncrypto.rs
++++ b/crates/darwin/src/commoncrypto.rs
+@@ -710,6 +710,22 @@ digest_api!(
+     Sha512,
+     Sha512
+ );
++
++unsafe extern "C" fn random_generate_bytes(output: *mut u8, count: usize) -> i32 {
++    if output.is_null() && count != 0 {
++        return KCC_PARAM_ERROR;
++    }
++    if count == 0 {
++        return KCC_SUCCESS;
++    }
++    let bytes = unsafe { std::slice::from_raw_parts_mut(output, count) };
++    if getrandom::fill(bytes).is_ok() {
++        KCC_SUCCESS
++    } else {
++        -1
++    }
++}
++
+ exports::exports! {
+     functions {
+         "CC_MD5_Init"=>md5_init,
+@@ -736,6 +752,7 @@ exports::exports! {
+         "CC_SHA512_Update"=>sha512_update,
+         "CC_SHA512_Final"=>sha512_final,
+         "CC_SHA512"=>sha512,
++        "CCRandomGenerateBytes"=>random_generate_bytes,
+         "CCCryptorCreate"=>cryptor_create,
+         "CCCryptorCreateFromData"=>cryptor_create_from_data,
+         "CCCryptorRelease"=>cryptor_release,
 diff --git a/crates/foundation/src/lib.rs b/crates/foundation/src/lib.rs
 index da53390..24ed8e7 100644
 --- a/crates/foundation/src/lib.rs

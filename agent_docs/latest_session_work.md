@@ -161,3 +161,33 @@ Warning: no session record matched this deployment ID.
 
 Token report: `unavailable`; no matching session record was available for this
 deployment.
+
+---
+
+Deployment: citric_duplicate_text_input_20261013
+
+State: complete. Studio text fields duplicated printable characters because
+AppKit `keyDown:` and SDL `TEXT_INPUT` both inserted them. The canonical patch
+now sanitizes printable key-down characters only for active text input clients,
+while retaining the original characters for key equivalents and keeping SDL
+text/IME commits, Backspace, shortcuts, key-up events, and non-text responders
+unchanged.
+
+Verification: the focused AppKit regression passed; the release build was
+installed and the user confirmed that Toolbox and Explorer searches insert
+each character once and that one Backspace removes one character. The full
+AppKit suite ran 296 tests with 294 passing and two unrelated dark-theme
+named-color failures. Formatting, source diff, and clean patch application
+checks passed. The next entry point is the next user-selected compatibility
+issue; do not rerun this test unless duplication returns.
+
+Token report for `citric_duplicate_text_input_20261013`:
+
+Deployment token report: `citric_duplicate_text_input_20261013` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID

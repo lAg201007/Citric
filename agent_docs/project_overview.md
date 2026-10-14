@@ -45,3 +45,8 @@ The AppKit file-panel compatibility layer now uses Rosemary's shared SDL-backed
 `chrome` file chooser for Import and Open from File. The latest manual retest
 reached the chooser and navigated with Up; readable entries, selection, and
 cancellation still need confirmation after the theme contrast fix.
+
+Printable text input is routed through SDL's resolved text/IME commit for active
+text clients. The duplicate AppKit key-down character is retained only for key
+equivalent handling, preventing doubled characters in Studio search fields
+while preserving Backspace and shortcuts.

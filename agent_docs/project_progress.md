@@ -65,3 +65,11 @@ white. The chooser now uses a theme-specific input background. Chrome tests
 (52), AppKit tests (295 plus the theme integration test), formatting, patch
 application, source diff checks, and the locked offline Release build passed;
 the updated binary is installed. The user restarted Studio through Citric and confirmed readable Import entries, file selection returning without a crash, and cancellation working. Separate Open from File validation remains pending. There is no active deployment after this retest.
+
+The 2026-10-13 duplicate-text deployment is complete. The canonical patch now
+prevents printable key-down and SDL text commits from inserting the same
+character twice in active Studio text fields. The focused regression passed,
+the release build was installed, and the user confirmed Toolbox and Explorer
+search behavior. The full AppKit suite had two unrelated dark-theme named-color
+failures; this does not block the validated fix. The next milestone is a new
+user-selected compatibility issue.

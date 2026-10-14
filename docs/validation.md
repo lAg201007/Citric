@@ -139,5 +139,15 @@ The latest Studio retest (`run-20261013T213755-38660.log`) no longer crashed. Th
 - `cargo fmt -p chrome -p appkit -- --check` and source `git diff --check` passed. The repository-wide format check still reports a pre-existing module-order difference in `crates/darwin/src/lib.rs`.
 - `cargo build --locked --offline --release -p rosemary` passed.
 - The complete patch applied cleanly to a fresh worktree at pinned base `04dce85b63154d6451adf74e3f7bacf40add08bd`; the focused dark-mode rendering regression passed there.
-- The updated binary is installed as `bin/rosemary`; its SHA-256 is `592bc22553f478bfe789a4682f9c20b69f198e107b050a370fce4c043799f1a2`, and its ELF build ID is `6a26d3da4529fa69d8f925ead1f7cef178459666`.
+- The updated binary is installed as `bin/rosemary`; its SHA-256 is `0d0bfa64c5bc459ff0eacae006cae742de3578326880791cdf920fc091bafca5`, and its ELF build ID is `6a5e46b4761beb1a0d1c65b09a74282625ee07da`.
 - The user restarted Studio through Citric and confirmed that Import shows readable names, selecting a file returns to Studio without a crash, and cancelling returns cleanly. Open from File still needs a separate manual retest.
+
+## Duplicate text in Studio fields
+
+The canonical patch now clears printable `NSEvent.characters` only for key-down events sent to active text input clients, leaving SDL's resolved text and IME commits as the insertion path. Key-equivalent handling still receives the original characters; Backspace, control shortcuts, and non-text responders are unchanged.
+
+- The focused `text_clients_receive_printable_text_only_from_the_text_input_event` regression passed.
+- `cargo test --locked --offline -p appkit` ran 296 tests: 294 passed and two unrelated named-color tests failed because the current system appearance is dark while those tests expect light-theme values.
+- `cargo build --locked --offline --release -p rosemary` passed. Release SHA-256: `0d0bfa64c5bc459ff0eacae006cae742de3578326880791cdf920fc091bafca5`; ELF build ID: `6a5e46b4761beb1a0d1c65b09a74282625ee07da`. The four focused CommonCrypto tests passed; the full Darwin test suite did not complete because an unrelated `divergent::tests::a_divergence_is_named_rather_than_passed_through` test failed and the test process ended with SIGSEGV.
+- `rustfmt --edition 2024 --check crates/appkit/src/event.rs` and source `git diff --check` passed. The full updated patch applied cleanly to a fresh archive of the pinned upstream commit.
+- The user restarted Studio and confirmed that Toolbox and Explorer search now show each typed character once; one Backspace removes one character.

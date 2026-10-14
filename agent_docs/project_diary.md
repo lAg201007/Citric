@@ -91,3 +91,11 @@ different early selector failure.
   blank. The theme-aware surface fix and regression test are installed. The user
   confirmed readable Import names, file selection returning without a crash, and
   cancellation working. Open from File remains unverified separately.
+
+- On 2026-10-13, Studio Toolbox and Explorer search duplicated printable
+  characters because the same key reached AppKit `keyDown:` and SDL
+  `TEXT_INPUT`. The patch keeps the latter as the insertion path for active
+  text clients and sanitizes only printable key-down characters in the former.
+  Backspace, shortcuts, key equivalents, and IME/layout resolution remain
+  intact. The focused regression passed and the user confirmed both fields now
+  insert one character per key.
