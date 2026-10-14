@@ -16,5 +16,6 @@ Write all documentation and code changes in English. This includes new or modifi
 - Do not configure remotes or push changes to GitHub without a subsequent explicit request.
 - For tests requiring complex mouse movement, ask the user to perform the interaction through a question; do not move the pointer on their behalf.
 - Track implemented fixes, fixes confirmed by the user, and unresolved issues separately.
+- Any unimplemented System of Function calls by rosemary must be implemented in the best way possible, not with workarounds, they must be implemented in a way that could possibly pushed to main rosemary in the future
 
 The local Roblox Studio copy is proprietary software. It is available for testing but excluded from Git. Before any publication, check `git status` and the manifest documented in `docs/bundle.md`.
