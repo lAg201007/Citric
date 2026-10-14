@@ -42,6 +42,13 @@ layout-resolved text commit. The original characters remain available to key
 equivalent processing; controls, shortcuts, key-up events, and non-text
 responders retain their existing behavior.
 
+The same AppKit event boundary maps Linux Control chords to macOS Command
+shortcuts for every non-modifier key when `ROSEMARY_MENU_CTRL` is enabled.
+Shift and left Alt are preserved, while right Alt/AltGr passes through so
+keyboard layouts can produce alternate characters. The mapping is opt-out via
+`ROSEMARY_MENU_CTRL=0` and is implemented generically rather than as a list of
+Studio commands.
+
 Before Studio starts, `scripts/patch_plugin_compatibility.py` scans cached
 `Plugin.rbxm` models across every plugin ID and version in InstalledPlugins.
 It replaces only the exact legacy `requireany("bit", "bit32", ...)`
@@ -78,12 +85,19 @@ entry, and guest/host path conversion without depending on a desktop portal.
 `Theme::panel_input_background` keeps dark-mode file names readable against the
 chooser fields and list.
 
-The chooser's shared implementation provides a case-insensitive live filename
-filter, Ctrl/Command+F search focus, Ctrl/Command+H dotfile visibility, and
-Ctrl/Command+R refresh. Home/End/PageUp/PageDown and arrow navigation operate
-on the filtered view. File and package icons are drawn from stable generic
-shapes and extension categories so the patch remains suitable for Rosemary's
-cross-platform base without host-native icon dependencies.
+The chooser's shared implementation provides a visible case-insensitive live
+filename filter, Ctrl/Command+F search focus, Ctrl/Command+H dotfile
+visibility, and Ctrl/Command+R refresh. Home/End/PageUp/PageDown and arrow
+navigation operate on the filtered view. File and package icons are drawn from
+stable generic shapes and extension categories so the patch remains suitable
+for Rosemary's cross-platform base without host-native icon dependencies.
+AppKit stores the preference in `showsHiddenFiles`, and SDL modifier flags are
+used for shortcut dispatch. Manual GUI verification of the installed build is
+still pending.
+
+`NSSavePanel` stores `canSelectHiddenExtension` as per-panel BOOL state,
+defaulting to false. The selector is implemented in the AppKit panel bridge
+because Qt Cocoa sends it while configuring Save to File.
 
 Clipboard compatibility spans the SDL/AppKit pasteboard bridge, native AppKit
 text responders, and the WebKit-backed script editor. System text is queried

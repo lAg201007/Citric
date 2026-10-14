@@ -1,5 +1,158 @@
 # Latest session work
 
+Deployment: `rosemary_v023_base_migration_20261014`
+
+State: complete in source and installed binary; manual Studio validation
+remains pending.
+
+Outcome: the canonical Citric patch was regenerated on Rosemary v0.2.3 at
+commit `91e2de231604237ed5faa81513ba441d7b0a79bb`. Upstream's merged
+implementations of `systemFontSizeForControlSize:`, `NSButtonCell` background
+style, and Num Lock/keypad behavior were removed from the overlay. Citric's
+Linux Control-to-Command mapping, file-picker improvements, Save panel fix,
+and remaining compatibility work were retained.
+
+Verification: the exact pinned base applied cleanly; 322 AppKit tests plus the
+theme integration test and 55 Chrome tests passed; `cargo fmt -p appkit --
+--check`, `git diff --check`, and the locked offline Release build passed.
+Installed `bin/rosemary` has SHA-256
+`af59637d4aef2490498d0b3efb47a206f32ef222321044351201dd984dcbad9e` and ELF
+build ID `d8d7f314b6f2136a2738dbe90e165b8b0c99ae56`.
+
+Blockers: no source blocker. The installed v0.2.3 binary has not yet been
+launched into Studio. User validation remains pending for Linux Control
+shortcuts, Open from File, and Save to File.
+
+Exact next entry point: launch Studio through Citric using the installed
+binary, test Ctrl-based Studio commands, then retest the file panels.
+
+Deployment token report: `rosemary_v023_base_migration_20261014` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID
+
+Deployment: `shortcut_mapping_linux_20261014`
+
+State: complete in source and installed binary; manual Studio shortcut
+validation remains pending.
+
+Outcome: Linux Control chords now act as aliases for macOS Command shortcuts
+before AppKit dispatch. The mapping covers every non-modifier key, preserves
+Shift and left Alt, passes right Alt/AltGr through for alternate characters,
+and can be disabled with `ROSEMARY_MENU_CTRL=0`. Menu-equivalent handling and
+text-input filtering share the same modifier policy.
+
+Verification: 13 focused AppKit event tests, `cargo fmt -p appkit -- --check`,
+`git diff --check`, and clean application to pinned Rosemary commit
+`04dce85b63154d6451adf74e3f7bacf40add08bd` passed. Installed `bin/rosemary`
+has SHA-256 `0cb1b632002760ee8aaa59a63e3abbfdcdef22cbc98102060fe56b149599ae55`
+and ELF build ID `27914446907553df5e3b08a3ed2ac3257bb45c74`.
+
+Blockers: no source blocker. Studio has not been retested for this deployment;
+verify Ctrl+S, Ctrl+O, Ctrl+F, Ctrl+Z, and Ctrl+Shift+Z through Citric, plus
+an AltGr character and the opt-out environment variable.
+
+Exact next entry point: restart Studio through Citric with the installed
+binary, exercise the listed Windows-style chords in Studio, then repeat one
+test with `ROSEMARY_MENU_CTRL=0` and an AltGr layout.
+
+Deployment token report: `shortcut_mapping_linux_20261014` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID
+
+Deployment: `save_panel_hidden_extension_20261014`
+
+State: complete in source and installed binary; manual Save to File validation
+remains pending.
+
+Outcome: logs showed Qt Cocoa configuring `NSSavePanel` with the unimplemented
+`setCanSelectHiddenExtension:` selector and aborting with exit 134. The
+canonical patch now implements the `canSelectHiddenExtension` BOOL getter and
+setter, with default false, and adds the round-trip regression test
+`can_select_hidden_extension_preference_round_trips_on_save_panel`.
+
+Verification: logs `logs/run-20261014T001508-166369.log:3658` and
+`logs/run-20261014T000101-152331.log:3533` record the original abort. The
+generated patch applies cleanly to pinned Rosemary commit
+`04dce85b63154d6451adf74e3f7bacf40add08bd`; all 10 focused AppKit panel tests,
+formatting, and the locked offline Release build passed. Installed
+`bin/rosemary` has SHA-256
+`2beeff9974531646b40c4730953fe432647f3418c98f008b10f038f5a0ab81c0` and ELF
+build ID `1b24ede78a3a114e86a7ad252474f0ddaa87da5d`. Temporary `.savepanel-build/`
+was removed.
+
+Blockers: no source blocker. No Studio was launched, so Save to File behavior
+and the absence of the abort are not manually confirmed. Preserve the
+pre-existing untracked `scripts/run-mcp.sh`; do not stage, commit, push, or
+configure remotes.
+
+Exact next entry point: launch the installed binary through Citric, open Save
+to File, confirm the panel opens, and exercise the hidden-extension preference.
+
+Deployment token report: `save_panel_hidden_extension_20261014` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID
+
+---
+
+Deployment: `picker_ui_applied_20261014`
+
+State: complete in source and installed binary; manual GUI validation remains
+pending.
+
+Outcome: the canonical Rosemary patch was corrected after the prior installed
+binary did not contain the described chooser changes. The shared picker now
+renders a search field and hidden-file toggle, filters names case-insensitively,
+maps SDL Ctrl/Command+F/H/R shortcuts, navigates the filtered list with
+keyboard paging/home/end controls, and draws generic extension-based icons.
+The AppKit panel now stores and returns `showsHiddenFiles` and filters dotfiles
+at enumeration time. The implementation stays in shared `chrome` and AppKit
+layers for future upstreaming.
+
+Verification: the patch applies cleanly to pinned Rosemary commit
+`04dce85b63154d6451adf74e3f7bacf40add08bd`; `cargo fmt --check -p chrome -p
+appkit`, seven Chrome file-picker tests, nine AppKit panel tests including
+filesystem dotfile enumeration and shortcut mapping, `git diff --check`, and a
+Release build/install passed. Installed `bin/rosemary` reports 0.2.2 and has
+SHA-256 `56b88570318096493dd99661ac031c3a0c93d5cfaf1d913036bf14fc2aa22ea4`
+with ELF build ID `3b988a18fb8bf4f29fd06ed397ad6e5077234c0c`. Binary strings
+confirm the search and hidden-file labels. No GUI interaction or visual check
+was run; restart Studio through Citric and manually test Import, Open from
+File, and Save panels, including Ctrl/Command+H.
+
+Blockers: no source blocker. Manual interaction is the remaining validation.
+The pre-existing untracked `scripts/run-mcp.sh` is preserved. No commit, push,
+remote, or unrelated change was made by the deployment.
+
+Exact next entry point: launch the newly installed binary through Citric,
+open a file panel, confirm the controls are visible, press Ctrl/Command+H,
+and verify dotfiles appear and disappear. Then test search and refresh.
+
+Deployment token report: `picker_ui_applied_20261014` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID
+
+---
+
 Deployment: citric-generic-plugin-bit32-20261012
 
 State: complete for the generic plugin compatibility change. The user

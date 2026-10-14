@@ -151,3 +151,15 @@ The canonical patch now clears printable `NSEvent.characters` only for key-down 
 - `cargo build --locked --offline --release -p rosemary` passed. Release SHA-256: `0d0bfa64c5bc459ff0eacae006cae742de3578326880791cdf920fc091bafca5`; ELF build ID: `6a5e46b4761beb1a0d1c65b09a74282625ee07da`. The four focused CommonCrypto tests passed; the full Darwin test suite did not complete because an unrelated `divergent::tests::a_divergence_is_named_rather_than_passed_through` test failed and the test process ended with SIGSEGV.
 - `rustfmt --edition 2024 --check crates/appkit/src/event.rs` and source `git diff --check` passed. The full updated patch applied cleanly to a fresh archive of the pinned upstream commit.
 - The user restarted Studio and confirmed that Toolbox and Explorer search now show each typed character once; one Backspace removes one character.
+
+## Rosemary v0.2.3 migration and Linux Control shortcut mapping
+
+Validated on 2026-10-14 against the official Rosemary v0.2.3 release at commit `91e2de231604237ed5faa81513ba441d7b0a79bb`. Its release includes Citric contributions for `systemFontSizeForControlSize:` (PR #23), `NSButtonCell` background style (PR #25), and Num Lock/keypad flags (PR #24); those implementations were removed from the canonical Citric overlay. The migration also carries forward Rosemary's Shift Lock warp-delta behavior while retaining Citric's camera sensitivity and mouse-event handling.
+
+- `./scripts/build-studio.sh --check-only` fetched the exact pinned commit from the local upstream cache and applied the canonical patch successfully.
+- `cargo test --locked --offline -p appkit`: 322 unit tests and the theme integration test passed. This includes Linux Control-to-Command shortcut mapping, Shift/Option preservation, left/right Control, the `ROSEMARY_MENU_CTRL=0` opt-out, AltGr pass-through, and the combination of upstream warp correction with Citric's camera sensitivity scale.
+- `cargo test --locked --offline -p chrome`: all 55 tests passed.
+- `cargo fmt -p appkit -- --check` and `git diff --check` passed.
+- `cargo build --locked --offline --release -p rosemary` passed. The installed `bin/rosemary` reports v0.2.3; SHA-256 is `af59637d4aef2490498d0b3efb47a206f32ef222321044351201dd984dcbad9e`, and ELF build ID is `d8d7f314b6f2136a2738dbe90e165b8b0c99ae56`.
+
+The installed build has not been launched into Studio. User validation of the shortcut mapping, Open from File, and Save to File remains pending.

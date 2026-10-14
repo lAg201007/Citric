@@ -218,7 +218,7 @@ index 9764ad6..7fae524 100644
      #[test]
      fn run_services_the_run_loop_until_it_is_stopped() {
 diff --git a/crates/appkit/src/backing.rs b/crates/appkit/src/backing.rs
-index 6b2019f..8693436 100644
+index 9a1db93..00cac55 100644
 --- a/crates/appkit/src/backing.rs
 +++ b/crates/appkit/src/backing.rs
 @@ -505,10 +505,25 @@ pub(crate) fn focus_density() -> f64 {
@@ -247,7 +247,7 @@ index 6b2019f..8693436 100644
      let mut windows = WINDOWS.lock().unwrap_or_else(|e| e.into_inner());
      let state = windows
          .get_or_insert_with(HashMap::new)
-@@ -853,7 +868,11 @@ fn send(receiver: Id, name: &str) {
+@@ -875,7 +890,11 @@ fn send(receiver: Id, name: &str) {
  
  /// Draw everything marked for display and present every window that changed.
  pub fn pump() {
@@ -259,7 +259,7 @@ index 6b2019f..8693436 100644
      for window in crate::window::all() {
          if !crate::window::is_shown(window) {
              continue;
-@@ -875,6 +894,9 @@ pub fn pump() {
+@@ -897,6 +916,9 @@ pub fn pump() {
              needs_display_in_tree(crate::window::content_view_of(window), 0);
          }
      }
@@ -269,7 +269,7 @@ index 6b2019f..8693436 100644
      let pending = std::mem::take(&mut *NEEDS_DISPLAY.lock().unwrap_or_else(|e| e.into_inner()));
      let count = pending.len();
      let depth = {
-@@ -882,25 +904,42 @@ pub fn pump() {
+@@ -904,25 +926,42 @@ pub fn pump() {
          drawing.push(pending);
          drawing.len() - 1
      };
@@ -313,7 +313,7 @@ index 6b2019f..8693436 100644
  }
  
  /// Views whose layer trees were still animating when last composed, by window.
-@@ -932,6 +971,7 @@ fn damage_animating() {
+@@ -954,6 +993,7 @@ fn damage_animating() {
  
  /// Have the part of the window `view` covers recomposed at the next pump,
  /// without asking the view to draw again: its layer tree changed, not it.
@@ -321,7 +321,7 @@ index 6b2019f..8693436 100644
  pub(crate) fn damage_view(view: Id) {
      // SAFETY: a view this crate made.
      let Some(frame) = (unsafe { crate::view::presentation_frame(view) }) else {
-@@ -1038,7 +1078,12 @@ fn place_view(
+@@ -1060,7 +1100,12 @@ fn place_view(
          width: (frame.size.width * density).round() as i64,
          height: (frame.size.height * density).round() as i64,
      };
@@ -335,7 +335,7 @@ index 6b2019f..8693436 100644
      let alpha = crate::view::effective_alpha(view);
      out.push(Placed {
          view,
-@@ -1049,7 +1094,15 @@ fn place_view(
+@@ -1071,7 +1116,15 @@ fn place_view(
      let flipped = crate::view::is_flipped(view);
      // SAFETY: a view this crate made.
      for child in unsafe { crate::view::children(view) } {
@@ -352,7 +352,7 @@ index 6b2019f..8693436 100644
      }
  }
  
-@@ -1083,21 +1136,29 @@ fn opaque_views(placed: &[Placed]) -> Vec<usize> {
+@@ -1105,21 +1158,29 @@ fn opaque_views(placed: &[Placed]) -> Vec<usize> {
  /// Bring a window's composite up to date with its views: recompose what was
  /// drawn over, and everywhere a view appeared, moved or went away.
  fn compose_window(window: Id) {
@@ -382,7 +382,7 @@ index 6b2019f..8693436 100644
      let mut holes = Vec::new();
      let mut covered = Vec::new();
      for (index, p) in placed.iter().enumerate() {
-@@ -1127,6 +1188,7 @@ fn compose_window(window: Id) {
+@@ -1149,6 +1210,7 @@ fn compose_window(window: Id) {
              covered.push((layer as usize, above));
          }
      }
@@ -390,7 +390,7 @@ index 6b2019f..8693436 100644
  
      let mut stores = STORES.lock().unwrap_or_else(|e| e.into_inner());
      // A window no view has drawn into has nothing to compose. Composing it
-@@ -1175,16 +1237,24 @@ fn compose_window(window: Id) {
+@@ -1197,16 +1259,24 @@ fn compose_window(window: Id) {
          .get_or_insert_with(HashMap::new)
          .entry(sdl as usize)
          .or_default();
@@ -415,7 +415,7 @@ index 6b2019f..8693436 100644
              region = region.union(rect);
          }
          state.placed = now;
-@@ -1201,6 +1271,7 @@ fn compose_window(window: Id) {
+@@ -1223,6 +1293,7 @@ fn compose_window(window: Id) {
      let chrome_changed =
          std::mem::replace(&mut state.chrome, chrome_generation) != chrome_generation;
      drop(windows);
@@ -423,7 +423,7 @@ index 6b2019f..8693436 100644
      let region = region.intersection(&whole);
      if region.is_empty() {
          if let Some(chrome) = chrome.as_ref().filter(|_| chrome_changed || resized) {
-@@ -1217,7 +1288,23 @@ fn compose_window(window: Id) {
+@@ -1239,7 +1310,23 @@ fn compose_window(window: Id) {
      // program that draws only a logo and a bar relies on for everything else.
      // With none set it is `windowBackgroundColor`, AppKit's default; a layer
      // view's hole is the layer's either way.
@@ -447,7 +447,7 @@ index 6b2019f..8693436 100644
      for row in region.y..region.y + region.height {
          let base = (row as usize * width as usize + region.x as usize) * 4;
          for pixel in store.pixels[base..base + region.width as usize * 4]
-@@ -1227,22 +1314,98 @@ fn compose_window(window: Id) {
+@@ -1249,22 +1336,98 @@ fn compose_window(window: Id) {
              *pixel = background;
          }
      }
@@ -547,7 +547,7 @@ index 6b2019f..8693436 100644
      drop(views);
      ANIMATING
          .lock()
-@@ -1253,9 +1416,37 @@ fn compose_window(window: Id) {
+@@ -1275,9 +1438,37 @@ fn compose_window(window: Id) {
          .unwrap_or_else(|e| e.into_inner())
          .extend(animating.into_iter().map(|view| (sdl as usize, view)));
      if let Some(chrome) = &chrome {
@@ -585,7 +585,7 @@ index 6b2019f..8693436 100644
  }
  
  /// Put a window's chrome over the top rows of its store.
-@@ -1942,6 +2133,90 @@ mod tests {
+@@ -1984,6 +2175,90 @@ mod tests {
          );
      }
  
@@ -856,10 +856,10 @@ index 701b53a..6249778 100644
      unsafe {
          if !dx.is_null() {
 diff --git a/crates/appkit/src/controls.rs b/crates/appkit/src/controls.rs
-index 7366165..c1638f7 100644
+index 0a8b455..9e1031b 100644
 --- a/crates/appkit/src/controls.rs
 +++ b/crates/appkit/src/controls.rs
-@@ -1487,6 +1487,12 @@ const SCROLLER_WIDTH: f64 = 15.0;
+@@ -1496,6 +1496,12 @@ const SCROLLER_WIDTH: f64 = 15.0;
  /// The small control size's scroller, which is the one size that differs.
  const SMALL_SCROLLER_WIDTH: f64 = 11.0;
  
@@ -872,7 +872,7 @@ index 7366165..c1638f7 100644
  unsafe extern "C" fn scroller_width(_class: Id, _sel: Sel) -> f64 {
      SCROLLER_WIDTH
  }
-@@ -1499,6 +1505,18 @@ unsafe extern "C" fn scroller_width_for_control_size(_class: Id, _sel: Sel, size
+@@ -1508,6 +1514,18 @@ unsafe extern "C" fn scroller_width_for_control_size(_class: Id, _sel: Sel, size
      }
  }
  
@@ -891,16 +891,16 @@ index 7366165..c1638f7 100644
  /// `-[NSScroller initWithFrame:]`, which is not the inherited one: a scroller
  /// constrains the frame it is given.
  ///
-@@ -1770,14 +1788,23 @@ pub(crate) fn install() {
-         "labelWithString:" => label_with_string, c"@24@0:8@16";
-     });
+@@ -1781,18 +1799,23 @@ pub(crate) fn install() {
  
-+    let class = objc::class::lookup(c"NSButtonCell").expect("declared before its methods");
-+    methods!(class, {
+     let class = objc::class::lookup(c"NSButtonCell").expect("declared before its methods");
+     methods!(class, {
 +        "setButtonType:" => button_set_type, c"v24@0:8Q16";
 +        "buttonType" => button_type, c"Q16@0:8";
-+    });
-+
+         "setBackgroundStyle:" => button_set_background_style, c"v24@0:8q16";
+         "backgroundStyle" => button_background_style, c"q16@0:8";
+     });
+ 
      let class = objc::class::lookup(c"NSScroller").expect("declared before its methods");
      class_methods!(class, {
 +        "preferredScrollerStyle" => scroller_preferred_style, c"q16@0:8";
@@ -915,7 +915,7 @@ index 7366165..c1638f7 100644
          "setDoubleValue:" => scroller_set_double_value, c"v24@0:8d16";
          "doubleValue" => scroller_double_value, c"d16@0:8";
          "setFloatValue:" => scroller_set_float_value, c"v20@0:8f16";
-@@ -1951,7 +1978,41 @@ mod tests {
+@@ -1995,7 +2018,41 @@ mod tests {
                  scroller_width_for_control_size(std::ptr::null_mut(), sel, 1),
                  SMALL_SCROLLER_WIDTH
              );
@@ -1571,9 +1571,33 @@ index 314da92..6bb1630 100644
      fn gravity_places_contents_in_the_bounds() {
          let bounds = Rect {
 diff --git a/crates/appkit/src/decor.rs b/crates/appkit/src/decor.rs
-index 7b15fa7..ff8b1ca 100644
+index 7b15fa7..0be72a6 100644
 --- a/crates/appkit/src/decor.rs
 +++ b/crates/appkit/src/decor.rs
+@@ -23,8 +23,8 @@ use static_init::dynamic;
+ pub const DECORATIONS_ENV: &str = "ROSEMARY_DECORATIONS";
+ /// `ROSEMARY_MENU`: `titlebar`, `strip` or `none`.
+ pub const MENU_ENV: &str = "ROSEMARY_MENU";
+-/// `ROSEMARY_MENU_CTRL=0` stops Control standing in for Command in menu key
+-/// equivalents.
++/// `ROSEMARY_MENU_CTRL=0` stops Linux Control chords standing in for macOS
++/// Command shortcuts. Right Alt/AltGr chords are always passed through.
+ pub const MENU_CTRL_ENV: &str = "ROSEMARY_MENU_CTRL";
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -46,9 +46,9 @@ pub enum MenuPlacement {
+ pub struct Config {
+     pub decorations: Decorations,
+     pub menu: MenuPlacement,
+-    /// Whether Control+key reaches a menu item whose equivalent is
+-    /// Command+key: Linux users reach for Control, and the host's desktop
+-    /// often keeps the Super key for itself.
++    /// Whether Linux Control chords stand in for Command shortcuts: Linux
++    /// users reach for Control, and the host's desktop often keeps Super for
++    /// itself.
+     pub control_shortcuts: bool,
+ }
+ 
 @@ -898,6 +898,9 @@ pub(crate) fn pointer_button(id: u32, button: u8, down: bool, clicks: u8, x: f32
      if down && tracking_window().is_some() {
          let on_title = matches!(located, Some((_, Some(Part::Menu(_) | Part::Overflow(_)))));
@@ -1752,10 +1776,10 @@ index 8465ebb..b411dbf 100644
          false => sdl3::video::window_position(parent).zip(sdl3::video::window_size(parent)),
          true => None,
 diff --git a/crates/appkit/src/displaylink.rs b/crates/appkit/src/displaylink.rs
-index f395984..3c43a56 100644
+index 3d7fbb1..c8f581f 100644
 --- a/crates/appkit/src/displaylink.rs
 +++ b/crates/appkit/src/displaylink.rs
-@@ -80,14 +80,26 @@ fn refresh_rate_of(link: &DisplayLink) -> f64 {
+@@ -103,17 +103,31 @@ fn refresh_around(when: f64, interval: f64, last: f64) -> (f64, f64) {
  /// One turn of a link: stamp it and send the selector to the target.
  unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
      let object = info as Id;
@@ -1773,18 +1797,23 @@ index f395984..3c43a56 100644
 +            link.timestamp,
 +        )
      };
-     let when = now();
-+    if previous_timestamp > 0.0 {
-+        let lateness = (when - previous_timestamp - interval).max(0.0);
-+        corefoundation::perf_trace_duration(
-+            "appkit.display_link_lateness",
-+            std::time::Duration::from_secs_f64(lateness),
-+        );
-+    }
      {
          let link = link_of(object);
-         link.timestamp = when;
-@@ -101,10 +113,12 @@ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
+         // Read together, so the wait below is measured from the same instant.
+         let (when, at) = (now(), std::time::Instant::now());
++        if previous_timestamp > 0.0 {
++            let lateness = (when - previous_timestamp - interval).max(0.0);
++            if lateness.is_finite() {
++                corefoundation::perf_trace_duration(
++                    "appkit.display_link_lateness",
++                    std::time::Duration::from_secs_f64(lateness),
++                );
++            }
++        }
+         let (shown, next) = refresh_around(when, interval, link.timestamp);
+         link.timestamp = shown;
+         link.target_timestamp = next;
+@@ -137,10 +151,12 @@ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
          objc::fail!("-[CADisplayLink]: the target does not respond to its selector");
      };
      // SAFETY: a display link action is `void (id, SEL, CADisplayLink *)`.
@@ -1797,7 +1826,7 @@ index f395984..3c43a56 100644
  }
  
  /// Put the link on the main loop at its current interval.
-@@ -113,15 +127,56 @@ fn schedule(object: Id) {
+@@ -149,15 +165,56 @@ fn schedule(object: Id) {
      if !link.timer.is_null() || link.invalidated != 0 {
          return;
      }
@@ -1859,7 +1888,7 @@ index f395984..3c43a56 100644
  /// Take the link off the loop; true if it was on one.
  fn unschedule(object: Id) -> bool {
      let link = link_of(object);
-@@ -134,7 +189,6 @@ fn unschedule(object: Id) -> bool {
+@@ -170,7 +227,6 @@ fn unschedule(object: Id) -> bool {
      link.timer = std::ptr::null();
      corefoundation::runloop::main().remove_timer(&timer, corefoundation::runloop::DEFAULT_MODE);
      timer.invalidate();
@@ -1868,10 +1897,10 @@ index f395984..3c43a56 100644
  }
  
 diff --git a/crates/appkit/src/event.rs b/crates/appkit/src/event.rs
-index 0b8441c..d58d064 100644
+index 23c0b47..714dde7 100644
 --- a/crates/appkit/src/event.rs
 +++ b/crates/appkit/src/event.rs
-@@ -1,14 +1,80 @@
+@@ -1,14 +1,91 @@
  use foundation::geometry::NSPoint;
  use objc::object::Id;
 +use std::collections::VecDeque;
@@ -1892,22 +1921,23 @@ index 0b8441c..d58d064 100644
 +    }
 +}
 +
-+fn map_host_control_editing_shortcut(key_code: u16, modifiers: u64, enabled: bool) -> u64 {
-+    use crate::keymap::{flags, vk};
++fn camera_motion_delta(dx: f32, dy: f32, warped: (f64, f64), scale: f32) -> (f32, f32) {
++    (
++        (f64::from(dx) + warped.0) as f32 * scale,
++        (f64::from(dy) + warped.1) as f32 * scale,
++    )
++}
 +
-+    const EDITING_KEYS: [u16; 6] = [
-+        vk::ANSI_C,
-+        vk::ANSI_X,
-+        vk::ANSI_V,
-+        vk::ANSI_A,
-+        vk::ANSI_Z,
-+        vk::ANSI_Y,
-+    ];
++fn map_host_control_shortcut(scancode: u32, modifiers: u64, enabled: bool) -> u64 {
++    use crate::keymap::flags;
++
 +    let control_only = modifiers & flags::CONTROL != 0 && modifiers & flags::COMMAND == 0;
 +    if !enabled
++        || crate::keymap::is_modifier(scancode)
 +        || !control_only
-+        || modifiers & flags::OPTION != 0
-+        || !EDITING_KEYS.contains(&key_code)
++        // Right Alt is the Linux AltGr key on many layouts. Keep its chord
++        // intact so it can still produce characters such as `@` and `€`.
++        || modifiers & flags::DEVICE_RALT != 0
 +    {
 +        return modifiers;
 +    }
@@ -1925,6 +1955,15 @@ index 0b8441c..d58d064 100644
 +    mapped
 +}
 +
++fn should_offer_command_shortcut_alias(modifiers: u64, enabled: bool) -> bool {
++    use crate::keymap::flags;
++
++    enabled
++        && modifiers & flags::CONTROL != 0
++        && modifiers & flags::COMMAND == 0
++        && modifiers & flags::DEVICE_RALT == 0
++}
++
 +fn key_event_characters<'a>(
 +    text: &'a str,
 +    down: bool,
@@ -1936,7 +1975,8 @@ index 0b8441c..d58d064 100644
 +        && text.chars().all(|character| {
 +            !character.is_control() && !('\u{f700}'..='\u{f8ff}').contains(&character)
 +        });
-+    let shortcut = modifiers & (sdl3::keycodes::keymod::CTRL | sdl3::keycodes::keymod::GUI) != 0;
++    let shortcut = modifiers & (sdl3::keycodes::keymod::CTRL | sdl3::keycodes::keymod::GUI) != 0
++        && modifiers & sdl3::keycodes::keymod::RALT == 0;
 +    match down && input_client && !crate::keymap::is_modifier(scancode) && !shortcut && printable {
 +        true => "",
 +        false => text,
@@ -1952,7 +1992,7 @@ index 0b8441c..d58d064 100644
      let _ = app;
      // Before anything else: a thread waiting for a GL context this one holds is
      // a thread that is not drawing, and reaching here is what says this one has
-@@ -17,19 +83,28 @@ pub fn pump(app: Id) {
+@@ -17,19 +94,28 @@ pub fn pump(app: Id) {
      gamecontroller::pump();
      debug_resize();
      debug_key();
@@ -1981,7 +2021,7 @@ index 0b8441c..d58d064 100644
  }
  
  static PUMP_HOOKS: std::sync::Mutex<Vec<fn()>> = std::sync::Mutex::new(Vec::new());
-@@ -205,10 +280,16 @@ fn trace_views() {
+@@ -205,10 +291,16 @@ fn trace_views() {
      for object in window::all() {
          // SAFETY: a window this crate made.
          let sdl = unsafe { window::sdl_window(object) };
@@ -2001,7 +2041,7 @@ index 0b8441c..d58d064 100644
          ));
          // SAFETY: null or a view this runtime allocated.
          unsafe { crate::view::describe(window::content_view_of(object), 1, &mut out) };
-@@ -251,6 +332,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -251,6 +343,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
          // title bar's close button is on a Mac: `-performClose:`, so the
          // delegate may refuse and `-close` does the rest.
          Event::WindowClosed { window } => {
@@ -2010,7 +2050,7 @@ index 0b8441c..d58d064 100644
              if crate::decor::window_closed(window) {
                  return;
              }
-@@ -341,6 +424,10 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -341,6 +435,10 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              }
          }
          Event::WindowFocus { window, gained } => {
@@ -2021,7 +2061,7 @@ index 0b8441c..d58d064 100644
              crate::decor::focus_changed(window, gained);
              let object = object_for(window);
              if !object.is_null() && gained {
-@@ -366,37 +453,66 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -366,38 +464,67 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              down,
              repeat,
          } => {
@@ -2039,7 +2079,6 @@ index 0b8441c..d58d064 100644
                  scancode,
                  crate::keymap::typed_key(scancode, key, modifiers),
              );
--            let modifiers = crate::keymap::modifiers(modifiers);
 +            let responder = responder_of(object_for(id));
 +            let key_characters = key_event_characters(
 +                &text,
@@ -2048,16 +2087,18 @@ index 0b8441c..d58d064 100644
 +                scancode,
 +                modifiers,
 +            );
-             let code = crate::keymap::virtual_key(scancode);
-+            let modifiers = crate::keymap::modifiers(modifiers);
-+            let mapped_modifiers = map_host_control_editing_shortcut(
-+                code,
++            let code = crate::keymap::virtual_key(scancode);
+             let modifiers =
+                 crate::keymap::modifiers(modifiers) | crate::keymap::key_flags(scancode);
+-            let code = crate::keymap::virtual_key(scancode);
++            let mapped_modifiers = map_host_control_shortcut(
++                scancode,
 +                modifiers,
 +                crate::decor::config().control_shortcuts,
 +            );
 +            if mapped_modifiers != modifiers {
 +                input_trace(&format!(
-+                    "stage=editing_shortcut_modifier_map key_code={code} from={modifiers:#x} to={mapped_modifiers:#x}"
++                    "stage=host_shortcut_modifier_map key_code={code} from={modifiers:#x} to={mapped_modifiers:#x}"
 +                ));
 +            }
 +            let modifiers = mapped_modifiers;
@@ -2096,7 +2137,7 @@ index 0b8441c..d58d064 100644
                  return;
              }
              // A modifier is `-flagsChanged:`, not a key down: AppKit has no
-@@ -405,9 +521,9 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -406,9 +533,9 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              match crate::keymap::is_modifier(scancode) {
                  true => send(id, None, |w, _| Fields {
                      kind: kind::FLAGS_CHANGED,
@@ -2108,7 +2149,7 @@ index 0b8441c..d58d064 100644
              }
          }
          // A key event describes a physical key. Text input is the separate,
-@@ -441,11 +557,54 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -442,13 +569,59 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              buttons,
          } => {
              crate::cursor::mouse_moved();
@@ -2131,9 +2172,14 @@ index 0b8441c..d58d064 100644
 +            if warp_echo {
                  return;
              }
+-            // The first real motion after a warp is the one that reports it.
++            // The first real motion after a warp includes the guest's warp
++            // displacement; preserve Rosemary's correction before applying
++            // Citric's camera sensitivity scale.
+             let warped = take_warp_delta();
 -            crate::cgevent::note_mouse_delta(dx, dy);
 +            let delta_scale = mouse_look_delta_scale(buttons, associated);
-+            let (camera_dx, camera_dy) = (dx * delta_scale, dy * delta_scale);
++            let (camera_dx, camera_dy) = camera_motion_delta(dx, dy, warped, delta_scale);
 +            if buttons != 0 || !associated {
 +                let previous = pointer_position();
 +                let relative = crate::window::sdl_windows()
@@ -2150,6 +2196,7 @@ index 0b8441c..d58d064 100644
 +                ));
 +            }
 +            crate::cgevent::note_mouse_delta(camera_dx, camera_dy);
++            crate::cgevent::note_mouse_delta(camera_dx, camera_dy);
              crate::screen::hold_at_edge(id, x, y, dx, dy);
 +            // Update the coordinate frame before a window drag reads the global
 +            // pointer: on Wayland SDL reports the pointer relative to this event's
@@ -2165,7 +2212,7 @@ index 0b8441c..d58d064 100644
              // SDL's position keeps integrating the deltas of a disassociated
              // pointer, so it wanders over the chrome while the cursor the
              // program sees sits still. The chrome is for a pointer that moves.
-@@ -454,21 +613,21 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -457,21 +630,21 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
                  false => false,
              };
              crate::cursor::set_over_chrome(on_chrome);
@@ -2192,18 +2239,18 @@ index 0b8441c..d58d064 100644
              // Before the drop below: a cursor rectangle applies whether or not
              // anything asked for `-mouseMoved:`, and AppKit re-decides the
              // pointer on every move rather than only when a rectangle changes.
-@@ -479,8 +638,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -482,8 +655,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
                  modifiers: current_modifiers(),
                  location,
                  delta: NSPoint {
--                    x: dx as f64,
--                    y: dy as f64,
+-                    x: dx as f64 + warped.0,
+-                    y: dy as f64 + warped.1,
 +                    x: camera_dx as f64,
 +                    y: camera_dy as f64,
                  },
                  button: held.map_or(0, crate::button::number),
                  window,
-@@ -488,32 +647,12 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -491,32 +664,12 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
                  ..Fields::default()
              };
              if held.is_none() {
@@ -2241,7 +2288,7 @@ index 0b8441c..d58d064 100644
          }
          Event::MouseButton {
              window: id,
-@@ -523,20 +662,36 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -526,20 +679,36 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              x,
              y,
          } => {
@@ -2283,16 +2330,18 @@ index 0b8441c..d58d064 100644
 -                crate::window::end_drag();
 -            }
              let (x, y) = track_pointer(id, x, y);
-             send(id, Some((x, y)), |window, location| Fields {
-                 kind,
-@@ -636,7 +791,28 @@ fn key_equivalent(window: Id, fields: Fields, text: &str) -> bool {
+             let modifiers = match button == sdl3::mouse::LEFT && plain_control_click() {
+                 true => without_control(current_modifiers()),
+@@ -658,11 +827,31 @@ fn key_equivalent(window: Id, fields: Fields, text: &str) -> bool {
      };
      let menu = crate::menu::main_menu();
      let event = nsevent::make(fields.clone());
 -    if offer(window, event) || offer(menu, event) {
 +    if offer(window, event) {
-+        return true;
-+    }
+         return true;
+     }
+-    let control_only = modifiers & flags::CONTROL != 0 && modifiers & flags::COMMAND == 0;
+-    if !(control_only && !crate::decor::config().control_shortcuts) {
 +    let mut responder = responder_of(window);
 +    for _ in 0..64 {
 +        if responder.is_null() {
@@ -2312,10 +2361,13 @@ index 0b8441c..d58d064 100644
 +            "stage=key_equivalent_offer receiver={menu:p} handled=true key_code={} modifiers={:#x}",
 +            fields.key_code, fields.modifiers
 +        ));
-         return true;
++        return true;
++    }
++    if !should_offer_command_shortcut_alias(modifiers, crate::decor::config().control_shortcuts) {
+         return false;
      }
-     let control_only = modifiers & flags::CONTROL != 0 && modifiers & flags::COMMAND == 0;
-@@ -655,7 +831,7 @@ fn key_equivalent(window: Id, fields: Fields, text: &str) -> bool {
+     let aliased = nsevent::make(Fields {
+@@ -677,7 +866,7 @@ fn key_equivalent(window: Id, fields: Fields, text: &str) -> bool {
  ///
  /// The base coordinate system is the whole frame, so a titlebar this runtime
  /// draws is above the content view's top.
@@ -2324,7 +2376,7 @@ index 0b8441c..d58d064 100644
      let content = window::content_view_of(window);
      let height = match content.is_null() {
          true => 0.0,
-@@ -669,7 +845,7 @@ fn location(window: Id, x: f32, y: f32) -> NSPoint {
+@@ -691,7 +880,7 @@ fn location(window: Id, x: f32, y: f32) -> NSPoint {
          },
      };
      let height = height + window::content_inset(window);
@@ -2333,7 +2385,7 @@ index 0b8441c..d58d064 100644
  }
  
  /// Hand one input event to its window, as `-[NSApplication sendEvent:]` does.
-@@ -678,10 +854,37 @@ fn send(id: u32, at: Option<(f32, f32)>, fields: impl FnOnce(Id, NSPoint) -> Fie
+@@ -700,10 +889,37 @@ fn send(id: u32, at: Option<(f32, f32)>, fields: impl FnOnce(Id, NSPoint) -> Fie
      if window.is_null() {
          return;
      }
@@ -2372,7 +2424,7 @@ index 0b8441c..d58d064 100644
  /// Hand a built event to its window's `-sendEvent:`, after the local monitors.
  pub(crate) fn dispatch(window: Id, event: Id) {
      // Before the window sees it, which is where AppKit runs a local monitor: a
-@@ -699,7 +902,25 @@ pub(crate) fn dispatch(window: Id, event: Id) {
+@@ -721,7 +937,25 @@ pub(crate) fn dispatch(window: Id, event: Id) {
      unsafe {
          let f: unsafe extern "C" fn(Id, objc::sel::Sel, Id) =
              std::mem::transmute(objc::msg::entry());
@@ -2399,7 +2451,7 @@ index 0b8441c..d58d064 100644
      }
  }
  
-@@ -716,6 +937,94 @@ pub(crate) fn dispatch(window: Id, event: Id) {
+@@ -738,6 +972,94 @@ pub(crate) fn dispatch(window: Id, event: Id) {
  /// log file once it is running - takes every later trace line with it, and
  /// input arrives long after that.
  pub const LOG_ENV: &str = "ROSEMARY_EVENT_LOG";
@@ -2494,7 +2546,7 @@ index 0b8441c..d58d064 100644
  
  fn log_path() -> Option<&'static std::path::Path> {
      static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-@@ -737,10 +1046,69 @@ pub fn debug_log(line: &str) {
+@@ -759,10 +1081,69 @@ pub fn debug_log(line: &str) {
      }
  }
  
@@ -2565,7 +2617,7 @@ index 0b8441c..d58d064 100644
          return;
      }
      let at = nsevent::location_of(event);
-@@ -763,6 +1131,45 @@ fn log_route(window: Id, event: Id, kind: u64) {
+@@ -785,6 +1166,45 @@ fn log_route(window: Id, event: Id, kind: u64) {
          local.x,
          local.y,
      ));
@@ -2611,7 +2663,7 @@ index 0b8441c..d58d064 100644
  }
  
  pub fn route(window: Id, event: Id) {
-@@ -790,12 +1197,37 @@ pub fn route(window: Id, event: Id) {
+@@ -812,12 +1232,37 @@ pub fn route(window: Id, event: Id) {
              );
          }
          if let Some(method) = method {
@@ -2649,7 +2701,7 @@ index 0b8441c..d58d064 100644
          }
          return;
      }
-@@ -807,11 +1239,43 @@ pub fn route(window: Id, event: Id) {
+@@ -829,11 +1274,43 @@ pub fn route(window: Id, event: Id) {
          false => responder_of(window),
      };
      let Some((responder, method)) = chain(start, sel) else {
@@ -2693,7 +2745,7 @@ index 0b8441c..d58d064 100644
      if tracing() {
          // SAFETY: a live object this runtime allocated.
          let class = unsafe { objc::object::class_of(responder) };
-@@ -820,12 +1284,32 @@ pub fn route(window: Id, event: Id) {
+@@ -842,12 +1319,32 @@ pub fn route(window: Id, event: Id) {
              class.map_or("no class", |c| c.name_str()),
          );
      }
@@ -2726,7 +2778,7 @@ index 0b8441c..d58d064 100644
  }
  
  /// The responder method an event type is delivered through.
-@@ -910,23 +1394,131 @@ pub(crate) fn warp_pointer(x: f32, y: f32) {
+@@ -932,23 +1429,131 @@ pub(crate) fn warp_pointer(x: f32, y: f32) {
  /// synchronously, X11 reports the server's MotionNotify), with a delta of
  /// `target - previous`. A game that recentres the cursor after every
  /// `-mouseMoved:` would read that delta as the player undoing their own motion.
@@ -2793,8 +2845,13 @@ index 0b8441c..d58d064 100644
 +    let now = Instant::now();
 +    let mut echoes = WARP_ECHOES.lock().unwrap_or_else(|e| e.into_inner());
 +    take_warp_echo_from_queue(&mut echoes, x, y, dx, dy, now)
-+}
-+
+ }
+ 
+-fn take_warp_echo(x: f32, y: f32) -> bool {
+-    let mut echo = WARP_ECHO.lock().unwrap_or_else(|e| e.into_inner());
+-    let hit = echo.is_some_and(|target| lands_on(target, (x, y)));
+-    if hit {
+-        *echo = None;
 +fn enqueue_warp_echo(
 +    echoes: &mut VecDeque<WarpEcho>,
 +    from: (f32, f32),
@@ -2810,13 +2867,8 @@ index 0b8441c..d58d064 100644
 +    while echoes.len() > MAX_PENDING_WARP_ECHOES {
 +        echoes.pop_front();
 +    }
- }
- 
--fn take_warp_echo(x: f32, y: f32) -> bool {
--    let mut echo = WARP_ECHO.lock().unwrap_or_else(|e| e.into_inner());
--    let hit = echo.is_some_and(|target| lands_on(target, (x, y)));
--    if hit {
--        *echo = None;
++}
++
 +fn take_warp_echo_from_queue(
 +    echoes: &mut VecDeque<WarpEcho>,
 +    x: f32,
@@ -2865,8 +2917,8 @@ index 0b8441c..d58d064 100644
 +    });
  }
  
- /// Within half a pixel: SDL converts between desktop and window coordinates.
-@@ -950,25 +1542,35 @@ pub(crate) fn pointer_position() -> (f32, f32) {
+ /// How far guest warps have moved the cursor since the last motion event.
+@@ -994,11 +1599,12 @@ pub(crate) fn pointer_position() -> (f32, f32) {
  /// cursor never was - which is a hit test, and so a first responder, against the
  /// wrong view.
  fn track_pointer(window: u32, x: f32, y: f32) -> (f32, f32) {
@@ -2881,6 +2933,8 @@ index 0b8441c..d58d064 100644
 +    *pointer = (x, y);
      *pointer
  }
+ 
+@@ -1026,15 +1632,24 @@ pub(crate) fn settle_pointer() {
  
  /// Where the guest is to be told the pointer is on the desktop, for the calls
  /// that ask the window system rather than reading an event.
@@ -2910,7 +2964,7 @@ index 0b8441c..d58d064 100644
  }
  
  /// The SDL id of the window the last pointer event came from; `0` before any.
-@@ -1131,6 +1733,77 @@ fn delegate_selector(name: &str) -> &'static str {
+@@ -1197,6 +1812,77 @@ fn delegate_selector(name: &str) -> &'static str {
  mod tests {
      use super::*;
  
@@ -2988,7 +3042,7 @@ index 0b8441c..d58d064 100644
      #[test]
      fn a_programmatic_warp_updates_the_reported_pointer() {
          let previous = pointer_position();
-@@ -1143,12 +1816,139 @@ mod tests {
+@@ -1209,12 +1895,195 @@ mod tests {
  
      #[test]
      fn a_warp_echo_is_taken_once() {
@@ -3069,6 +3123,17 @@ index 0b8441c..d58d064 100644
 +    }
 +
 +    #[test]
++    fn warp_correction_precedes_camera_sensitivity_scaling() {
++        let scaled = camera_motion_delta(10.0, -4.0, (6.0, 8.0), 0.003);
++        assert!((scaled.0 - 0.048).abs() < f32::EPSILON);
++        assert!((scaled.1 - 0.012).abs() < f32::EPSILON);
++        assert_eq!(
++            camera_motion_delta(10.0, -4.0, (6.0, 8.0), 1.0),
++            (16.0, 4.0)
++        );
++    }
++
++    #[test]
 +    fn text_clients_receive_printable_text_only_from_the_text_input_event() {
 +        use sdl3::keycodes::{keymod, scancode};
 +
@@ -3085,139 +3150,100 @@ index 0b8441c..d58d064 100644
 +            key_event_characters("a", true, true, scancode::A, keymod::CTRL),
 +            "a"
 +        );
++        assert_eq!(
++            key_event_characters("@", true, true, scancode::Q, keymod::CTRL | keymod::RALT),
++            ""
++        );
 +        assert_eq!(key_event_characters("a", true, false, scancode::A, 0), "a");
 +        assert_eq!(key_event_characters("a", false, true, scancode::A, 0), "a");
 +    }
 +
 +    #[test]
-+    fn host_control_editing_shortcuts_map_to_command_for_mac_controls() {
-+        use crate::keymap::{flags, vk};
++    fn linux_control_shortcuts_map_to_command_for_all_key_chords() {
++        use crate::keymap::flags;
++        use sdl3::keycodes::scancode;
 +
 +        let left_control = flags::CONTROL | flags::DEVICE_LCTL | flags::SHIFT;
-+        for key_code in [
-+            vk::ANSI_C,
-+            vk::ANSI_X,
-+            vk::ANSI_V,
-+            vk::ANSI_A,
-+            vk::ANSI_Z,
-+            vk::ANSI_Y,
++        for key in [
++            scancode::C,
++            scancode::X,
++            scancode::V,
++            scancode::A,
++            scancode::Z,
++            scancode::Y,
++            scancode::S,
++            scancode::O,
++            scancode::N,
++            scancode::F,
++            scancode::G,
++            scancode::LEFT,
++            scancode::RIGHT,
++            scancode::F5,
 +        ] {
 +            assert_eq!(
-+                map_host_control_editing_shortcut(key_code, left_control, true),
++                map_host_control_shortcut(key, left_control, true),
 +                flags::COMMAND | flags::DEVICE_LCMD | flags::SHIFT
 +            );
 +        }
 +        assert_eq!(
-+            map_host_control_editing_shortcut(
-+                vk::ANSI_C,
-+                flags::CONTROL | flags::DEVICE_LCTL | flags::OPTION,
-+                true,
-+            ),
-+            flags::CONTROL | flags::DEVICE_LCTL | flags::OPTION
++            map_host_control_shortcut(scancode::S, flags::CONTROL | flags::DEVICE_RCTL, true,),
++            flags::COMMAND | flags::DEVICE_RCMD
 +        );
 +        assert_eq!(
-+            map_host_control_editing_shortcut(
-+                vk::ANSI_C,
-+                flags::CONTROL | flags::DEVICE_LCTL,
-+                false,
++            map_host_control_shortcut(
++                scancode::S,
++                flags::CONTROL
++                    | flags::DEVICE_LCTL
++                    | flags::SHIFT
++                    | flags::OPTION
++                    | flags::DEVICE_LALT,
++                true,
 +            ),
++            flags::COMMAND | flags::DEVICE_LCMD | flags::SHIFT | flags::OPTION | flags::DEVICE_LALT
++        );
++        let altgr = flags::CONTROL | flags::DEVICE_LCTL | flags::OPTION | flags::DEVICE_RALT;
++        assert_eq!(map_host_control_shortcut(scancode::Q, altgr, true), altgr);
++        assert_eq!(
++            map_host_control_shortcut(scancode::S, flags::CONTROL | flags::DEVICE_LCTL, false,),
 +            flags::CONTROL | flags::DEVICE_LCTL
 +        );
 +        assert_eq!(
-+            map_host_control_editing_shortcut(
-+                vk::ANSI_B,
-+                flags::CONTROL | flags::DEVICE_LCTL,
++            map_host_control_shortcut(
++                scancode::S,
++                flags::CONTROL | flags::DEVICE_LCTL | flags::COMMAND | flags::DEVICE_LCMD,
 +                true,
 +            ),
++            flags::CONTROL | flags::DEVICE_LCTL | flags::COMMAND | flags::DEVICE_LCMD
++        );
++        assert_eq!(
++            map_host_control_shortcut(scancode::LCTRL, flags::CONTROL | flags::DEVICE_LCTL, true,),
 +            flags::CONTROL | flags::DEVICE_LCTL
 +        );
-     }
- 
-     /// Every name this crate publishes has a delegate method, so a notification
-diff --git a/crates/appkit/src/font.rs b/crates/appkit/src/font.rs
-index 5457954..321ec93 100644
---- a/crates/appkit/src/font.rs
-+++ b/crates/appkit/src/font.rs
-@@ -102,6 +102,18 @@ unsafe extern "C" fn system_font_size(_class: Id, _sel: Sel) -> f64 {
-     13.0
- }
- 
-+unsafe extern "C" fn system_font_size_for_control_size(
-+    _class: Id,
-+    _sel: Sel,
-+    control_size: isize,
-+) -> f64 {
-+    match control_size {
-+        1 => 11.0,
-+        2 => 9.0,
-+        _ => 13.0,
 +    }
-+}
-+
- unsafe fn autorelease(font: *const std::ffi::c_void) -> Id {
-     if font.is_null() {
-         return std::ptr::null_mut();
-@@ -159,6 +171,7 @@ pub(crate) fn install() {
-         "monospacedSystemFontOfSize:weight:" => monospaced_system_font_of_size, c"@32@0:8d16d24";
-         "userFixedPitchFontOfSize:" => user_fixed_pitch_font_of_size, c"@24@0:8d16";
-         "systemFontSize" => system_font_size, c"d16@0:8";
-+        "systemFontSizeForControlSize:" => system_font_size_for_control_size, c"d24@0:8q16";
-     });
- 
-     let class = objc::class::lookup(c"NSFontManager").expect("declared before its methods");
-@@ -207,4 +220,28 @@ mod tests {
-             corefoundation::api::CFRelease(face.cast());
-         }
-     }
 +
 +    #[test]
-+    fn system_font_size_matches_control_size() {
-+        crate::bootstrap();
-+        let selector = objc::sel::get("systemFontSizeForControlSize:");
-+        let class = objc::class::lookup(c"NSFont").unwrap();
-+        assert!(class.metaclass().method(selector).is_some());
-+        assert_eq!(
-+            unsafe { system_font_size_for_control_size(std::ptr::null_mut(), selector, 0) },
-+            13.0
-+        );
-+        assert_eq!(
-+            unsafe { system_font_size_for_control_size(std::ptr::null_mut(), selector, 1) },
-+            11.0
-+        );
-+        assert_eq!(
-+            unsafe { system_font_size_for_control_size(std::ptr::null_mut(), selector, 2) },
-+            9.0
-+        );
-+        assert_eq!(
-+            unsafe { system_font_size_for_control_size(std::ptr::null_mut(), selector, 99) },
-+            13.0
-+        );
-+    }
- }
-diff --git a/crates/appkit/src/keymap.rs b/crates/appkit/src/keymap.rs
-index bca585e..d2f4542 100644
---- a/crates/appkit/src/keymap.rs
-+++ b/crates/appkit/src/keymap.rs
-@@ -265,7 +265,6 @@ pub fn modifiers(sdl_modifiers: u16) -> u64 {
-         (keymod::ALT, flags::OPTION),
-         (keymod::GUI, flags::COMMAND),
-         (keymod::CAPS, flags::CAPS_LOCK),
--        (keymod::NUM, flags::NUMERIC_PAD),
-         (keymod::LCTRL, flags::DEVICE_LCTL),
-         (keymod::RCTRL, flags::DEVICE_RCTL),
-         (keymod::LSHIFT, flags::DEVICE_LSHIFT),
-@@ -424,6 +423,11 @@ mod tests {
-         assert_eq!(modifiers(keymod::NONE), 0);
++    fn command_shortcut_alias_respects_the_setting_and_altgr() {
++        use crate::keymap::flags;
++
++        assert!(should_offer_command_shortcut_alias(
++            flags::CONTROL | flags::DEVICE_LCTL,
++            true
++        ));
++        assert!(!should_offer_command_shortcut_alias(
++            flags::CONTROL | flags::DEVICE_LCTL,
++            false
++        ));
++        assert!(!should_offer_command_shortcut_alias(
++            flags::CONTROL | flags::COMMAND | flags::DEVICE_LCTL | flags::DEVICE_LCMD,
++            true
++        ));
++        assert!(!should_offer_command_shortcut_alias(
++            flags::CONTROL | flags::OPTION | flags::DEVICE_LCTL | flags::DEVICE_RALT,
++            true
++        ));
      }
  
-+    #[test]
-+    fn num_lock_is_not_the_numeric_keypad_modifier() {
-+        assert_eq!(modifiers(keymod::NUM), 0);
-+    }
-+
      #[test]
-     fn the_modifier_keys_are_the_modifiers() {
-         assert!(is_modifier(scancode::LSHIFT));
 diff --git a/crates/appkit/src/lib.rs b/crates/appkit/src/lib.rs
 index 24061e1..ba30cb1 100644
 --- a/crates/appkit/src/lib.rs
@@ -3292,10 +3318,10 @@ index cf2184c..644aec8 100644
              => enter_exit_event, c"@96@0:8Q16{CGPoint=dd}24Q40d48q56@64q72q80^v88";
          "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"
 diff --git a/crates/appkit/src/panel.rs b/crates/appkit/src/panel.rs
-index 597b4c1..585ae34 100644
+index 597b4c1..f713ca8 100644
 --- a/crates/appkit/src/panel.rs
 +++ b/crates/appkit/src/panel.rs
-@@ -1,89 +1,1083 @@
+@@ -1,89 +1,1337 @@
 +use std::collections::HashMap;
 +use std::path::{Path, PathBuf};
 +use std::sync::{Mutex, OnceLock};
@@ -3347,6 +3373,8 @@ index 597b4c1..585ae34 100644
 +    accessory_view: usize,
 +    accessory_view_disclosed: bool,
 +    treats_file_packages_as_directories: bool,
++    shows_hidden_files: bool,
++    can_select_hidden_extension: bool,
 +    selected: Vec<SelectedPath>,
 +}
 +
@@ -3360,7 +3388,13 @@ index 597b4c1..585ae34 100644
 +fn last_directory() -> &'static Mutex<Option<PathBuf>> {
 +    LAST_DIRECTORY.get_or_init(|| Mutex::new(None))
 +}
-+
+ 
+-/// `+openPanel` / `+savePanel`: an autoreleased panel of the receiving class.
+-///
+-/// The receiver is the class the message was sent to, so one function serves
+-/// both and an `NSOpenPanel` comes back for `+openPanel`.
+-unsafe extern "C" fn panel(class: Id, _sel: Sel) -> Id {
+-    // SAFETY: `class` is the class object the message was sent to.
 +fn state(receiver: Id) -> PanelState {
 +    panels()
 +        .lock()
@@ -3383,13 +3417,7 @@ index 597b4c1..585ae34 100644
 +unsafe extern "C" fn open_panel(class: Id, _sel: Sel) -> Id {
 +    create_panel(class, false)
 +}
- 
--/// `+openPanel` / `+savePanel`: an autoreleased panel of the receiving class.
--///
--/// The receiver is the class the message was sent to, so one function serves
--/// both and an `NSOpenPanel` comes back for `+openPanel`.
--unsafe extern "C" fn panel(class: Id, _sel: Sel) -> Id {
--    // SAFETY: `class` is the class object the message was sent to.
++
 +unsafe extern "C" fn save_panel(class: Id, _sel: Sel) -> Id {
 +    create_panel(class, true)
 +}
@@ -3587,19 +3615,31 @@ index 597b4c1..585ae34 100644
 +    is_directory && (panel.treats_file_packages_as_directories || !is_file_package(path))
 +}
 +
-+fn read_entries(directory: &Path, panel: &PanelState) -> Vec<chrome::file_picker::Entry> {
++fn hidden_file_visible(name: &str, shows_hidden_files: bool) -> bool {
++    shows_hidden_files || !name.starts_with('.') || name == "." || name == ".."
++}
++
++fn read_entries(
++    directory: &Path,
++    panel: &PanelState,
++    shows_hidden_files: bool,
++) -> Vec<chrome::file_picker::Entry> {
 +    let mut entries: Vec<(bool, String)> = std::fs::read_dir(directory)
 +        .into_iter()
 +        .flatten()
 +        .filter_map(Result::ok)
 +        .filter_map(|entry| {
++            let name = entry.file_name().to_string_lossy().into_owned();
++            if !hidden_file_visible(&name, shows_hidden_files) {
++                return None;
++            }
 +            let path = entry.path();
 +            let metadata = entry.metadata().ok()?;
 +            let directory = displayed_as_directory(&path, metadata.is_dir(), panel);
 +            if !directory && !allowed_file(&path, &panel.allowed_file_types) {
 +                return None;
 +            }
-+            Some((directory, entry.file_name().to_string_lossy().into_owned()))
++            Some((directory, name))
 +        })
 +        .collect();
 +    entries.sort_by(|left, right| {
@@ -3620,7 +3660,8 @@ index 597b4c1..585ae34 100644
 +    panel: &PanelState,
 +) {
 +    picker.location = directory.display().to_string();
-+    picker.entries = read_entries(directory, panel);
++    let shows_hidden_files = picker.shows_hidden_files;
++    picker.entries = read_entries(directory, panel, shows_hidden_files);
 +    picker.selected.clear();
 +    picker.scroll = 0;
 +}
@@ -3663,6 +3704,8 @@ index 597b4c1..585ae34 100644
 +    if target.is_dir() {
 +        *directory = target;
 +        refresh_picker(picker, directory, panel);
++        picker.search.clear();
++        picker.search_focused = false;
 +    }
 +}
 +
@@ -3699,7 +3742,32 @@ index 597b4c1..585ae34 100644
 +    });
 +}
 +
-+fn run_picker(panel: &PanelState) -> Option<Vec<PathBuf>> {
++struct PickerResult {
++    selected: Option<Vec<PathBuf>>,
++    shows_hidden_files: bool,
++}
++
++fn picker_shortcut(scancode: u32, modifiers: u16) -> Option<PickerShortcut> {
++    let shortcut_modifiers = sdl3::keycodes::keymod::CTRL | sdl3::keycodes::keymod::GUI;
++    if modifiers & shortcut_modifiers == 0 {
++        return None;
++    }
++    match scancode {
++        sdl3::keycodes::scancode::H => Some(PickerShortcut::ToggleHiddenFiles),
++        sdl3::keycodes::scancode::F => Some(PickerShortcut::FocusSearch),
++        sdl3::keycodes::scancode::R => Some(PickerShortcut::Refresh),
++        _ => None,
++    }
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum PickerShortcut {
++    ToggleHiddenFiles,
++    FocusSearch,
++    Refresh,
++}
++
++fn run_picker(panel: &PanelState) -> Option<PickerResult> {
 +    if chrome::Font::system(400).is_none() {
 +        eprintln!("rosemary: appkit: no system font is available for the file chooser");
 +        return None;
@@ -3724,7 +3792,7 @@ index 597b4c1..585ae34 100644
 -             so it is answered as cancelled"
 +            "rosemary: appkit: could not open file chooser: {}",
 +            sdl3::error()
-+        );
+         );
 +        if started_video {
 +            sdl3::video::quit_video();
 +        }
@@ -3754,6 +3822,9 @@ index 597b4c1..585ae34 100644
 +            .unwrap_or_else(|| if panel.save { "Save" } else { "Open" }.into()),
 +        pressed: None,
 +        filename_focused: panel.save,
++        search: String::new(),
++        search_focused: false,
++        shows_hidden_files: panel.shows_hidden_files,
 +    };
 +    refresh_picker(&mut picker, &directory, panel);
 +    let mut filename_focused = panel.save;
@@ -3786,7 +3857,7 @@ index 597b4c1..585ae34 100644
 +                sdl3::video::window_size(window).map_or(WINDOW_HEIGHT as f32, |size| size.1 as f32),
 +            ),
 +            &theme,
-         );
++        );
 +        match event {
 +            Event::MouseButton {
 +                window: event_window,
@@ -3803,10 +3874,17 @@ index 597b4c1..585ae34 100644
 +                    if hit == Some(Part::Filename) {
 +                        filename_focused = true;
 +                        picker.filename_focused = true;
++                        picker.search_focused = false;
++                        sdl3::video::start_text_input(window);
++                    } else if hit == Some(Part::Search) {
++                        filename_focused = false;
++                        picker.filename_focused = false;
++                        picker.search_focused = true;
 +                        sdl3::video::start_text_input(window);
 +                    } else if hit.is_some() {
 +                        filename_focused = false;
 +                        picker.filename_focused = false;
++                        picker.search_focused = false;
 +                        sdl3::video::stop_text_input(window);
 +                    }
 +                    paint_picker(window, &picker, &theme);
@@ -3875,7 +3953,18 @@ index 597b4c1..585ae34 100644
 +                    Some(Part::Filename) => {
 +                        filename_focused = true;
 +                        picker.filename_focused = true;
++                        picker.search_focused = false;
 +                        sdl3::video::start_text_input(window);
++                    }
++                    Some(Part::Search) => {
++                        filename_focused = false;
++                        picker.filename_focused = false;
++                        picker.search_focused = true;
++                        sdl3::video::start_text_input(window);
++                    }
++                    Some(Part::HiddenFiles) => {
++                        picker.shows_hidden_files = !picker.shows_hidden_files;
++                        refresh_picker(&mut picker, &directory, panel);
 +                    }
 +                    Some(Part::Cancel) => {
 +                        paint_picker(window, &picker, &theme);
@@ -3897,7 +3986,7 @@ index 597b4c1..585ae34 100644
 +                ..
 +            } if *event_window == id => {
 +                let visible = layout.rows.len();
-+                let maximum = picker.entries.len().saturating_sub(visible);
++                let maximum = picker.matching_indices().len().saturating_sub(visible);
 +                if *y > 0.0 {
 +                    picker.scroll = picker.scroll.saturating_sub(y.ceil() as usize);
 +                } else if *y < 0.0 {
@@ -3908,67 +3997,128 @@ index 597b4c1..585ae34 100644
 +            Event::Text {
 +                window: event_window,
 +                text,
-+            } if *event_window == id && filename_focused => {
-+                picker.filename.push_str(text);
++            } if *event_window == id && (filename_focused || picker.search_focused) => {
++                if picker.search_focused {
++                    picker.search.push_str(text);
++                    picker.selected.clear();
++                    picker.scroll = 0;
++                } else {
++                    picker.filename.push_str(text);
++                }
 +                paint_picker(window, &picker, &theme);
 +            }
 +            Event::Key {
 +                window: event_window,
 +                scancode: key,
++                modifiers,
 +                down: true,
 +                ..
-+            } if *event_window == id => match *key {
-+                scancode::ESCAPE => return Some(None),
-+                scancode::RETURN | scancode::KP_ENTER => {
-+                    if let Some(index) = picker.selected.first().copied()
-+                        && picker
-+                            .entries
-+                            .get(index)
-+                            .is_some_and(|entry| entry.directory)
-+                        && !panel.can_choose_directories
-+                    {
-+                        let target = directory.join(&picker.entries[index].name);
-+                        navigate_to(&mut directory, target, &mut picker, panel);
++            } if *event_window == id => {
++                match picker_shortcut(*key, *modifiers) {
++                    Some(PickerShortcut::ToggleHiddenFiles) => {
++                        picker.shows_hidden_files = !picker.shows_hidden_files;
++                        refresh_picker(&mut picker, &directory, panel);
 +                        paint_picker(window, &picker, &theme);
 +                        return None;
 +                    }
-+                    if let Some(paths) = selected_paths(&picker, panel, &directory) {
-+                        return Some(Some(paths));
-+                    }
-+                }
-+                scancode::BACKSPACE if filename_focused => {
-+                    picker.filename.pop();
-+                    paint_picker(window, &picker, &theme);
-+                }
-+                scancode::BACKSPACE => {
-+                    if let Some(parent) = directory.parent().map(Path::to_path_buf) {
-+                        navigate_to(&mut directory, parent, &mut picker, panel);
-+                    }
-+                    paint_picker(window, &picker, &theme);
-+                }
-+                scancode::UP | scancode::DOWN => {
-+                    if picker.entries.is_empty() {
++                    Some(PickerShortcut::FocusSearch) => {
++                        filename_focused = false;
++                        picker.filename_focused = false;
++                        picker.search_focused = true;
++                        sdl3::video::start_text_input(window);
++                        paint_picker(window, &picker, &theme);
 +                        return None;
 +                    }
-+                    let next = match (picker.selected.first().copied(), *key) {
-+                        (Some(current), scancode::UP) => current.saturating_sub(1),
-+                        (Some(current), _) => (current + 1).min(picker.entries.len() - 1),
-+                        (None, scancode::UP) => picker.entries.len() - 1,
-+                        (None, _) => 0,
-+                    };
-+                    picker.selected = vec![next];
-+                    if next < picker.scroll {
-+                        picker.scroll = next;
-+                    } else if next >= picker.scroll + layout.rows.len() {
-+                        picker.scroll = next + 1 - layout.rows.len().max(1);
++                    Some(PickerShortcut::Refresh) => {
++                        refresh_picker(&mut picker, &directory, panel);
++                        paint_picker(window, &picker, &theme);
++                        return None;
 +                    }
-+                    filename_focused = false;
-+                    picker.filename_focused = false;
-+                    sdl3::video::stop_text_input(window);
-+                    paint_picker(window, &picker, &theme);
++                    None => {}
 +                }
-+                _ => {}
-+            },
++                match *key {
++                    scancode::ESCAPE if picker.search_focused && !picker.search.is_empty() => {
++                        picker.search.clear();
++                        picker.selected.clear();
++                        picker.scroll = 0;
++                        paint_picker(window, &picker, &theme);
++                    }
++                    scancode::ESCAPE => return Some(None),
++                    scancode::RETURN | scancode::KP_ENTER => {
++                        if let Some(index) = picker.selected.first().copied()
++                            && picker
++                                .entries
++                                .get(index)
++                                .is_some_and(|entry| entry.directory)
++                            && !panel.can_choose_directories
++                        {
++                            let target = directory.join(&picker.entries[index].name);
++                            navigate_to(&mut directory, target, &mut picker, panel);
++                            paint_picker(window, &picker, &theme);
++                            return None;
++                        }
++                        if let Some(paths) = selected_paths(&picker, panel, &directory) {
++                            return Some(Some(paths));
++                        }
++                    }
++                    scancode::BACKSPACE if picker.search_focused => {
++                        picker.search.pop();
++                        picker.selected.clear();
++                        picker.scroll = 0;
++                        paint_picker(window, &picker, &theme);
++                    }
++                    scancode::BACKSPACE if filename_focused => {
++                        picker.filename.pop();
++                        paint_picker(window, &picker, &theme);
++                    }
++                    scancode::BACKSPACE => {
++                        if let Some(parent) = directory.parent().map(Path::to_path_buf) {
++                            navigate_to(&mut directory, parent, &mut picker, panel);
++                        }
++                        paint_picker(window, &picker, &theme);
++                    }
++                    scancode::UP
++                    | scancode::DOWN
++                    | scancode::HOME
++                    | scancode::END
++                    | scancode::PAGEUP
++                    | scancode::PAGEDOWN => {
++                        let matching = picker.matching_indices();
++                        if matching.is_empty() {
++                            return None;
++                        }
++                        let current = picker.selected.first().and_then(|selected| {
++                            matching.iter().position(|index| index == selected)
++                        });
++                        let page = layout.rows.len().max(1);
++                        let next_position = match *key {
++                            scancode::UP => current.unwrap_or(0).saturating_sub(1),
++                            scancode::DOWN => {
++                                current.map_or(0, |position| (position + 1).min(matching.len() - 1))
++                            }
++                            scancode::HOME => 0,
++                            scancode::END => matching.len() - 1,
++                            scancode::PAGEUP => current.unwrap_or(page).saturating_sub(page),
++                            scancode::PAGEDOWN => current
++                                .map_or(0, |position| (position + page).min(matching.len() - 1)),
++                            _ => unreachable!(),
++                        };
++                        let next = matching[next_position];
++                        picker.selected = vec![next];
++                        if next_position < picker.scroll {
++                            picker.scroll = next_position;
++                        } else if next_position >= picker.scroll + layout.rows.len() {
++                            picker.scroll = next_position + 1 - layout.rows.len().max(1);
++                        }
++                        filename_focused = false;
++                        picker.filename_focused = false;
++                        picker.search_focused = false;
++                        sdl3::video::stop_text_input(window);
++                        paint_picker(window, &picker, &theme);
++                    }
++                    _ => {}
++                }
++            }
 +            Event::WindowResized {
 +                window: event_window,
 +                ..
@@ -4014,14 +4164,25 @@ index 597b4c1..585ae34 100644
 +    if quit && !started_video {
 +        crate::event::deliver(sdl3::video::Event::Quit);
 +    }
-+    selected
++    Some(PickerResult {
++        selected,
++        shows_hidden_files: picker.shows_hidden_files,
++    })
 +}
 +
 +fn select(receiver: Id) -> i64 {
 +    let mut panel = state(receiver);
 +    panel.selected.clear();
-+    let Some(host_paths) = run_picker(&panel) else {
++    let Some(result) = run_picker(&panel) else {
 +        update(receiver, |state| state.selected.clear());
++        return CANCEL;
++    };
++    panel.shows_hidden_files = result.shows_hidden_files;
++    let Some(host_paths) = result.selected else {
++        update(receiver, |state| {
++            state.selected.clear();
++            state.shows_hidden_files = panel.shows_hidden_files;
++        });
 +        return CANCEL;
 +    };
 +    let mut selected = Vec::new();
@@ -4054,7 +4215,10 @@ index 597b4c1..585ae34 100644
 +        }
 +    }
 +    let response = if selected.is_empty() { CANCEL } else { ACCEPT };
-+    update(receiver, |state| state.selected = selected);
++    update(receiver, |state| {
++        state.selected = selected;
++        state.shows_hidden_files = panel.shows_hidden_files;
++    });
 +    response
 +}
 +
@@ -4104,8 +4268,10 @@ index 597b4c1..585ae34 100644
 +        objc::arc::release(value as Id);
 +    }
 +    unsafe { corefoundation::api::CFAutorelease(array) as Id }
-+}
-+
+ }
+ 
+-unsafe extern "C" fn nothing(_receiver: Id, _sel: Sel) -> Id {
+-    std::ptr::null_mut()
 +unsafe extern "C" fn urls(receiver: Id, _sel: Sel) -> Id {
 +    let urls: Vec<Id> = selected(receiver)
 +        .into_iter()
@@ -4122,10 +4288,8 @@ index 597b4c1..585ae34 100644
 +        .map(|selection| foundation::string::from_str(&selection.guest_path))
 +        .collect();
 +    autoreleased_array(&filenames)
- }
- 
--unsafe extern "C" fn nothing(_receiver: Id, _sel: Sel) -> Id {
--    std::ptr::null_mut()
++}
++
 +unsafe extern "C" fn url(receiver: Id, _sel: Sel) -> Id {
 +    selected(receiver)
 +        .first()
@@ -4184,6 +4348,24 @@ index 597b4c1..585ae34 100644
 -/// there is no panel for them to configure.
  unsafe extern "C" fn ignored_object(_receiver: Id, _sel: Sel, _value: Id) {}
  
++unsafe extern "C" fn set_shows_hidden_files(receiver: Id, _sel: Sel, value: u8) {
++    update(receiver, |state| state.shows_hidden_files = value != 0);
++}
++
++unsafe extern "C" fn shows_hidden_files(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(state(receiver).shows_hidden_files)
++}
++
++unsafe extern "C" fn set_can_select_hidden_extension(receiver: Id, _sel: Sel, value: u8) {
++    update(receiver, |state| {
++        state.can_select_hidden_extension = value != 0
++    });
++}
++
++unsafe extern "C" fn can_select_hidden_extension(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(state(receiver).can_select_hidden_extension)
++}
++
 +unsafe extern "C" fn set_treats_file_packages_as_directories(receiver: Id, _sel: Sel, value: u8) {
 +    update(receiver, |state| {
 +        state.treats_file_packages_as_directories = value != 0
@@ -4249,8 +4431,12 @@ index 597b4c1..585ae34 100644
 +            "allowsMultipleSelection" => allows_multiple, c"c16@0:8";
              "setCanCreateDirectories:" => ignored_flag, c"v20@0:8c16";
              "setResolvesAliases:" => ignored_flag, c"v20@0:8c16";
-             "setShowsHiddenFiles:" => ignored_flag, c"v20@0:8c16";
+-            "setShowsHiddenFiles:" => ignored_flag, c"v20@0:8c16";
 -            "setTreatsFilePackagesAsDirectories:" => ignored_flag, c"v20@0:8c16";
++            "showsHiddenFiles" => shows_hidden_files, c"c16@0:8";
++            "setShowsHiddenFiles:" => set_shows_hidden_files, c"v20@0:8c16";
++            "canSelectHiddenExtension" => can_select_hidden_extension, c"c16@0:8";
++            "setCanSelectHiddenExtension:" => set_can_select_hidden_extension, c"v20@0:8c16";
 +            "treatsFilePackagesAsDirectories" => treats_file_packages_as_directories, c"c16@0:8";
 +            "setTreatsFilePackagesAsDirectories:" => set_treats_file_packages_as_directories, c"v20@0:8c16";
 +            "dealloc" => dealloc, c"v16@0:8";
@@ -4265,6 +4451,7 @@ index 597b4c1..585ae34 100644
 +
 +    static CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
 +    static CALLBACK_RESPONSE: AtomicI64 = AtomicI64::new(0);
++    static HIDDEN_TEST_ID: AtomicUsize = AtomicUsize::new(0);
 +
 +    unsafe extern "C" fn record_response(_block: Id, response: isize) {
 +        CALLBACK_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -4354,6 +4541,100 @@ index 597b4c1..585ae34 100644
 +            assert_eq!(getter(panel, preference), 0);
 +            objc::arc::release(panel);
 +        }
++    }
++
++    #[test]
++    fn can_select_hidden_extension_preference_round_trips_on_save_panel() {
++        crate::bootstrap();
++        let panel = objc::object::create_instance(objc::class::lookup(c"NSSavePanel").unwrap(), 0);
++        let setter: unsafe extern "C" fn(Id, Sel, u8) =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let getter: unsafe extern "C" fn(Id, Sel) -> u8 =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let set_preference = objc::sel::get("setCanSelectHiddenExtension:");
++        let preference = objc::sel::get("canSelectHiddenExtension");
++
++        unsafe {
++            assert_eq!(getter(panel, preference), 0);
++            assert!(!state(panel).can_select_hidden_extension);
++            setter(panel, set_preference, 1);
++            assert_eq!(getter(panel, preference), 1);
++            assert!(state(panel).can_select_hidden_extension);
++            setter(panel, set_preference, 0);
++            assert_eq!(getter(panel, preference), 0);
++            objc::arc::release(panel);
++        }
++    }
++
++    #[test]
++    fn shows_hidden_files_preference_controls_dotfile_listing() {
++        crate::bootstrap();
++        let panel = objc::object::create_instance(objc::class::lookup(c"NSOpenPanel").unwrap(), 0);
++        let setter: unsafe extern "C" fn(Id, Sel, u8) =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let getter: unsafe extern "C" fn(Id, Sel) -> u8 =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let set_preference = objc::sel::get("setShowsHiddenFiles:");
++        let preference = objc::sel::get("showsHiddenFiles");
++
++        unsafe {
++            assert_eq!(getter(panel, preference), 0);
++            setter(panel, set_preference, 1);
++            assert_eq!(getter(panel, preference), 1);
++            setter(panel, set_preference, 0);
++            assert_eq!(getter(panel, preference), 0);
++            objc::arc::release(panel);
++        }
++
++        let root = std::env::temp_dir().join(format!(
++            "rosemary-file-picker-hidden-{}-{}",
++            std::process::id(),
++            HIDDEN_TEST_ID.fetch_add(1, Ordering::Relaxed)
++        ));
++        std::fs::create_dir(&root).unwrap();
++        std::fs::write(root.join("visible.txt"), []).unwrap();
++        std::fs::write(root.join(".secret"), []).unwrap();
++        std::fs::create_dir(root.join(".private-folder")).unwrap();
++        let state = PanelState::default();
++        let visible = read_entries(&root, &state, false);
++        assert_eq!(
++            visible
++                .iter()
++                .map(|entry| entry.name.as_str())
++                .collect::<Vec<_>>(),
++            ["visible.txt"]
++        );
++        let all = read_entries(&root, &state, true);
++        assert!(all.iter().any(|entry| entry.name == ".secret"));
++        assert!(
++            all.iter()
++                .any(|entry| entry.name == ".private-folder" && entry.directory)
++        );
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn file_picker_shortcuts_accept_control_or_command_and_require_a_modifier() {
++        use sdl3::keycodes::{keymod, scancode};
++
++        assert_eq!(
++            picker_shortcut(scancode::H, keymod::CTRL),
++            Some(PickerShortcut::ToggleHiddenFiles)
++        );
++        assert_eq!(
++            picker_shortcut(scancode::H, keymod::GUI),
++            Some(PickerShortcut::ToggleHiddenFiles)
++        );
++        assert_eq!(
++            picker_shortcut(scancode::F, keymod::CTRL),
++            Some(PickerShortcut::FocusSearch)
++        );
++        assert_eq!(
++            picker_shortcut(scancode::R, keymod::CTRL),
++            Some(PickerShortcut::Refresh)
++        );
++        assert_eq!(picker_shortcut(scancode::H, keymod::NONE), None);
++        assert_eq!(picker_shortcut(scancode::H, keymod::ALT), None);
 +    }
 +
 +    #[test]
@@ -6152,7 +6433,7 @@ index ab58227..49308aa 100644
      /// fades its subviews with it.
      #[test]
 diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
-index 9911d6f..b5d2b88 100644
+index ef4263b..0a9f207 100644
 --- a/crates/appkit/src/window.rs
 +++ b/crates/appkit/src/window.rs
 @@ -21,6 +21,8 @@ pub struct Window {
@@ -6215,7 +6496,7 @@ index 9911d6f..b5d2b88 100644
  }
  
  /// The reverse: a desktop position as the offset SDL wants for this window.
-@@ -414,6 +426,23 @@ pub fn all() -> Vec<Id> {
+@@ -418,6 +430,23 @@ pub fn all() -> Vec<Id> {
          .collect()
  }
  
@@ -6239,7 +6520,7 @@ index 9911d6f..b5d2b88 100644
  /// The SDL window behind an `NSWindow`, or null.
  ///
  /// # Safety
-@@ -1326,6 +1355,115 @@ unsafe extern "C" fn make_key_and_order_front(receiver: Id, _sel: Sel, _sender:
+@@ -1347,6 +1376,115 @@ unsafe extern "C" fn make_key_and_order_front(receiver: Id, _sel: Sel, _sender:
      order_front(receiver, true);
  }
  
@@ -6355,7 +6636,7 @@ index 9911d6f..b5d2b88 100644
  unsafe extern "C" fn order_front_regardless(receiver: Id, _sel: Sel) {
      order_front(receiver, false);
  }
-@@ -1418,6 +1556,8 @@ unsafe extern "C" fn order_out(receiver: Id, _sel: Sel, _sender: Id) {
+@@ -1439,6 +1577,8 @@ unsafe extern "C" fn order_out(receiver: Id, _sel: Sel, _sender: Id) {
  /// The SDL window is hidden rather than destroyed: a Metal swapchain may still
  /// be keyed by it, and that table is not this crate's to clear.
  unsafe extern "C" fn dealloc(receiver: Id, sel: Sel) {
@@ -6364,7 +6645,7 @@ index 9911d6f..b5d2b88 100644
      let window = window_of(receiver);
      objc::arc::release(std::mem::replace(
          &mut window.appearance,
-@@ -1447,17 +1587,46 @@ unsafe extern "C" fn dealloc(receiver: Id, sel: Sel) {
+@@ -1468,17 +1608,46 @@ unsafe extern "C" fn dealloc(receiver: Id, sel: Sel) {
  /// `-close`: the delegate hears `-windowWillClose:` while the window is still
  /// on screen, and the application then decides whether that was its last one.
  unsafe extern "C" fn close(receiver: Id, sel: Sel) {
@@ -6412,7 +6693,7 @@ index 9911d6f..b5d2b88 100644
      let should_close = objc::sel::get("windowShouldClose:");
      let target = [delegate_of(receiver), receiver]
          .into_iter()
-@@ -1467,22 +1636,29 @@ unsafe extern "C" fn perform_close(receiver: Id, _sel: Sel, _sender: Id) {
+@@ -1488,22 +1657,29 @@ unsafe extern "C" fn perform_close(receiver: Id, _sel: Sel, _sender: Id) {
                  .is_some_and(|class| class.method(should_close).is_some())
          });
      if let Some(target) = target {
@@ -6444,7 +6725,7 @@ index 9911d6f..b5d2b88 100644
  }
  
  /// The window a program's keystrokes go to, which is the last one ordered front.
-@@ -1570,7 +1746,7 @@ unsafe extern "C" fn perform_window_drag_with_event(receiver: Id, _sel: Sel, _ev
+@@ -1591,7 +1767,7 @@ unsafe extern "C" fn perform_window_drag_with_event(receiver: Id, _sel: Sel, _ev
          return;
      }
      let (Some((pointer_x, pointer_y, _)), Some((origin_x, origin_y))) = (
@@ -6453,7 +6734,7 @@ index 9911d6f..b5d2b88 100644
          sdl3::video::window_position(window.sdl),
      ) else {
          return;
-@@ -1619,7 +1795,7 @@ pub(crate) fn drag_moved() -> bool {
+@@ -1640,7 +1816,7 @@ pub(crate) fn drag_moved() -> bool {
      if sdl.is_null() {
          return false;
      }
@@ -6462,7 +6743,7 @@ index 9911d6f..b5d2b88 100644
          return false;
      };
      let at = |start: i32, from: f32, to: f32| start + (to - from).round() as i32;
-@@ -1654,6 +1830,21 @@ unsafe extern "C" fn set_becomes_key_only_if_needed(receiver: Id, _sel: Sel, val
+@@ -1675,6 +1851,21 @@ unsafe extern "C" fn set_becomes_key_only_if_needed(receiver: Id, _sel: Sel, val
      window_of(receiver).becomes_key_only_if_needed = value as usize;
  }
  
@@ -6484,7 +6765,7 @@ index 9911d6f..b5d2b88 100644
  unsafe extern "C" fn is_key_window(receiver: Id, _sel: Sel) -> u8 {
      (key_window() == receiver) as u8
  }
-@@ -1682,6 +1873,10 @@ unsafe extern "C" fn backing_scale_factor(receiver: Id, _sel: Sel) -> CGFloat {
+@@ -1703,6 +1894,10 @@ unsafe extern "C" fn backing_scale_factor(receiver: Id, _sel: Sel) -> CGFloat {
      }
  }
  
@@ -6495,7 +6776,7 @@ index 9911d6f..b5d2b88 100644
  fn scale_rect(rect: NSRect, scale: CGFloat) -> NSRect {
      NSRect {
          origin: NSPoint {
-@@ -2178,6 +2373,19 @@ unsafe extern "C" fn ignored_flag(_receiver: Id, _sel: Sel, _flag: u8) {}
+@@ -2199,6 +2394,19 @@ unsafe extern "C" fn ignored_flag(_receiver: Id, _sel: Sel, _flag: u8) {}
  
  unsafe extern "C" fn ignored_object(_receiver: Id, _sel: Sel, _object: Id) {}
  
@@ -6515,7 +6796,7 @@ index 9911d6f..b5d2b88 100644
  unsafe extern "C" fn set_titlebar_transparent(receiver: Id, _sel: Sel, flag: u8) {
      window_of(receiver).titlebar_transparent = usize::from(flag != 0);
  }
-@@ -2369,9 +2577,12 @@ pub(crate) fn install() {
+@@ -2390,9 +2598,12 @@ pub(crate) fn install() {
          "isKeyWindow" => is_key_window, c"c16@0:8";
          "isMainWindow" => is_key_window, c"c16@0:8";
          "isVisible" => is_visible, c"c16@0:8";
@@ -6531,7 +6812,7 @@ index 9911d6f..b5d2b88 100644
          "screen" => screen, c"@16@0:8";
          "backingScaleFactor" => backing_scale_factor, c"d16@0:8";
          "convertRectToBacking:" => convert_rect_to_backing,
-@@ -2386,9 +2597,10 @@ pub(crate) fn install() {
+@@ -2407,9 +2618,10 @@ pub(crate) fn install() {
          "setLevel:" => set_level, c"v24@0:8q16";
          "styleMask" => style_mask, c"Q16@0:8";
          "setStyleMask:" => set_style_mask, c"v24@0:8Q16";
@@ -6543,7 +6824,7 @@ index 9911d6f..b5d2b88 100644
          "setRestorable:" => ignored_flag, c"v20@0:8c16";
          // No state restoration, so nothing ever asks the class to restore.
          "setRestorationClass:" => ignored_integer, c"v24@0:8#16";
-@@ -2416,6 +2628,8 @@ pub(crate) fn install() {
+@@ -2437,6 +2649,8 @@ pub(crate) fn install() {
          // keeps SDL's window setup from failing on it.
          "registerForDraggedTypes:" => ignored_object, c"v24@0:8@16";
          "unregisterDraggedTypes" => ignored, c"v16@0:8";
@@ -6552,7 +6833,7 @@ index 9911d6f..b5d2b88 100644
          // The window is always presented in the host's colour space; SDL 1.2 sets sRGB.
          "setColorSpace:" => ignored_object, c"v24@0:8@16";
          // No shadow is drawn, so there is none to recompute.
-@@ -2492,6 +2706,53 @@ pub(crate) fn install() {
+@@ -2513,6 +2727,53 @@ pub(crate) fn install() {
  mod tests {
      use super::*;
  
@@ -6606,7 +6887,7 @@ index 9911d6f..b5d2b88 100644
      /// What a window is, is read off its style mask and its level together -
      /// and is read again at every ordering, because a toolkit reuses one window
      /// as a dialog and then as a tooltip.
-@@ -2637,6 +2898,34 @@ mod tests {
+@@ -2658,6 +2919,34 @@ mod tests {
          objc::arc::release(panel);
      }
  
@@ -6641,7 +6922,7 @@ index 9911d6f..b5d2b88 100644
      /// A view that outlives its window must not answer `-window` with it:
      /// Studio's dock panels are freed while Qt still holds their views.
      #[test]
-@@ -2718,6 +3007,7 @@ mod tests {
+@@ -2739,6 +3028,7 @@ mod tests {
              window_of(plain).style_mask = style::TITLED | style::CLOSABLE;
              send(plain, sel, delegate);
              assert_eq!(window_of(plain).shown, 0);
@@ -6649,7 +6930,7 @@ index 9911d6f..b5d2b88 100644
              window_of(plain).shown = 1;
              window_of(plain).delegate =
                  objc::object::create_instance(objc::class::lookup(c"NSObject").unwrap(), 0);
-@@ -2726,13 +3016,103 @@ mod tests {
+@@ -2747,13 +3037,103 @@ mod tests {
          }
      }
  
@@ -6753,7 +7034,7 @@ index 9911d6f..b5d2b88 100644
          }
          let class =
              objc::class::allocate_pair(objc::class::lookup(c"NSObject"), c"WillCloseDelegate", 0)
-@@ -2746,11 +3126,13 @@ mod tests {
+@@ -2767,11 +3147,13 @@ mod tests {
          let window = objc::object::create_instance(objc::class::lookup(c"NSWindow").unwrap(), 0);
          window_of(window).delegate = objc::object::create_instance(class, 0);
          window_of(window).shown = 1;
@@ -6847,10 +7128,10 @@ index 76459a3..bc88a1a 100644
          crate::bootstrap();
 diff --git a/crates/chrome/src/file_picker.rs b/crates/chrome/src/file_picker.rs
 new file mode 100644
-index 0000000..0cb9254
+index 0000000..3b87cf9
 --- /dev/null
 +++ b/crates/chrome/src/file_picker.rs
-@@ -0,0 +1,461 @@
+@@ -0,0 +1,749 @@
 +use crate::geometry::{Point, Rect};
 +use crate::paint::{Canvas, Color};
 +use crate::text::Font;
@@ -6874,6 +7155,8 @@ index 0000000..0cb9254
 +    Parent,
 +    Entry(usize),
 +    Filename,
++    Search,
++    HiddenFiles,
 +    Cancel,
 +    Accept,
 +}
@@ -6883,6 +7166,8 @@ index 0000000..0cb9254
 +    pub bounds: Rect,
 +    pub location: Rect,
 +    pub parent: Rect,
++    pub search: Rect,
++    pub hidden_files: Rect,
 +    pub list: Rect,
 +    pub rows: Vec<(usize, Rect)>,
 +    pub filename: Option<Rect>,
@@ -6903,6 +7188,21 @@ index 0000000..0cb9254
 +    pub accept_title: String,
 +    pub pressed: Option<Part>,
 +    pub filename_focused: bool,
++    pub search: String,
++    pub search_focused: bool,
++    pub shows_hidden_files: bool,
++}
++
++impl FilePicker {
++    pub fn matching_indices(&self) -> Vec<usize> {
++        let search = self.search.to_lowercase();
++        self.entries
++            .iter()
++            .enumerate()
++            .filter(|(_, entry)| search.is_empty() || entry.name.to_lowercase().contains(&search))
++            .map(|(index, _)| index)
++            .collect()
++    }
 +}
 +
 +impl View for FilePicker {
@@ -6919,12 +7219,26 @@ index 0000000..0cb9254
 +            (width - (parent.right() - bounds.x) - PADDING - 8.0).max(80.0),
 +            TOOLBAR_HEIGHT,
 +        );
++        let toolbar_y = parent.bottom() + 10.0;
++        let hidden_width = 122.0;
++        let search = Rect::new(
++            bounds.x + PADDING,
++            toolbar_y,
++            (width - PADDING * 2.0 - hidden_width - 8.0).max(96.0),
++            TOOLBAR_HEIGHT,
++        );
++        let hidden_files = Rect::new(
++            search.right() + 8.0,
++            toolbar_y,
++            hidden_width,
++            TOOLBAR_HEIGHT,
++        );
 +        let footer_height = if self.save { 96.0 } else { 58.0 };
 +        let list = Rect::new(
 +            bounds.x + PADDING,
-+            parent.bottom() + 10.0,
++            search.bottom() + 10.0,
 +            width - PADDING * 2.0,
-+            (height - footer_height - (parent.bottom() - bounds.y) - 24.0).max(96.0),
++            (height - footer_height - (search.bottom() - bounds.y) - 24.0).max(96.0),
 +        );
 +        let filename = self.save.then(|| {
 +            Rect::new(
@@ -6950,11 +7264,15 @@ index 0000000..0cb9254
 +            BUTTON_HEIGHT,
 +        );
 +        let row_count = (list.height / ROW_HEIGHT).floor().max(0.0) as usize;
-+        let rows = (self.scroll..self.entries.len().min(self.scroll + row_count))
++        let matching_entries = self.matching_indices();
++        let rows = matching_entries
++            .iter()
++            .skip(self.scroll)
++            .take(row_count)
 +            .enumerate()
 +            .map(|(visible, index)| {
 +                (
-+                    index,
++                    *index,
 +                    Rect::new(
 +                        list.x,
 +                        list.y + visible as f32 * ROW_HEIGHT,
@@ -6968,6 +7286,8 @@ index 0000000..0cb9254
 +            bounds: Rect::new(bounds.x, bounds.y, width, height),
 +            location,
 +            parent,
++            search,
++            hidden_files,
 +            list,
 +            rows,
 +            filename,
@@ -7026,6 +7346,71 @@ index 0000000..0cb9254
 +            layout.location,
 +            theme.panel_text,
 +        );
++        canvas.fill_rounded_rect(layout.search, 5.0, theme.panel_input_background);
++        canvas.stroke_rounded_rect(
++            layout.search,
++            5.0,
++            if self.search_focused { 2.0 } else { 1.0 } / canvas.scale(),
++            if self.search_focused {
++                theme.panel_selection
++            } else {
++                theme.panel_border
++            },
++        );
++        let search_text = if self.search.is_empty() {
++            "Search this folder (Ctrl+F)"
++        } else {
++            &self.search
++        };
++        let search_color = if self.search.is_empty() {
++            theme.panel_text_disabled
++        } else {
++            theme.panel_text
++        };
++        let search_text = font.truncate(
++            search_text,
++            theme.panel_text_size,
++            layout.search.width - 18.0,
++        );
++        draw_label(
++            canvas,
++            &font,
++            theme.panel_text_size,
++            &search_text,
++            Point::new(layout.search.x + 9.0, layout.search.y + 7.0),
++            search_color,
++        );
++        if self.search_focused {
++            let cursor_x = layout.search.x
++                + 9.0
++                + if self.search.is_empty() {
++                    0.0
++                } else {
++                    font.measure(&search_text, theme.panel_text_size)
++                };
++            canvas.fill_rect(
++                Rect::new(
++                    cursor_x.min(layout.search.right() - 4.0),
++                    layout.search.y + 7.0,
++                    1.0,
++                    18.0,
++                ),
++                theme.panel_text,
++            );
++        }
++        draw_button(
++            canvas,
++            &font,
++            layout.hidden_files,
++            if self.shows_hidden_files {
++                "Hidden: On"
++            } else {
++                "Hidden: Off"
++            },
++            self.pressed == Some(Part::HiddenFiles),
++            self.shows_hidden_files,
++            theme,
++        );
 +        canvas.fill_rounded_rect(layout.list, 5.0, theme.panel_input_background);
 +        canvas.stroke_rounded_rect(layout.list, 5.0, 1.0 / canvas.scale(), theme.panel_border);
 +        canvas.push_clip(layout.list.inset(1.0, 1.0));
@@ -7034,7 +7419,11 @@ index 0000000..0cb9254
 +                canvas,
 +                &font,
 +                theme.panel_text_size,
-+                "This folder is empty",
++                if self.entries.is_empty() {
++                    "This folder is empty"
++                } else {
++                    "No matching files"
++                },
 +                layout.list,
 +                theme.panel_text_disabled,
 +            );
@@ -7054,23 +7443,19 @@ index 0000000..0cb9254
 +            } else {
 +                theme.panel_text
 +            };
-+            let icon_color = if entry.directory {
-+                Color::rgb(0xE0, 0xAC, 0x31)
-+            } else {
-+                Color::rgb(0x7C, 0x9B, 0xC5)
-+            };
-+            canvas.fill_rounded_rect(
-+                Rect::new(row.x + 10.0, row.y + 8.0, 13.0, 12.0),
-+                2.0,
-+                icon_color,
++            draw_entry_icon(
++                canvas,
++                &font,
++                Rect::new(row.x + 9.0, row.y + 4.0, 20.0, 20.0),
++                EntryIcon::for_entry(entry),
 +            );
-+            let name = font.truncate(&entry.name, theme.panel_text_size, row.width - 40.0);
++            let name = font.truncate(&entry.name, theme.panel_text_size, row.width - 44.0);
 +            draw_label(
 +                canvas,
 +                &font,
 +                theme.panel_text_size,
 +                &name,
-+                Point::new(row.x + 32.0, row.y + 6.0),
++                Point::new(row.x + 36.0, row.y + 6.0),
 +                foreground,
 +            );
 +        }
@@ -7133,6 +7518,12 @@ index 0000000..0cb9254
 +        if let Some((index, _)) = layout.rows.iter().find(|(_, rect)| rect.contains(point)) {
 +            return Some(Part::Entry(*index));
 +        }
++        if layout.search.contains(point) {
++            return Some(Part::Search);
++        }
++        if layout.hidden_files.contains(point) {
++            return Some(Part::HiddenFiles);
++        }
 +        if layout.filename.is_some_and(|rect| rect.contains(point)) {
 +            return Some(Part::Filename);
 +        }
@@ -7143,6 +7534,101 @@ index 0000000..0cb9254
 +            return Some(Part::Accept);
 +        }
 +        None
++    }
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum EntryIcon {
++    Folder,
++    Package,
++    Image,
++    Video,
++    Audio,
++    Archive,
++    Code,
++    Text,
++    Document,
++    Generic,
++}
++
++impl EntryIcon {
++    fn for_entry(entry: &Entry) -> Self {
++        let extension = entry
++            .name
++            .rsplit_once('.')
++            .map(|(_, extension)| extension.to_ascii_lowercase())
++            .unwrap_or_default();
++        match extension.as_str() {
++            "app" | "appex" | "bundle" | "framework" | "plugin" | "pkg" | "xcodeproj"
++            | "xcworkspace" | "playground" | "key" | "numbers" | "pages" | "rtfd" => Self::Package,
++            _ if entry.directory => Self::Folder,
++            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg" | "tif" | "tiff" | "icns" => {
++                Self::Image
++            }
++            "mp4" | "mov" | "mkv" | "avi" | "webm" | "m4v" => Self::Video,
++            "mp3" | "wav" | "flac" | "aac" | "ogg" | "m4a" => Self::Audio,
++            "zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar" | "dmg" => Self::Archive,
++            "rs" | "c" | "cc" | "cpp" | "h" | "hpp" | "m" | "mm" | "swift" | "py" | "rb" | "sh"
++            | "bash" | "zsh" | "js" | "jsx" | "ts" | "tsx" | "json" | "xml" | "html" | "css"
++            | "toml" | "yaml" | "yml" => Self::Code,
++            "txt" | "md" | "log" | "csv" | "plist" | "ini" | "cfg" | "conf" => Self::Text,
++            "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "odt" | "rtf" => {
++                Self::Document
++            }
++            _ => Self::Generic,
++        }
++    }
++
++    fn color(self) -> Color {
++        match self {
++            Self::Folder => Color::rgb(0xE0, 0xAC, 0x31),
++            Self::Package => Color::rgb(0x9A, 0x78, 0xC5),
++            Self::Image => Color::rgb(0x48, 0x9A, 0x73),
++            Self::Video => Color::rgb(0x9B, 0x68, 0xC4),
++            Self::Audio => Color::rgb(0xC5, 0x78, 0x3B),
++            Self::Archive => Color::rgb(0xB0, 0x80, 0x43),
++            Self::Code => Color::rgb(0x4E, 0x82, 0xB9),
++            Self::Text => Color::rgb(0x68, 0x8A, 0xA2),
++            Self::Document => Color::rgb(0xC2, 0x62, 0x62),
++            Self::Generic => Color::rgb(0x7C, 0x9B, 0xC5),
++        }
++    }
++
++    fn badge(self) -> &'static str {
++        match self {
++            Self::Folder | Self::Package => "",
++            Self::Image => "IMG",
++            Self::Video => "VID",
++            Self::Audio => "AUD",
++            Self::Archive => "ZIP",
++            Self::Code => "<>",
++            Self::Text => "TXT",
++            Self::Document => "DOC",
++            Self::Generic => "FILE",
++        }
++    }
++}
++
++fn draw_entry_icon(canvas: &mut Canvas, font: &Font, rect: Rect, icon: EntryIcon) {
++    let color = icon.color();
++    canvas.fill_rounded_rect(rect, 4.0, color);
++    if icon == EntryIcon::Folder {
++        canvas.fill_rounded_rect(
++            Rect::new(rect.x + 2.0, rect.y + 3.0, rect.width * 0.48, 3.0),
++            1.0,
++            color,
++        );
++    } else if icon == EntryIcon::Package {
++        canvas.stroke_rounded_rect(rect.inset(3.0, 3.0), 2.0, 1.0, Color::rgb(255, 255, 255));
++    } else {
++        draw_centered(
++            canvas,
++            font,
++            6.0,
++            icon.badge(),
++            rect,
++            Color::rgb(255, 255, 255),
++        );
 +    }
 +}
 +
@@ -7208,6 +7694,89 @@ index 0000000..0cb9254
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[test]
++    fn search_matches_names_case_insensitively_and_keeps_entry_indices() {
++        let mut picker = FilePicker {
++            entries: vec![
++                Entry {
++                    name: "Folder".into(),
++                    directory: true,
++                },
++                Entry {
++                    name: "Place.RBXL".into(),
++                    directory: false,
++                },
++                Entry {
++                    name: "Image.PNG".into(),
++                    directory: false,
++                },
++            ],
++            ..FilePicker::default()
++        };
++        picker.search = "rbxl".into();
++        assert_eq!(picker.matching_indices(), vec![1]);
++        picker.search = "PNG".into();
++        assert_eq!(picker.matching_indices(), vec![2]);
++        picker.search.clear();
++        assert_eq!(picker.matching_indices(), vec![0, 1, 2]);
++    }
++
++    #[test]
++    fn filtered_rows_hit_the_underlying_entry_index() {
++        let picker = FilePicker {
++            entries: vec![
++                Entry {
++                    name: "Place.rbxl".into(),
++                    directory: false,
++                },
++                Entry {
++                    name: "Model.rbxm".into(),
++                    directory: false,
++                },
++            ],
++            search: "model".into(),
++            ..FilePicker::default()
++        };
++        let layout = picker.layout(Rect::new(0.0, 0.0, 720.0, 500.0), &Theme::light());
++        assert_eq!(layout.rows.len(), 1);
++        assert_eq!(
++            picker.hit(&layout, layout.rows[0].1.center()),
++            Some(Part::Entry(1))
++        );
++    }
++
++    #[test]
++    fn entry_icons_follow_common_file_categories() {
++        let entry = |name: &str, directory| Entry {
++            name: name.into(),
++            directory,
++        };
++        assert_eq!(
++            EntryIcon::for_entry(&entry("Assets", true)),
++            EntryIcon::Folder
++        );
++        assert_eq!(
++            EntryIcon::for_entry(&entry("Studio.app", true)),
++            EntryIcon::Package
++        );
++        assert_eq!(
++            EntryIcon::for_entry(&entry("icon.PNG", false)),
++            EntryIcon::Image
++        );
++        assert_eq!(
++            EntryIcon::for_entry(&entry("main.rs", false)),
++            EntryIcon::Code
++        );
++        assert_eq!(
++            EntryIcon::for_entry(&entry("archive.zip", false)),
++            EntryIcon::Archive
++        );
++        assert_eq!(
++            EntryIcon::for_entry(&entry("unknown.bin", false)),
++            EntryIcon::Generic
++        );
++    }
 +
 +    #[test]
 +    fn rows_and_footer_controls_do_not_overlap() {
@@ -7366,10 +7935,10 @@ index b34a9da..17c463b 100644
      }) as CFTypeRef
  }
 diff --git a/crates/corefoundation/src/lib.rs b/crates/corefoundation/src/lib.rs
-index da2f3cf..3559c70 100644
+index 4209069..b89464a 100644
 --- a/crates/corefoundation/src/lib.rs
 +++ b/crates/corefoundation/src/lib.rs
-@@ -30,6 +30,69 @@ pub mod url;
+@@ -32,6 +32,69 @@ pub mod url;
  pub mod urlresource;
  pub mod uuid;
  
@@ -7439,7 +8008,7 @@ index da2f3cf..3559c70 100644
  /// Install the classes this crate owns. Idempotent.
  pub fn bootstrap() {
      objc::bootstrap();
-@@ -1240,6 +1303,22 @@ mod collection_tests {
+@@ -1243,6 +1306,22 @@ mod collection_tests {
          }
      }
  
@@ -7689,7 +8258,7 @@ index a3703cf..92225fa 100644
      queues()
          .lock()
 diff --git a/crates/foundation/src/lib.rs b/crates/foundation/src/lib.rs
-index da53390..24ed8e7 100644
+index 0d3af57..d71feb9 100644
 --- a/crates/foundation/src/lib.rs
 +++ b/crates/foundation/src/lib.rs
 @@ -346,6 +346,13 @@ pub const STRING_GLOBALS: &[(&str, &str)] = &[
@@ -7736,24 +8305,6 @@ index da53390..24ed8e7 100644
      #[test]
      fn every_class_this_crate_claims_is_registered() {
          bootstrap();
-diff --git a/crates/metal_translate/src/spirv/half.rs b/crates/metal_translate/src/spirv/half.rs
-index 358b043..8c2ffa1 100644
---- a/crates/metal_translate/src/spirv/half.rs
-+++ b/crates/metal_translate/src/spirv/half.rs
-@@ -11,9 +11,10 @@ use crate::passes::Substitution;
- /// to change or it can't be changed.
- pub(super) fn widen(module: &Module) -> Option<Module> {
-     let any = module.globals.iter().any(|global| has_half(&global.ty))
--        || module.functions.iter().any(|function| {
--            has_half(&function.result) || function.values.iter().any(has_half)
--        });
-+        || module
-+            .functions
-+            .iter()
-+            .any(|function| has_half(&function.result) || function.values.iter().any(has_half));
-     if !any {
-         return None;
-     }
 diff --git a/crates/objc/src/arc.rs b/crates/objc/src/arc.rs
 index 15e1f10..082dcc6 100644
 --- a/crates/objc/src/arc.rs
@@ -8051,10 +8602,10 @@ index c83e0eb..b1c4480 100644
  ///
  /// A view rather than a borrow of [`Placed`] because the vector is behind a mutex that
 diff --git a/crates/rosemary/src/startup.rs b/crates/rosemary/src/startup.rs
-index 3ce0ab8..4f4f7a8 100644
+index a3664d3..3ee6d75 100644
 --- a/crates/rosemary/src/startup.rs
 +++ b/crates/rosemary/src/startup.rs
-@@ -26,6 +26,9 @@ pub fn run(exec: &dyn Execution) -> Result<i32, VmError> {
+@@ -43,6 +43,9 @@ pub fn run(exec: &dyn Execution) -> Result<i32, VmError> {
      // image map goes with it.
      crate::fault::install();
      crate::fault::note_images(exec.report());

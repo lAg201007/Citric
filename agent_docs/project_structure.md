@@ -2,8 +2,9 @@
 
 - crates/appkit: NSView, window, event, input, display-link, controls, font,
   file-panel, and AppKit diagnostic behavior.
-- crates/appkit/src/event.rs: key event normalization for text clients and
-  regression coverage for printable text, editing keys, and shortcuts.
+- crates/appkit/src/event.rs: key event normalization for text clients,
+  Linux Control-to-Command shortcut mapping, and regression coverage for
+  printable text, editing keys, modifiers, and shortcuts.
 - crates/appkit/src/pasteboard.rs: SDL system-clipboard synchronization,
   plain/rich text ownership, and external clipboard state tracking.
 - crates/appkit/src/pasteboard_manager.rs: Carbon pasteboard ABI, promised
@@ -14,8 +15,8 @@
 - crates/webkit/src/web_view.rs: WebKit editor clipboard and keyboard shortcut
   forwarding for Control and Command modifiers.
 - crates/chrome/src/file_picker.rs: shared SDL-rendered Import/Open/Save
-  chooser, search and hidden-file filtering, keyboard navigation, generic
-  file-type icons, and rendering tests.
+  chooser, visible search and hidden-file filtering, SDL shortcut handling,
+  filtered keyboard navigation, generic file-type icons, and rendering tests.
 - crates/corefoundation: collection singletons, run-loop and timer lifetime.
 - crates/objc: Objective-C messaging and autorelease-pool safety.
 - crates/metal_translate: Metal/SPIR-V translation support.
@@ -66,3 +67,11 @@ field-editor behavior in `crates/appkit/src/text.rs`, WebKit pre-read clipboard
 synchronization in `crates/webkit/src/web_view.rs`, and focused-responder
 ancestor traversal for key equivalents. Diagnostics are environment-gated in
 the existing AppKit and WebKit input paths.
+
+The Save panel hidden-extension preference is owned by the AppKit panel bridge
+in the canonical patch; its getter and setter are covered by panel tests.
+
+Linux shortcut mapping is owned by `crates/appkit/src/event.rs` and the menu
+configuration in `crates/appkit/src/decor.rs`. The event boundary maps Control
+to Command for non-modifier chords while preserving AltGr and exposing the
+`ROSEMARY_MENU_CTRL` opt-out; focused event tests define the contract.

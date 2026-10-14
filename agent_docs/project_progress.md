@@ -1,5 +1,32 @@
 # Project progress
 
+Latest completed deployment: `rosemary_v023_base_migration_20261014`. Citric
+is now pinned to Rosemary v0.2.3 at commit
+`91e2de231604237ed5faa81513ba441d7b0a79bb`. The canonical overlay was
+regenerated against that base, and changes already merged upstream for
+`systemFontSizeForControlSize:`, `NSButtonCell` background style, and Num Lock
+were removed from the overlay. The v0.2.3 Release binary is installed and
+automated validation passed. Manual Studio validation remains pending. There
+is no active deployment.
+
+Latest completed deployment: `shortcut_mapping_linux_20261014`. The canonical
+patch and installed Release binary map Linux Control chords to macOS Command
+shortcuts for all non-modifier keys, preserve Shift and left Alt, pass AltGr
+through, and support the `ROSEMARY_MENU_CTRL=0` opt-out. Automated validation
+is complete; manual Studio shortcut validation remains pending. There is no
+active deployment.
+
+Latest completed deployment: `picker_ui_applied_20261014`. The canonical
+file-picker patch and installed Release binary now contain visible search and
+hidden-file controls, modifier-aware shortcuts, filtered navigation, and
+generic icons. Automated validation is complete; manual Studio retesting after
+restart remains pending. There is no active deployment.
+
+Latest source follow-up: `save_panel_hidden_extension_20261014`. The missing
+NSSavePanel `canSelectHiddenExtension` getter/setter is implemented and tested,
+and the Release binary is installed. Save to File manual validation remains
+pending; there is no active deployment.
+
 Latest completed deployment: file_picker_qol_20261013. Its patch and focused
 automated checks are complete; no GUI visual test was run. There is no active
 deployment.

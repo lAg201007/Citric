@@ -59,12 +59,26 @@ The AppKit file-panel compatibility layer now uses Rosemary's shared SDL-backed
 reached the chooser and navigated with Up; readable entries, selection, and
 cancellation still need confirmation after the theme contrast fix.
 
-The shared file chooser now includes a case-insensitive live name search,
-hidden dotfile visibility toggled with Ctrl/Command+H, refresh with
+The shared file chooser now includes a visible case-insensitive live name
+search, hidden dotfile visibility toggled with Ctrl/Command+H, refresh with
 Ctrl/Command+R, filtered keyboard navigation, and generic canvas-drawn icons
-for common file types. The AppKit panel preserves the hidden-file preference
-through `showsHiddenFiles` while the reusable chooser remains independent of
-desktop-specific icon APIs.
+for common file types. Ctrl/Command+F focuses search. The AppKit panel
+preserves the hidden-file preference through `showsHiddenFiles`, while SDL
+modifier flags drive shortcut handling and the reusable chooser remains
+independent of desktop-specific icon APIs. Automated verification is complete;
+manual GUI retesting after the installed binary update remains pending.
+
+The Save panel implements the `canSelectHiddenExtension` preference with a
+false default and a real getter/setter, preventing Qt Cocoa's Save to File
+configuration from aborting on the missing selector. Automated coverage is
+complete; manual Save to File validation remains pending.
+
+On Linux, the AppKit event bridge maps Control chords to their macOS Command
+shortcut equivalents for non-modifier keys, so Windows-style Studio shortcuts
+such as Ctrl+S, Ctrl+O, Ctrl+F, and Ctrl+Z work through the same dispatch path.
+Shift and left Alt are retained, right Alt/AltGr is passed through, and
+`ROSEMARY_MENU_CTRL=0` disables the compatibility alias. Automated coverage is
+complete; manual Studio shortcut validation remains pending.
 
 Printable text input is routed through SDL's resolved text/IME commit for active
 text clients. The duplicate AppKit key-down character is retained only for key

@@ -157,3 +157,29 @@ different early selector failure.
   is a Rosemary addition rather than a behavior attributed to Wine. The
   implementation stays in the shared `chrome` chooser and AppKit preference
   bridge so it can be proposed upstream without desktop-specific APIs.
+
+- On 2026-10-14, the first file-picker QoL report could not be reproduced from
+  the installed binary: the earlier response described changes that were not
+  present in that binary, and its key handler ignored modifiers. The canonical
+  patch was then updated and rebuilt. The chooser now visibly paints the search
+  and hidden-file controls, maps SDL Ctrl/Command modifiers for Ctrl/Command+
+  F/H/R, preserves `showsHiddenFiles`, and tests filesystem dotfile
+  enumeration and filtered navigation. The lesson is to verify the installed
+  binary and visible strings after patch generation, not only the patch source.
+  Manual Studio retesting after restarting Citric remains open.
+
+- On 2026-10-14, Save to File reached Qt Cocoa's next panel configuration
+  selector and aborted on `setCanSelectHiddenExtension:`. The AppKit panel now
+  stores this BOOL preference with a false default and exposes its getter and
+  setter. Ten focused panel tests, a clean pinned-base patch application, and
+  the Release build passed. No Studio session was launched, so Save to File
+  confirmation remains user-driven.
+
+- On 2026-10-14, Linux shortcut compatibility was generalized from clipboard
+  editing chords to all non-modifier key events: Control is offered as a
+  Command alias before AppKit dispatch, while Shift and left Alt remain
+  available and right Alt/AltGr is preserved for alternate characters. The
+  `ROSEMARY_MENU_CTRL=0` opt-out keeps host Control semantics. Thirteen focused
+  event tests and a clean pinned-base application passed; Studio validation is
+  still user-driven. The reusable lesson is to map the modifier at the event
+  boundary rather than maintain a per-command list.
