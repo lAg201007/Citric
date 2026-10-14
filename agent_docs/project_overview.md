@@ -40,3 +40,8 @@ launcher, it records main-loop gaps, script/event/backing pumps,
 CoreFoundation callbacks, and AppKit/CoreVideo display-link scheduling and
 callback times. This helps investigate periodic Play stalls without assuming
 that the cause is a fixed timer.
+
+The AppKit file-panel compatibility layer now uses Rosemary's shared SDL-backed
+`chrome` file chooser for Import and Open from File. The latest manual retest
+reached the chooser and navigated with Up; readable entries, selection, and
+cancellation still need confirmation after the theme contrast fix.

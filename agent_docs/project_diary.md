@@ -81,3 +81,12 @@ different early selector failure.
   visible stutter disappeared. The latest run log still records full-window
   damage at roughly 500 ms intervals, so only the visual symptom is confirmed
   resolved; the recurring invalidation remains observable but is not blocking.
+
+- On 2026-10-13, Import and Open from File progressed through missing AppKit
+  and Foundation compatibility selectors. The final crash was
+  `NSWorkspace -isFilePackageAtPath:`; the implementation now translates guest
+  paths and reuses the chooser's package classifier.
+- The next retest stopped crashing and confirmed that Up navigated. Dark mode
+  used white list and field surfaces with white text, making entries appear
+  blank. The theme-aware surface fix and regression test are installed; manual
+  confirmation of visible names, selection, and cancellation remains pending.

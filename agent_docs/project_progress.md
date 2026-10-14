@@ -1,7 +1,7 @@
 # Project progress
 
-Latest deployment: citric-play-periodic-stutter-20261012; user-visible
-stutter fix validated manually.
+Latest deployment: citric_dark_picker_20261013; code and automated validation
+are complete, while the final manual chooser retest is pending.
 
 The user confirmed that a periodic roughly 0.5 second stutter occurs in Play
 even in an empty Baseplate. A per-view trace isolated pixel-content copying
@@ -56,3 +56,13 @@ binary SHA-256 is
 `1c81b0f81f3483c4eb6ccbfe15437f5634b275fc574e380d4f7b7e0f710a2513`; ELF
 build ID is `df984a5c36cf72f68b3704b10ee7c8b5a5ad7cb0`. The user manually
 confirmed the visible stutter disappeared on this build.
+
+The current deployment repaired dark-mode rendering of the Import/Open chooser.
+The preceding retest no longer crashed and showed that Up navigated, but entries
+had invisible names because list and fields were white while dark-theme text was
+white. The chooser now uses a theme-specific input background. Chrome tests
+(52), AppKit tests (295 plus the theme integration test), formatting, patch
+application, source diff checks, and the locked offline Release build passed;
+the updated binary is installed. The user still needs to confirm readable
+entries, selecting a file, and cancelling in Studio. There is no active
+deployment after that retest.

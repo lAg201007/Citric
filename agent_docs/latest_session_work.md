@@ -129,5 +129,39 @@ Exact continuation point: run scripts/run-studio.sh with a fresh STUDIO_LOG_NAME
 and reproduce the place-opening crash normally. Preserve the raw log outside
 Git, then isolate the require path failure before changing camera behavior.
 
+---
+
+Deployment: citric_dark_picker_20261013
+
+State: code and automated verification complete; manual visual validation is
+pending.
+
+Outcome: the Import/Open chooser no longer crashed after Rosemary implemented
+the missing AppKit and Foundation compatibility calls. The user confirmed that
+the chooser opens and that Up navigates. The entries then appeared white with
+invisible names in dark appearance. The patch changed the chooser's list,
+location, and save-name surfaces to use the theme-specific input background.
+
+Verification: 52 chrome tests, 295 AppKit tests plus the theme integration test,
+package-scoped formatting, source diff checks, locked offline Release build,
+clean pinned-base patch application, and the focused dark-mode rendering test
+passed. The updated binary is installed. The latest evidence is
+`logs/run-20261013T213755-38660.log`; raw logs remain outside Git.
+
+Pending: restart through Citric and verify readable names, selecting a file,
+and cancelling in Import and Open from File. Arbitrary accessory-view rendering
+remains unverified. Continue from `docs/current-state.md` and the file chooser
+sections in `docs/validation.md`.
+
+Token report for `citric_dark_picker_20261013`:
+
+Deployment token report: `citric_dark_picker_20261013` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warning: no session record matched this deployment ID.
+
 Token report: `unavailable`; no matching session record was available for this
 deployment.

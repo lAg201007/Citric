@@ -1,7 +1,9 @@
 # Project structure
 
 - crates/appkit: NSView, window, event, input, display-link, controls, font,
-  and AppKit diagnostic behavior.
+  file-panel, and AppKit diagnostic behavior.
+- crates/chrome/src/file_picker.rs: shared SDL-rendered Import/Open/Save
+  chooser and navigation, filtering, and rendering tests.
 - crates/corefoundation: collection singletons, run-loop and timer lifetime.
 - crates/objc: Objective-C messaging and autorelease-pool safety.
 - crates/metal_translate: Metal/SPIR-V translation support.

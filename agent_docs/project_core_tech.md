@@ -54,3 +54,9 @@ reported that the visible stutter disappeared after testing the latest build
 in Play on an empty Baseplate. The latest run still logs full-window
 invalidation about every 500 ms, so the optimization resolved the reported
 visual symptom without eliminating the periodic damage event.
+
+AppKit `NSOpenPanel` and `NSSavePanel` use the shared `chrome::FilePicker` on
+the SDL window backend. It handles navigation, filtering, selection, save-name
+entry, and guest/host path conversion without depending on a desktop portal.
+`Theme::panel_input_background` keeps dark-mode file names readable against the
+chooser fields and list.
