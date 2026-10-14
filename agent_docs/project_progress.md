@@ -1,5 +1,14 @@
 # Project progress
 
+Latest completed deployment: `open_portal_fork_20261014`. The SDL file-picker
+fallback and XDG Desktop Portal integration were split into two upstreamable
+branches based on Rosemary v0.2.3 and pushed to the user's Rosemary fork:
+`citric/sdl-file-picker` and `citric/xdg-file-chooser`. The second branch is
+stacked on the first. The official Rosemary repository has not received a PR.
+Automated validation passed for the isolated branches and the integrated
+Citric patch. Manual portal/UI validation remains pending because no session
+D-Bus was available. There is no active deployment.
+
 Latest completed deployment: `xdg_open_portal_qt_filter_accessory_20261014`.
 The portal path now accepts Qt Cocoa's filter-only accessory view, maps its
 name filters and selected filter to XDG filters, and logs unsupported

@@ -59,6 +59,13 @@ The AppKit file-panel compatibility layer now uses Rosemary's shared SDL-backed
 reached the chooser and navigated with Up; readable entries, selection, and
 cancellation still need confirmation after the theme contrast fix.
 
+The file-panel work is prepared for upstream review as two stacked branches in
+the Rosemary fork `lAg201007/rosemary-citric-fixes`: the SDL-backed chooser
+branch `citric/sdl-file-picker`, followed by the XDG Desktop Portal branch
+`citric/xdg-file-chooser`. The official Rosemary repository has not received a
+pull request. The SDL branch keeps the shared fallback independently usable;
+the portal branch adds portal preference and fallback routing on top of it.
+
 The shared file chooser now includes a visible case-insensitive live name
 search, hidden dotfile visibility toggled with Ctrl/Command+H, refresh with
 Ctrl/Command+R, filtered keyboard navigation, and generic canvas-drawn icons

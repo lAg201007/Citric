@@ -1,5 +1,13 @@
 # Project diary
 
+- On 2026-10-14, the file-panel changes were split for future Rosemary review.
+  `citric/sdl-file-picker` contains the shared SDL-backed Open/Save chooser and
+  its QoL behavior; `citric/xdg-file-chooser` is based on that branch and adds
+  the XDG Desktop Portal path with fallback to the shared chooser. Both were
+  pushed to the user's Rosemary fork. The official repository was deliberately
+  left unchanged so the branches can be reviewed and tested before opening
+  stacked pull requests.
+
 - The destination was made as a local clone of Rosemary source at base commit
   c14275b, then the complete working diff was applied. CaseSolved content was
   deliberately excluded.

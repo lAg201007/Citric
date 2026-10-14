@@ -4026,12 +4026,12 @@ index cf2184c..644aec8 100644
              => enter_exit_event, c"@96@0:8Q16{CGPoint=dd}24Q40d48q56@64q72q80^v88";
          "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"
 diff --git a/crates/appkit/src/panel.rs b/crates/appkit/src/panel.rs
-index 597b4c1..a07438d 100644
+index 597b4c1..0a1a9b8 100644
 --- a/crates/appkit/src/panel.rs
 +++ b/crates/appkit/src/panel.rs
-@@ -1,89 +1,1403 @@
+@@ -1,89 +1,1436 @@
 +use std::collections::HashMap;
-+use std::path::{Path, PathBuf};
++use std::path::{Component, Path, PathBuf};
 +use std::sync::{Mutex, OnceLock};
 +
 +use chrome::View;
@@ -4384,7 +4384,11 @@ index 597b4c1..a07438d 100644
 +) -> Option<Vec<PathBuf>> {
 +    if panel.save {
 +        let name = picker.filename.trim();
-+        if name.is_empty() {
++        if name.is_empty() || name.contains(['/', '\\', '\0']) {
++            return None;
++        }
++        let mut components = Path::new(name).components();
++        if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
 +            return None;
 +        }
 +        return Some(vec![directory.join(name)]);
@@ -4527,7 +4531,7 @@ index 597b4c1..a07438d 100644
 -             so it is answered as cancelled"
 +            "rosemary: appkit: could not open file chooser: {}",
 +            sdl3::error()
-         );
++        );
 +        if started_video {
 +            sdl3::video::quit_video();
 +        }
@@ -4592,7 +4596,7 @@ index 597b4c1..a07438d 100644
 +                sdl3::video::window_size(window).map_or(WINDOW_HEIGHT as f32, |size| size.1 as f32),
 +            ),
 +            &theme,
-+        );
+         );
 +        match event {
 +            Event::MouseButton {
 +                window: event_window,
@@ -5068,14 +5072,14 @@ index 597b4c1..a07438d 100644
 +        .and_then(|path| path.to_str().map(str::to_owned))
 +        .map(|path| objc::arc::autorelease(corefoundation::url::new_file_url(&path, true) as Id))
 +        .unwrap_or(std::ptr::null_mut())
++}
++
++unsafe extern "C" fn empty_array(_receiver: Id, _sel: Sel) -> Id {
++    autoreleased_array(&[])
  }
  
 -unsafe extern "C" fn nothing(_receiver: Id, _sel: Sel) -> Id {
 -    std::ptr::null_mut()
-+unsafe extern "C" fn empty_array(_receiver: Id, _sel: Sel) -> Id {
-+    autoreleased_array(&[])
-+}
-+
 +unsafe extern "C" fn allowed_file_types(receiver: Id, _sel: Sel) -> Id {
 +    let values: Vec<Id> = state(receiver)
 +        .allowed_file_types
@@ -5409,6 +5413,35 @@ index 597b4c1..a07438d 100644
 +    }
 +
 +    #[test]
++    fn save_names_cannot_escape_the_selected_directory() {
++        let panel = PanelState {
++            save: true,
++            ..PanelState::default()
++        };
++
++        for filename in [
++            "",
++            ".",
++            "..",
++            "../outside.rbxl",
++            "nested/place.rbxl",
++            "/tmp/place.rbxl",
++            r"nested\place.rbxl",
++            "place\0.rbxl",
++        ] {
++            let picker = chrome::file_picker::FilePicker {
++                filename: filename.into(),
++                ..chrome::file_picker::FilePicker::default()
++            };
++            assert_eq!(
++                selected_paths(&picker, &panel, Path::new("/tmp")),
++                None,
++                "accepted unsafe save name {filename:?}"
++            );
++        }
++    }
++
++    #[test]
 +    fn an_unavailable_portal_uses_the_internal_picker() {
 +        let fallback_calls = std::cell::Cell::new(0);
 +        let result = resolve_picker_result(PortalOutcome::Unavailable, false, || {
@@ -5485,10 +5518,10 @@ index 597b4c1..a07438d 100644
 +}
 diff --git a/crates/appkit/src/panel/portal.rs b/crates/appkit/src/panel/portal.rs
 new file mode 100644
-index 0000000..4394100
+index 0000000..f91f050
 --- /dev/null
 +++ b/crates/appkit/src/panel/portal.rs
-@@ -0,0 +1,416 @@
+@@ -0,0 +1,420 @@
 +use std::path::PathBuf;
 +
 +use ashpd::desktop::ResponseError;
@@ -5512,6 +5545,10 @@ index 0000000..4394100
 +        );
 +        return PortalOutcome::Unavailable;
 +    };
++    eprintln!(
++        "rosemary: appkit: requesting XDG file chooser ({})",
++        if panel.save { "SaveFile" } else { "OpenFile" }
++    );
 +    async_io::block_on(show_async(panel, filters))
 +}
 +

@@ -1,5 +1,37 @@
 # Latest session work
 
+Deployment: `open_portal_fork_20261014`
+
+State: complete; fork branches are pushed, while official Rosemary PRs remain
+intentionally unopened.
+
+Outcome: the upstreamable file-panel work was separated into two stacked
+Rosemary v0.2.3 branches. `citric/sdl-file-picker` contains the shared SDL
+fallback and file-picker QoL behavior. `citric/xdg-file-chooser` builds on it
+and adds XDG Desktop Portal Open/Save routing, filter mapping, cancellation,
+fallback eligibility, and diagnostics. Both branches are available in
+`lAg201007/rosemary-citric-fixes`.
+
+Verification: the SDL branch passed its isolated locked offline AppKit and
+Chrome tests, formatting, and diff checks. The integrated Citric patch passed
+the pinned-base application, AppKit/Chrome tests, formatting, diff checks, and
+the locked offline Rosemary v0.2.3 Release build. The current portal branch
+was pushed after these checks. No session D-Bus or Studio GUI was available,
+so portal appearance, Open/Save interaction, cancellation, and fallback
+behavior still require manual validation.
+
+Blockers: no source blocker. The session bus is unavailable in this
+environment.
+
+Exact next entry point: test `citric/sdl-file-picker` independently if desired,
+then test the stacked `citric/xdg-file-chooser` branch in a desktop session
+with an XDG portal. After review and manual validation, open stacked PRs in
+the official Rosemary repository, with the SDL PR as the base for the portal
+PR.
+
+Deployment token report: `open_portal_fork_20261014` (unavailable; no session
+record matched this deployment ID).
+
 Deployment: `xdg_open_portal_qt_filter_accessory_20261014`
 
 State: complete in source and installed binary; manual Open from File portal
