@@ -13,6 +13,7 @@ from citric_launcher.core import (
     desktop_entry,
     desktop_file_path,
     default_config,
+    download_studio_spec,
     install_desktop_entry,
     load_config,
     normalize_config,
@@ -22,6 +23,17 @@ from citric_launcher.core import (
 
 
 class CitricLauncherTests(unittest.TestCase):
+    def test_latest_studio_download_spec_passes_latest_and_replacement_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            module = root / "citric_launcher" / "studio_bundle.py"
+            module.parent.mkdir()
+            module.write_text("", encoding="utf-8")
+
+            spec = download_studio_spec(root, replace=True, latest=True)
+
+            self.assertEqual(spec.argv[1:], (str(module), "--replace", "--latest"))
+
     def test_build_spec_invokes_patch_build_script_and_supports_check_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

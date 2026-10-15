@@ -105,13 +105,15 @@ def build_rosemary_spec(root: Path = ROOT, check_only: bool = False, build_only:
     return LaunchSpec(tuple(argv), {})
 
 
-def download_studio_spec(root: Path = ROOT, replace: bool = False) -> LaunchSpec:
+def download_studio_spec(root: Path = ROOT, replace: bool = False, latest: bool = False) -> LaunchSpec:
     module = root / "citric_launcher" / "studio_bundle.py"
     if not module.is_file():
         raise FileNotFoundError(f"Studio bundle download module not found: {module}")
     argv = [sys.executable, str(module)]
     if replace:
         argv.append("--replace")
+    if latest:
+        argv.append("--latest")
     return LaunchSpec(tuple(argv), {})
 
 

@@ -184,35 +184,28 @@ class CitricWindow(Gtk.ApplicationWindow):
             self.status.set_text(f"Failed to start the build: {error}")
 
     def _download_studio(self, *_args) -> None:
-        if (
-            self._studio_update_version is not None
-            and self._version_key(self._studio_update_version) > self._version_key(STUDIO_BUNDLE_VERSION)
-        ):
-            self.status.set_text(
-                f"Roblox Studio {self._studio_update_version} is available. Citric currently installs only the "
-                f"validated {STUDIO_BUNDLE_VERSION} build, so this newer version is not installed yet. "
-                "Your current Studio bundle has not been changed."
-            )
+        if self._studio_update_version is not None:
+            bundle = ROOT / "app" / "full" / "RobloxStudio.app"
+            if bundle.exists() or bundle.is_symlink():
+                self._show_studio_replacement_dialog(self._studio_update_version, latest=True)
+            else:
+                self._start_studio_download(replace=False, latest=True)
             return
         bundle = ROOT / "app" / "full" / "RobloxStudio.app"
-        if studio_bundle_version(bundle) == STUDIO_BUNDLE_VERSION:
+        installed_version = studio_bundle_version(bundle)
+        if installed_version is not None:
             self.studio_entry.set_text(str(bundle))
             try:
                 self.config = self._current_config()
                 save_config(self.config)
-                self.status.set_text(f"Roblox Studio {STUDIO_BUNDLE_VERSION} is already installed and selected.")
+                self.status.set_text(f"Roblox Studio {installed_version} is already installed and selected.")
             except (OSError, ValueError) as error:
                 self.status.set_text(f"Studio is already installed, but settings could not be saved: {error}")
             return
         if bundle.exists() or bundle.is_symlink():
-            self._show_studio_replacement_dialog()
+            self._show_studio_replacement_dialog(STUDIO_BUNDLE_VERSION)
             return
         self._start_studio_download(replace=False)
-
-    @staticmethod
-    def _version_key(version: str) -> tuple[int, ...]:
-        parts = tuple(int(part) for part in version.split("."))
-        return parts + (0,) * (4 - len(parts))
 
     def _check_for_studio_update(self) -> None:
         configured = self.studio_entry.get_text().strip()
@@ -252,7 +245,7 @@ class CitricWindow(Gtk.ApplicationWindow):
             if process in self._processes:
                 self._processes.remove(process)
 
-    def _show_studio_replacement_dialog(self) -> None:
+    def _show_studio_replacement_dialog(self, version: str, latest: bool = False) -> None:
         dialog = Gtk.Window(title="Replace Roblox Studio bundle")
         dialog.set_transient_for(self)
         dialog.set_modal(True)
@@ -263,9 +256,14 @@ class CitricWindow(Gtk.ApplicationWindow):
         content.set_margin_start(24)
         content.set_margin_end(24)
         dialog.set_child(content)
+        release_description = (
+            f"latest published release (currently {version})"
+            if latest
+            else f"pinned Studio {version} release"
+        )
         explanation = Gtk.Label(
             label=(
-                f"This downloads the pinned, validated Studio {STUDIO_BUNDLE_VERSION} bundle and replaces "
+                f"This downloads and validates the {release_description}, then replaces "
                 "app/full/RobloxStudio.app. Close Studio before continuing."
             ),
             wrap=True,
@@ -279,7 +277,7 @@ class CitricWindow(Gtk.ApplicationWindow):
         actions.append(cancel)
         replace_button = Gtk.Button(label="Download and replace")
         replace_button.add_css_class("destructive-action")
-        replace_button.connect("clicked", self._confirm_studio_replacement)
+        replace_button.connect("clicked", self._confirm_studio_replacement, latest)
         actions.append(replace_button)
         content.append(actions)
         self._replacement_dialog = dialog
@@ -290,13 +288,13 @@ class CitricWindow(Gtk.ApplicationWindow):
             self._replacement_dialog.close()
             self._replacement_dialog = None
 
-    def _confirm_studio_replacement(self, *_args) -> None:
+    def _confirm_studio_replacement(self, _button, latest: bool) -> None:
         self._close_replacement_dialog()
-        self._start_studio_download(replace=True)
+        self._start_studio_download(replace=True, latest=latest)
 
-    def _start_studio_download(self, replace: bool) -> None:
+    def _start_studio_download(self, replace: bool, latest: bool = False) -> None:
         try:
-            spec = download_studio_spec(ROOT, replace=replace)
+            spec = download_studio_spec(ROOT, replace=replace, latest=latest)
             launcher = Gio.SubprocessLauncher.new(
                 Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE
             )
@@ -306,7 +304,9 @@ class CitricWindow(Gtk.ApplicationWindow):
             self.download_studio_button.set_sensitive(False)
             process.communicate_utf8_async(None, None, self._on_studio_download_exit, None)
             self.status.set_text(
-                f"Downloading and verifying the pinned Roblox Studio {STUDIO_BUNDLE_VERSION} bundle…"
+                "Downloading and validating the latest published Roblox Studio release…"
+                if latest
+                else f"Downloading and verifying the pinned Roblox Studio {STUDIO_BUNDLE_VERSION} bundle…"
             )
         except (OSError, GLib.Error) as error:
             self.status.set_text(f"Failed to start the Studio download: {error}")
@@ -319,12 +319,16 @@ class CitricWindow(Gtk.ApplicationWindow):
             if code == 0:
                 bundle = ROOT / "app" / "full" / "RobloxStudio.app"
                 self.studio_entry.set_text(str(bundle))
+                installed_version = studio_bundle_version(bundle) or STUDIO_BUNDLE_VERSION
+                self._studio_update_version = None
+                self.download_studio_button.set_label("Download and install Roblox Studio")
                 try:
                     self.config = self._current_config()
                     save_config(self.config)
-                    self.status.set_text(message or f"Roblox Studio {STUDIO_BUNDLE_VERSION} is ready to launch.")
+                    self.status.set_text(message or f"Roblox Studio {installed_version} is ready to launch.")
                 except (OSError, ValueError) as error:
                     self.status.set_text(f"Studio installed, but settings could not be saved: {error}")
+                self._check_for_studio_update()
             else:
                 self.status.set_text(message or f"Studio download failed (exit code {code}).")
         except GLib.Error as error:
