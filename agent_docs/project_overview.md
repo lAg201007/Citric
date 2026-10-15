@@ -1,5 +1,7 @@
 # Project overview
 
+Studio 0.743.0.7431133 exposed a missing `+[NSGraphicsContext graphicsContextWithCGContext:flipped:]` selector during startup. The AppKit compatibility layer now creates a retained Core Graphics-backed wrapper, exposes `CGContext` and `graphicsPort`, preserves the initial flipped state, and releases the context with the wrapper. Automated coverage and a release build pass; the headless smoke launch advanced beyond the selector but could not create a window without a display.
+
 Citric is the local continuation of the Rosemary compatibility work for running
 the macOS Roblox Studio client on Linux. Its current branch stores the
 compatibility patches, launcher, scripts, and diagnostic record; Rosemary source

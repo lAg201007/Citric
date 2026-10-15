@@ -5,6 +5,8 @@
 - crates/appkit/src/event.rs: key event normalization for text clients,
   Linux Control-to-Command shortcut mapping, and regression coverage for
   printable text, editing keys, modifiers, and shortcuts.
+- crates/appkit/src/backing.rs: Core Graphics-backed `NSGraphicsContext`
+  creation, flipped-state behavior, lifetime management, and regression tests.
 - crates/appkit/src/pasteboard.rs: SDL system-clipboard synchronization,
   plain/rich text ownership, and external clipboard state tracking.
 - crates/appkit/src/pasteboard_manager.rs: Carbon pasteboard ABI, promised

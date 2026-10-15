@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 853c8d1..a8cc0bc 100644
+index 853c8d1296d94cc634bb42412d5f276c102f6667..a8cc0bccf96a6b730dfc4845a8410f903979c8ea 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -159,6 +159,8 @@ checksum = "e149dc73cd30538307e7ffa2acd3d2221148eaeed4871f246657b1c3eaa1cbd2"
@@ -694,7 +694,7 @@ index 853c8d1..a8cc0bc 100644
 + "winnow",
 +]
 diff --git a/crates/appkit/Cargo.toml b/crates/appkit/Cargo.toml
-index fc93071..29b202e 100644
+index fc9307138aa1309a7a226f847bb53fa75e121881..29b202ea4244ecdf0306d4ee0d509f4ccc0d45a0 100644
 --- a/crates/appkit/Cargo.toml
 +++ b/crates/appkit/Cargo.toml
 @@ -18,3 +18,8 @@ gamecontroller.workspace = true
@@ -707,7 +707,7 @@ index fc93071..29b202e 100644
 +async-io = "2"
 +url = "2"
 diff --git a/crates/appkit/src/application.rs b/crates/appkit/src/application.rs
-index 9764ad6..7fae524 100644
+index 9764ad6e1e231d50835d6141e1b9bfccb34805fc..7fae524e940a9b3cab27663512049941755bdcaf 100644
 --- a/crates/appkit/src/application.rs
 +++ b/crates/appkit/src/application.rs
 @@ -63,6 +63,7 @@ static CURRENT_EVENT: AtomicUsize = AtomicUsize::new(0);
@@ -926,9 +926,18 @@ index 9764ad6..7fae524 100644
      #[test]
      fn run_services_the_run_loop_until_it_is_stopped() {
 diff --git a/crates/appkit/src/backing.rs b/crates/appkit/src/backing.rs
-index 9a1db93..00cac55 100644
+index 9a1db9337c4c3accdd6b1f47b870bb39311a9c57..424d9a08145119621ecff130daace4e16c7210c1 100644
 --- a/crates/appkit/src/backing.rs
 +++ b/crates/appkit/src/backing.rs
+@@ -1,7 +1,7 @@
+ use std::cell::RefCell;
+ use std::collections::HashMap;
+ use std::ffi::c_void;
+-use std::sync::Mutex;
++use std::sync::{LazyLock, Mutex};
+ 
+ use foundation::geometry::{NSPoint, NSRect, NSSize};
+ use objc::object::Id;
 @@ -505,10 +505,25 @@ pub(crate) fn focus_density() -> f64 {
      current_focus().map_or(1.0, |focus| focus.density)
  }
@@ -1293,7 +1302,238 @@ index 9a1db93..00cac55 100644
  }
  
  /// Put a window's chrome over the top rows of its store.
-@@ -1984,6 +2175,90 @@ mod tests {
+@@ -1800,12 +1991,86 @@ fn shared_instance(name: &'static std::ffi::CStr) -> Id {
+     object
+ }
+ 
+-unsafe extern "C" fn context_is_flipped(_receiver: Id, _sel: Sel) -> u8 {
+-    current_focus().is_some_and(|focus| focus.flipped) as u8
++#[derive(Clone, Copy)]
++struct WrappedCGContext {
++    context: usize,
++    flipped: bool,
+ }
+ 
+-unsafe extern "C" fn nil(_receiver: Id, _sel: Sel) -> Id {
+-    std::ptr::null_mut()
++static WRAPPED_CG_CONTEXTS: LazyLock<Mutex<HashMap<usize, WrappedCGContext>>> =
++    LazyLock::new(|| Mutex::new(HashMap::new()));
++
++unsafe extern "C" fn context_with_cg_context(
++    _class: Id,
++    _sel: Sel,
++    cg_context: *const c_void,
++    flipped: u8,
++) -> Id {
++    if cg_context.is_null() {
++        return std::ptr::null_mut();
++    }
++    let class = objc::class::lookup(c"NSGraphicsContext").expect("declared");
++    let object = objc::object::create_instance(class, 0);
++    if object.is_null() {
++        return object;
++    }
++
++    // AppKit's factory owns the supplied Core Graphics context for as long as
++    // the wrapper lives; the `CGContext` and `graphicsPort` getters borrow it.
++    unsafe { corefoundation::api::CFRetain(cg_context) };
++    let previous = WRAPPED_CG_CONTEXTS
++        .lock()
++        .unwrap_or_else(|error| error.into_inner())
++        .insert(
++            object as usize,
++            WrappedCGContext {
++                context: cg_context as usize,
++                flipped: flipped != 0,
++            },
++        );
++    debug_assert!(previous.is_none(), "new graphics context reused a live key");
++    objc::arc::autorelease(object)
++}
++
++unsafe extern "C" fn graphics_context_dealloc(receiver: Id, _sel: Sel) {
++    let wrapped = WRAPPED_CG_CONTEXTS
++        .lock()
++        .unwrap_or_else(|error| error.into_inner())
++        .remove(&(receiver as usize));
++    if let Some(wrapped) = wrapped {
++        // SAFETY: the factory retained this live CGContext for this wrapper.
++        unsafe { corefoundation::api::CFRelease(wrapped.context as *const c_void) };
++    }
++    // SAFETY: no instance fields are stored in the Objective-C allocation.
++    objc::arc::finalize(receiver);
++}
++
++fn wrapped_cg_context(receiver: Id) -> Option<WrappedCGContext> {
++    WRAPPED_CG_CONTEXTS
++        .lock()
++        .unwrap_or_else(|error| error.into_inner())
++        .get(&(receiver as usize))
++        .copied()
++}
++
++fn context_cg_context(receiver: Id) -> *const c_void {
++    wrapped_cg_context(receiver)
++        .map_or(std::ptr::null(), |wrapped| wrapped.context as *const c_void)
++}
++
++unsafe extern "C" fn graphics_context_cg_context(receiver: Id, _sel: Sel) -> *const c_void {
++    context_cg_context(receiver)
++}
++
++unsafe extern "C" fn graphics_context_graphics_port(receiver: Id, _sel: Sel) -> *const c_void {
++    context_cg_context(receiver)
++}
++
++unsafe extern "C" fn context_is_flipped(receiver: Id, _sel: Sel) -> u8 {
++    current_focus()
++        .map(|focus| focus.flipped)
++        .or_else(|| wrapped_cg_context(receiver).map(|wrapped| wrapped.flipped))
++        .unwrap_or(false) as u8
+ }
+ 
+ unsafe extern "C" fn ignored(_receiver: Id, _sel: Sel) {}
+@@ -1844,11 +2109,13 @@ pub(crate) fn install() {
+     // Saving and restoring the graphics state is `crate::bezier`'s.
+     class_methods!(context, {
+         "currentContext" => current_context, c"@16@0:8";
++        "graphicsContextWithCGContext:flipped:" => context_with_cg_context, c"@32@0:8^v16c24";
+     });
+     methods!(context, {
+         "isFlipped" => context_is_flipped, c"c16@0:8";
+-        "CGContext" => nil, c"^v16@0:8";
+-        "graphicsPort" => nil, c"^v16@0:8";
++        "CGContext" => graphics_context_cg_context, c"^v16@0:8";
++        "graphicsPort" => graphics_context_graphics_port, c"^v16@0:8";
++        "dealloc" => graphics_context_dealloc, c"v16@0:8";
+         "flushGraphics" => ignored, c"v16@0:8";
+         "compositingOperation" => zero, c"q16@0:8";
+         "setCompositingOperation:" => ignored_integer, c"v24@0:8q16";
+@@ -1873,6 +2140,123 @@ pub(crate) fn install() {
+ mod tests {
+     use super::*;
+ 
++    fn make_graphics_context(cg_context: *const c_void, flipped: u8) -> Id {
++        let class = objc::class::lookup(c"NSGraphicsContext").expect("declared");
++        // SAFETY: `msg::entry` has the registered class-method ABI below.
++        let send: unsafe extern "C" fn(Id, Sel, *const c_void, u8) -> Id =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        // SAFETY: the class and selector identify the registered class method.
++        unsafe {
++            send(
++                objc::class::ptr(class).cast(),
++                objc::sel::get("graphicsContextWithCGContext:flipped:"),
++                cg_context,
++                flipped,
++            )
++        }
++    }
++
++    #[test]
++    fn graphics_context_factory_preserves_context_and_flipped_state() {
++        crate::bootstrap();
++        let pool = unsafe { objc::api::objc_autoreleasePoolPush() };
++        let context = unsafe {
++            crate::cgcontext::CGBitmapContextCreate(
++                std::ptr::null_mut(),
++                2,
++                3,
++                8,
++                0,
++                std::ptr::null(),
++                0,
++            )
++        };
++        assert!(!context.is_null());
++
++        let flipped = make_graphics_context(context, 1);
++        let unflipped = make_graphics_context(context, 0);
++        assert!(!flipped.is_null());
++        assert!(!unflipped.is_null());
++
++        let get_context: unsafe extern "C" fn(Id, Sel) -> *const c_void =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let get_flipped: unsafe extern "C" fn(Id, Sel) -> u8 =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        assert_eq!(
++            unsafe { get_context(flipped, objc::sel::get("CGContext")) },
++            context
++        );
++        assert_eq!(
++            unsafe { get_context(flipped, objc::sel::get("graphicsPort")) },
++            context
++        );
++        assert_eq!(
++            unsafe { get_flipped(flipped, objc::sel::get("isFlipped")) },
++            1
++        );
++        assert_eq!(
++            unsafe { get_flipped(unflipped, objc::sel::get("isFlipped")) },
++            0
++        );
++        assert_eq!(unsafe { corefoundation::api::CFGetRetainCount(context) }, 3);
++
++        // Keep one reference so the count remains readable after both wrappers
++        // leave the autorelease pool and release the references they own.
++        unsafe { crate::cgcontext::CGContextRetain(context) };
++        unsafe { crate::cgcontext::CGContextRelease(context) };
++        assert_eq!(unsafe { corefoundation::api::CFGetRetainCount(context) }, 3);
++        unsafe { objc::api::objc_autoreleasePoolPop(pool) };
++        assert_eq!(unsafe { corefoundation::api::CFGetRetainCount(context) }, 1);
++        unsafe { crate::cgcontext::CGContextRelease(context) };
++    }
++
++    #[test]
++    fn graphics_context_flipped_state_follows_the_focused_view() {
++        crate::bootstrap();
++        let pool = unsafe { objc::api::objc_autoreleasePoolPush() };
++        let context = unsafe {
++            crate::cgcontext::CGBitmapContextCreate(
++                std::ptr::null_mut(),
++                1,
++                1,
++                8,
++                0,
++                std::ptr::null(),
++                0,
++            )
++        };
++        let wrapper = make_graphics_context(context, 0);
++        let get_flipped: unsafe extern "C" fn(Id, Sel) -> u8 =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let selector = objc::sel::get("isFlipped");
++        assert_eq!(unsafe { get_flipped(wrapper, selector) }, 0);
++
++        FOCUS.with(|stack| {
++            stack.borrow_mut().push(Focus {
++                view: std::ptr::null_mut(),
++                window: std::ptr::null_mut(),
++                x: 0.0,
++                y: 0.0,
++                width: 1.0,
++                height: 1.0,
++                density: 1.0,
++                flipped: true,
++                offscreen: false,
++            });
++        });
++        assert_eq!(unsafe { get_flipped(wrapper, selector) }, 1);
++        FOCUS.with(|stack| stack.borrow_mut().clear());
++
++        unsafe { objc::api::objc_autoreleasePoolPop(pool) };
++        unsafe { crate::cgcontext::CGContextRelease(context) };
++    }
++
++    #[test]
++    fn graphics_context_factory_returns_nil_for_a_null_context() {
++        crate::bootstrap();
++        assert!(make_graphics_context(std::ptr::null(), 0).is_null());
++    }
++
+     /// A view of `NSView`'s, and one of a flipped subclass, so a tree can be
+     /// placed without a window.
+     fn view(frame: NSRect, flipped: bool) -> Id {
+@@ -1984,6 +2368,90 @@ mod tests {
          );
      }
  
@@ -1385,7 +1625,7 @@ index 9a1db93..00cac55 100644
      #[test]
      fn a_hidden_view_is_not_placed() {
 diff --git a/crates/appkit/src/cell.rs b/crates/appkit/src/cell.rs
-index b08da9c..8403f44 100644
+index b08da9c3d09edd60ad046fea85850bfa2b02875b..8403f442130611fde76344ca97510ce61e7bfe12 100644
 --- a/crates/appkit/src/cell.rs
 +++ b/crates/appkit/src/cell.rs
 @@ -214,3 +214,34 @@ pub(crate) fn install() {
@@ -1424,7 +1664,7 @@ index b08da9c..8403f44 100644
 +    }
 +}
 diff --git a/crates/appkit/src/cgevent.rs b/crates/appkit/src/cgevent.rs
-index 701b53a..6249778 100644
+index 701b53ade782382a459aa18bb20582da7e1ddcf3..6249778a74ef490e569e423a758ceb6f69eac0fc 100644
 --- a/crates/appkit/src/cgevent.rs
 +++ b/crates/appkit/src/cgevent.rs
 @@ -48,6 +48,7 @@ struct Body {
@@ -1564,7 +1804,7 @@ index 701b53a..6249778 100644
      unsafe {
          if !dx.is_null() {
 diff --git a/crates/appkit/src/controls.rs b/crates/appkit/src/controls.rs
-index 0a8b455..9e1031b 100644
+index 0a8b455d15526975d28d9d4be154c0e504ddae04..9e1031b2a30720dce4f35319dc3c25d342334b0f 100644
 --- a/crates/appkit/src/controls.rs
 +++ b/crates/appkit/src/controls.rs
 @@ -1496,6 +1496,12 @@ const SCROLLER_WIDTH: f64 = 15.0;
@@ -1666,7 +1906,7 @@ index 0a8b455..9e1031b 100644
  
      /// The knob takes its proportion of the slot and slides along the rest;
 diff --git a/crates/appkit/src/coreanimation.rs b/crates/appkit/src/coreanimation.rs
-index 314da92..6bb1630 100644
+index 314da92dddbaa268713771df95d79e8a7033b2a0..6bb163012b385852b694ca586c822afa7fc1d3dc 100644
 --- a/crates/appkit/src/coreanimation.rs
 +++ b/crates/appkit/src/coreanimation.rs
 @@ -206,12 +206,38 @@ fn root_of(layer: Id) -> Id {
@@ -2279,7 +2519,7 @@ index 314da92..6bb1630 100644
      fn gravity_places_contents_in_the_bounds() {
          let bounds = Rect {
 diff --git a/crates/appkit/src/decor.rs b/crates/appkit/src/decor.rs
-index 7b15fa7..0be72a6 100644
+index 7b15fa718b27b0dde0a6c17a8464218e9d2fa669..0be72a6d093dbd553e8551dbf1ec866e79417dce 100644
 --- a/crates/appkit/src/decor.rs
 +++ b/crates/appkit/src/decor.rs
 @@ -23,8 +23,8 @@ use static_init::dynamic;
@@ -2420,7 +2660,7 @@ index 7b15fa7..0be72a6 100644
          close_level(level);
      }
 diff --git a/crates/appkit/src/dialog.rs b/crates/appkit/src/dialog.rs
-index 8465ebb..b411dbf 100644
+index 8465ebbad35e6b8d88d122c648ebb97e89662665..b411dbfb57810dfb520df4c206e770e4401b0fe4 100644
 --- a/crates/appkit/src/dialog.rs
 +++ b/crates/appkit/src/dialog.rs
 @@ -441,7 +441,7 @@ fn dump(id: u32, surface: &sdl3::video::Presentation, pixels: &[u8]) {
@@ -2484,7 +2724,7 @@ index 8465ebb..b411dbf 100644
          false => sdl3::video::window_position(parent).zip(sdl3::video::window_size(parent)),
          true => None,
 diff --git a/crates/appkit/src/displaylink.rs b/crates/appkit/src/displaylink.rs
-index 3d7fbb1..c8f581f 100644
+index 3d7fbb13ace51425652363a264f04aa712d27100..c8f581f9b7e401d7cef217d1e1774e9be8a76e95 100644
 --- a/crates/appkit/src/displaylink.rs
 +++ b/crates/appkit/src/displaylink.rs
 @@ -103,17 +103,31 @@ fn refresh_around(when: f64, interval: f64, last: f64) -> (f64, f64) {
@@ -2605,7 +2845,7 @@ index 3d7fbb1..c8f581f 100644
  }
  
 diff --git a/crates/appkit/src/event.rs b/crates/appkit/src/event.rs
-index 23c0b47..714dde7 100644
+index 23c0b4742b8d0ea98092b18bb345ca0e134cc958..714dde7b773e6f60830ebad734de823c2e053826 100644
 --- a/crates/appkit/src/event.rs
 +++ b/crates/appkit/src/event.rs
 @@ -1,14 +1,91 @@
@@ -3953,7 +4193,7 @@ index 23c0b47..714dde7 100644
  
      #[test]
 diff --git a/crates/appkit/src/lib.rs b/crates/appkit/src/lib.rs
-index 24061e1..ba30cb1 100644
+index 24061e1522de3e356c9e5dba9210a2107dedd14b..ba30cb15ed86ca1546e0311f210836d42f86e7ed 100644
 --- a/crates/appkit/src/lib.rs
 +++ b/crates/appkit/src/lib.rs
 @@ -111,13 +111,13 @@ pub fn bootstrap() {
@@ -3973,7 +4213,7 @@ index 24061e1..ba30cb1 100644
          opengl::install();
          darwin::idle::on_idle(opengl::going_idle);
 diff --git a/crates/appkit/src/nsevent.rs b/crates/appkit/src/nsevent.rs
-index cf2184c..644aec8 100644
+index cf2184c01d467d6d400af1a2a53c2b12fbc71520..644aec825367c2ea787a0f1b48060a7076a6fd31 100644
 --- a/crates/appkit/src/nsevent.rs
 +++ b/crates/appkit/src/nsevent.rs
 @@ -249,6 +249,26 @@ pub fn kind_of(event: Id) -> u64 {
@@ -4026,7 +4266,7 @@ index cf2184c..644aec8 100644
              => enter_exit_event, c"@96@0:8Q16{CGPoint=dd}24Q40d48q56@64q72q80^v88";
          "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"
 diff --git a/crates/appkit/src/panel.rs b/crates/appkit/src/panel.rs
-index 597b4c1..0a1a9b8 100644
+index 597b4c12222b9396bd3912bb01def58ec95f7040..0a1a9b88d177146d7764ab07da75eef16aca8876 100644
 --- a/crates/appkit/src/panel.rs
 +++ b/crates/appkit/src/panel.rs
 @@ -1,89 +1,1436 @@
@@ -5518,7 +5758,7 @@ index 597b4c1..0a1a9b8 100644
 +}
 diff --git a/crates/appkit/src/panel/portal.rs b/crates/appkit/src/panel/portal.rs
 new file mode 100644
-index 0000000..f91f050
+index 0000000000000000000000000000000000000000..f91f050bd67a0f1d69c2ecba18d085dbbedc08d6
 --- /dev/null
 +++ b/crates/appkit/src/panel/portal.rs
 @@ -0,0 +1,420 @@
@@ -5943,7 +6183,7 @@ index 0000000..f91f050
 +    }
 +}
 diff --git a/crates/appkit/src/pasteboard.rs b/crates/appkit/src/pasteboard.rs
-index 51ad8dc..7141827 100644
+index 51ad8dc59a9e5c67cbbca8ef26e24d40e9da0b08..7141827b9612578b4b8fdbc7f32e0d5d4daf0287 100644
 --- a/crates/appkit/src/pasteboard.rs
 +++ b/crates/appkit/src/pasteboard.rs
 @@ -10,13 +10,17 @@ use objc::sel::Sel;
@@ -6664,7 +6904,7 @@ index 51ad8dc..7141827 100644
      fn named_pasteboards_keep_data_and_support_object_reading() {
          crate::bootstrap();
 diff --git a/crates/appkit/src/pasteboard_manager.rs b/crates/appkit/src/pasteboard_manager.rs
-index 1edb5f5..5d50ec1 100644
+index 1edb5f5696c438abe354a3824d9a7dcf6497cee4..5d50ec148acb7762d5104eb218e0e64623825183 100644
 --- a/crates/appkit/src/pasteboard_manager.rs
 +++ b/crates/appkit/src/pasteboard_manager.rs
 @@ -29,7 +29,8 @@ mod sync_flags {
@@ -7186,7 +7426,7 @@ index 1edb5f5..5d50ec1 100644
 +    }
  }
 diff --git a/crates/appkit/src/text.rs b/crates/appkit/src/text.rs
-index 8af2402..5b86367 100644
+index 8af2402caeeb22133568ef6101010a84b36870a7..5b8636772fe1157bcb92c591eb0ead2619579654 100644
 --- a/crates/appkit/src/text.rs
 +++ b/crates/appkit/src/text.rs
 @@ -229,10 +229,14 @@ fn sync_field(editor: Id) {
@@ -7456,7 +7696,7 @@ index 8af2402..5b86367 100644
      fn paste_inserts_general_pasteboard_text_at_the_selection() {
          let view = text_view();
 diff --git a/crates/appkit/src/view.rs b/crates/appkit/src/view.rs
-index ab58227..49308aa 100644
+index ab582278ca51657983bbbc9eed53fa8395bf38d7..49308aafa48b2e4b1d990ed7b6cb7cbac10ecf3d 100644
 --- a/crates/appkit/src/view.rs
 +++ b/crates/appkit/src/view.rs
 @@ -50,6 +50,7 @@ pub struct View {
@@ -7666,7 +7906,7 @@ index ab58227..49308aa 100644
      /// fades its subviews with it.
      #[test]
 diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
-index ef4263b..0a9f207 100644
+index ef4263b8b8b51c63bc606b3acfc0d103dae49b95..0a9f2077d5abe51054950e0846d121924e95f372 100644
 --- a/crates/appkit/src/window.rs
 +++ b/crates/appkit/src/window.rs
 @@ -21,6 +21,8 @@ pub struct Window {
@@ -8282,7 +8522,7 @@ index ef4263b..0a9f207 100644
          assert_eq!(window_of(window).shown, 0);
      }
 diff --git a/crates/appkit/src/workspace.rs b/crates/appkit/src/workspace.rs
-index 76459a3..bc88a1a 100644
+index 76459a337af4c15c0e08cf460453974830172098..bc88a1a1920d838f1eaa198af0e70a49025db8a3 100644
 --- a/crates/appkit/src/workspace.rs
 +++ b/crates/appkit/src/workspace.rs
 @@ -140,6 +140,20 @@ unsafe extern "C" fn icon_for_file_type(_receiver: Id, _sel: Sel, _type: Id) ->
@@ -8361,7 +8601,7 @@ index 76459a3..bc88a1a 100644
          crate::bootstrap();
 diff --git a/crates/chrome/src/file_picker.rs b/crates/chrome/src/file_picker.rs
 new file mode 100644
-index 0000000..3b87cf9
+index 0000000000000000000000000000000000000000..3b87cf9075026f51972acca9df1471a83482ffec
 --- /dev/null
 +++ b/crates/chrome/src/file_picker.rs
 @@ -0,0 +1,749 @@
@@ -9115,7 +9355,7 @@ index 0000000..3b87cf9
 +    }
 +}
 diff --git a/crates/chrome/src/lib.rs b/crates/chrome/src/lib.rs
-index 643a828..e1a7b27 100644
+index 643a82809c5e40231b7fa94e150b5c77abfb68bd..e1a7b27740b66230f569e73792272e37af913f20 100644
 --- a/crates/chrome/src/lib.rs
 +++ b/crates/chrome/src/lib.rs
 @@ -6,6 +6,7 @@
@@ -9127,7 +9367,7 @@ index 643a828..e1a7b27 100644
  pub mod geometry;
  pub mod menu;
 diff --git a/crates/chrome/src/theme.rs b/crates/chrome/src/theme.rs
-index b27e9fa..569eaa0 100644
+index b27e9fa0a674cf75dce76f743edd6fd371959930..569eaa0ecec803530463d66834cde0eb50416225 100644
 --- a/crates/chrome/src/theme.rs
 +++ b/crates/chrome/src/theme.rs
 @@ -38,6 +38,7 @@ pub struct Theme {
@@ -9155,7 +9395,7 @@ index b27e9fa..569eaa0 100644
              panel_text: Color::rgba(255, 255, 255, 0.88),
              panel_text_disabled: Color::rgba(255, 255, 255, 0.28),
 diff --git a/crates/corefoundation/src/collections.rs b/crates/corefoundation/src/collections.rs
-index b34a9da..17c463b 100644
+index b34a9daec18a03a667bbe23a65ec0b6b75eb5fbb..17c463b125d0ceb58d273b4f355125a5b0050f08 100644
 --- a/crates/corefoundation/src/collections.rs
 +++ b/crates/corefoundation/src/collections.rs
 @@ -420,7 +420,7 @@ pub fn boolean(value: bool) -> CFTypeRef {
@@ -9168,7 +9408,7 @@ index b34a9da..17c463b 100644
      }) as CFTypeRef
  }
 diff --git a/crates/corefoundation/src/lib.rs b/crates/corefoundation/src/lib.rs
-index 4209069..b89464a 100644
+index 4209069aecee832089053c417c75b9b48fc5e439..b89464aaeee65d0849ddb0329875fe64bcc3037a 100644
 --- a/crates/corefoundation/src/lib.rs
 +++ b/crates/corefoundation/src/lib.rs
 @@ -32,6 +32,69 @@ pub mod url;
@@ -9265,7 +9505,7 @@ index 4209069..b89464a 100644
      /// and an integer's encoding gives its type.
      #[test]
 diff --git a/crates/corefoundation/src/runloop.rs b/crates/corefoundation/src/runloop.rs
-index 10b24ac..668a83e 100644
+index 10b24ac606212227bd8d7ee4f972ed500c3cd6aa..668a83e30d67aa6cd47a185e791cb22b19553314 100644
 --- a/crates/corefoundation/src/runloop.rs
 +++ b/crates/corefoundation/src/runloop.rs
 @@ -14,6 +14,7 @@ use crate::base::CFTypeRef;
@@ -9378,7 +9618,7 @@ index 10b24ac..668a83e 100644
      fn the_next_timer_is_the_soonest_valid_one_in_the_mode() {
          let (_, _, tick) = counter!();
 diff --git a/crates/corevideo/src/lib.rs b/crates/corevideo/src/lib.rs
-index 6f8ab70..78ccb37 100644
+index 6f8ab70e8b4ee3a868922ce31ce898c828b91be0..78ccb379129c83deeca57ea76c733d638b0f4c46 100644
 --- a/crates/corevideo/src/lib.rs
 +++ b/crates/corevideo/src/lib.rs
 @@ -96,7 +96,29 @@ fn display_period(display: u32) -> f64 {
@@ -9423,7 +9663,7 @@ index 6f8ab70..78ccb37 100644
  
  exports::exports! {
 diff --git a/crates/darwin/src/commoncrypto.rs b/crates/darwin/src/commoncrypto.rs
-index 497594d..d2f8252 100644
+index 497594db3abdb9fcc20b1a22bec1331e9b5ebce2..d2f825214b692b89032f87d4e46b154ba5670a28 100644
 --- a/crates/darwin/src/commoncrypto.rs
 +++ b/crates/darwin/src/commoncrypto.rs
 @@ -710,6 +710,22 @@ digest_api!(
@@ -9458,7 +9698,7 @@ index 497594d..d2f8252 100644
          "CCCryptorCreateFromData"=>cryptor_create_from_data,
          "CCCryptorRelease"=>cryptor_release,
 diff --git a/crates/darwin/src/fcntl.rs b/crates/darwin/src/fcntl.rs
-index 5a60200..5fb18a9 100644
+index 5a602003c3782994c5bdb02a66602829e724436f..5fb18a9fa5d8b111b5bcb949ed97a6d2c68e6258 100644
 --- a/crates/darwin/src/fcntl.rs
 +++ b/crates/darwin/src/fcntl.rs
 @@ -367,6 +367,7 @@ pub mod entry {
@@ -9470,7 +9710,7 @@ index 5a60200..5fb18a9 100644
          match command == cmd::F_GETFL && rc >= 0 {
              true => flags_to_guest(rc),
 diff --git a/crates/darwin/src/kqueue.rs b/crates/darwin/src/kqueue.rs
-index a3703cf..92225fa 100644
+index a3703cf87fde4b08469eb76504fbd089fdc5c01d..92225fa95102195111c1b01ab9386edf2283e119 100644
 --- a/crates/darwin/src/kqueue.rs
 +++ b/crates/darwin/src/kqueue.rs
 @@ -870,6 +870,16 @@ fn queues() -> &'static Mutex<HashMap<c_int, Arc<Mutex<Queue<SelectedBackend>>>>
@@ -9491,7 +9731,7 @@ index a3703cf..92225fa 100644
      queues()
          .lock()
 diff --git a/crates/foundation/src/lib.rs b/crates/foundation/src/lib.rs
-index 0d3af57..d71feb9 100644
+index 0d3af57250975bd14910a0480af6472445e06ff8..d71feb9987bfb9b818eb2712b6481a999176440a 100644
 --- a/crates/foundation/src/lib.rs
 +++ b/crates/foundation/src/lib.rs
 @@ -346,6 +346,13 @@ pub const STRING_GLOBALS: &[(&str, &str)] = &[
@@ -9539,7 +9779,7 @@ index 0d3af57..d71feb9 100644
      fn every_class_this_crate_claims_is_registered() {
          bootstrap();
 diff --git a/crates/objc/src/arc.rs b/crates/objc/src/arc.rs
-index 15e1f10..082dcc6 100644
+index 15e1f102c1253d13eb9627df5773532d69ae612e..082dcc6b5aa0b68afb6eeabba05ef177cb1f2a66 100644
 --- a/crates/objc/src/arc.rs
 +++ b/crates/objc/src/arc.rs
 @@ -1,4 +1,4 @@
@@ -9750,7 +9990,7 @@ index 15e1f10..082dcc6 100644
 +    }
 +}
 diff --git a/crates/objc/src/msg.rs b/crates/objc/src/msg.rs
-index 22a7e4d..7b25c1d 100644
+index 22a7e4dd423f57fb991de41698ece310d1fb853c..7b25c1d9dbabec94807316adac029551cb57f5fa 100644
 --- a/crates/objc/src/msg.rs
 +++ b/crates/objc/src/msg.rs
 @@ -58,12 +58,31 @@ pub fn forward() -> *const c_void {
@@ -9787,7 +10027,7 @@ index 22a7e4d..7b25c1d 100644
  
  /// `ROSEMARY_LOG_UNRECOGNIZED=1`: report each unanswered message once and answer
 diff --git a/crates/rosemary/src/fault.rs b/crates/rosemary/src/fault.rs
-index c83e0eb..b1c4480 100644
+index c83e0eb0017b0c304fa27d94dbc6e7a8b515b6cd..b1c44803d0c12a21528f7af5def79569dea7c2ff 100644
 --- a/crates/rosemary/src/fault.rs
 +++ b/crates/rosemary/src/fault.rs
 @@ -185,6 +185,43 @@ pub fn attribute(pc: u64) -> Attribution {
@@ -9835,7 +10075,7 @@ index c83e0eb..b1c4480 100644
  ///
  /// A view rather than a borrow of [`Placed`] because the vector is behind a mutex that
 diff --git a/crates/rosemary/src/startup.rs b/crates/rosemary/src/startup.rs
-index a3664d3..3ee6d75 100644
+index a3664d3701398ec008e0170988a540d3c1dee060..3ee6d75d37ae5849065329bdd1ba672b6c9a08d6 100644
 --- a/crates/rosemary/src/startup.rs
 +++ b/crates/rosemary/src/startup.rs
 @@ -43,6 +43,9 @@ pub fn run(exec: &dyn Execution) -> Result<i32, VmError> {
@@ -9849,7 +10089,7 @@ index a3664d3..3ee6d75 100644
      // an answer about this binary rather than the program's. See [`crate::compat`].
      #[cfg(target_os = "macos")]
 diff --git a/crates/webkit/src/web_view.rs b/crates/webkit/src/web_view.rs
-index 313b921..4e9f876 100644
+index 313b9212e1c05675245abd0c649b8c40070f94bf..4e9f876f5bea2e4dfe671b9656ac300f23c03a56 100644
 --- a/crates/webkit/src/web_view.rs
 +++ b/crates/webkit/src/web_view.rs
 @@ -1830,14 +1830,22 @@ fn key(receiver: Id, event: Id, pressed: bool) {

@@ -209,3 +209,13 @@ Validated on 2026-10-14 against the official Rosemary v0.2.3 release at commit `
 - `cargo build --locked --offline --release -p rosemary` passed. The installed `bin/rosemary` reports v0.2.3; SHA-256 is `af59637d4aef2490498d0b3efb47a206f32ef222321044351201dd984dcbad9e`, and ELF build ID is `d8d7f314b6f2136a2738dbe90e165b8b0c99ae56`.
 
 The installed build has not been launched into Studio. User validation of the shortcut mapping, Open from File, and Save to File remains pending.
+
+## Roblox Studio 0.743 startup compatibility
+
+The updated local Studio bundle reports version `0.743.0.7431133`. Launches through `scripts/run-studio.sh` failed with exit code 134 after Rosemary received the unimplemented `+[NSGraphicsContext graphicsContextWithCGContext:flipped:]` selector. Rosemary now implements this factory with a retained Core Graphics context, `CGContext`/`graphicsPort` accessors, initial flipped-state storage, and cleanup on deallocation.
+
+- `cargo test --locked --offline -p appkit`: 335 tests passed, plus the AppKit theme integration test.
+- `cargo fmt --all -- --check` and `git diff --check` passed.
+- `cargo build --locked --offline --release -p rosemary` passed. The release binary SHA-256 is `7c808dc50464a6351dac759f83460fd2a6029e223d8f4ca74a83a331ca1e6ce1`; ELF build ID is `dba17823c35df6931107e8f1543fc597798e113e`.
+- The regenerated canonical patch applies cleanly to pinned Rosemary commit `91e2de231604237ed5faa81513ba441d7b0a79bb`; `./scripts/build-studio.sh --check-only` passed.
+- A headless smoke launch passed the former missing-selector point, then exited because no display server/screens were available to create a window. Full startup must be retested by launching Studio through Citric in the user's graphical session.

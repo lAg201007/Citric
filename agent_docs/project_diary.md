@@ -1,5 +1,14 @@
 # Project diary
 
+- On 2026-10-14, Studio 0.743.0.7431133 began aborting during startup because
+  Rosemary lacked `+[NSGraphicsContext graphicsContextWithCGContext:flipped:]`.
+  The upstreamable fix retains the Core Graphics context, exposes AppKit's
+  context accessors, preserves the initial flipped state, and releases the
+  handle with the wrapper. AppKit tests, the exact pinned-base patch check, and
+  the locked Release build passed. A headless smoke launch passed the former
+  selector but could not create a window without a display, so desktop Studio
+  confirmation remains pending.
+
 - On 2026-10-14, the launcher update flow was completed. Startup still checks
   Roblox's MacStudio endpoint without downloading, but the update action now
   refreshes release metadata and downloads the matching official build before

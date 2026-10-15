@@ -1,5 +1,39 @@
 # Latest session work
 
+Deployment: `studio_0743_graphics_context_20261014`
+
+State: complete in source and installed binary; graphical Studio validation
+remains pending.
+
+Outcome: Studio 0.743.0.7431133's startup abort on the missing
+`+[NSGraphicsContext graphicsContextWithCGContext:flipped:]` selector was fixed
+in the canonical Rosemary v0.2.3 overlay. The implementation retains the
+passed `CGContextRef`, exposes `CGContext` and `graphicsPort`, preserves the
+initial flipped state when no view is focused, and releases the context during
+wrapper deallocation. The installed `bin/rosemary` was rebuilt for this patch.
+
+Verification: 335 AppKit tests plus the theme integration test passed; locked
+offline release build, formatting, clean pinned-base patch application, and
+`./scripts/build-studio.sh --check-only` passed. The headless smoke launch no
+longer reports the missing selector and advanced to `Cannot create window: no
+screens available`; this environment has no graphical display.
+
+Blocker: no source blocker. User validation is required in a real desktop
+session by fully restarting Studio through Citric.
+
+Exact next entry point: launch the updated Studio through Citric and confirm
+that it remains open past startup; if it fails, attach the new session log.
+
+Deployment token report: `studio_0743_graphics_context_20261014` (unavailable;
+the installed report script found no matching session record).
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID
+
 Deployment: `citric_studio_latest_update_20261014`
 
 State: complete in source; live network download and GUI update validation

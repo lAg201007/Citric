@@ -1,5 +1,14 @@
 # Project progress
 
+Latest completed deployment: `studio_0743_graphics_context_20261014`. Studio
+0.743.0.7431133's startup crash on the missing
+`NSGraphicsContext graphicsContextWithCGContext:flipped:` selector is fixed in
+the canonical patch. The installed Release binary was rebuilt from Rosemary
+v0.2.3, and the headless smoke launch passed the former selector before
+stopping at window creation because this environment has no display. A real
+desktop restart through Citric is the remaining validation step. There is no
+active deployment.
+
 Latest completed deployment: `citric_studio_latest_update_20261014`. The
 launcher automatically checks the published Mac Studio version and the update
 button downloads and validates the matching build after the user clicks it.

@@ -9,6 +9,13 @@ local release binary, validates and patches the Studio app when required, uses
 the local Darwin cache, and defaults SDL to X11/XWayland because that avoided a
 reappearing non-modal plugin-loading window during the recorded tests.
 
+In `crates/appkit/src/backing.rs`, `NSGraphicsContext` wraps a retained
+`CGContextRef` for `graphicsContextWithCGContext:flipped:`. The wrapper stores
+the initial flipped flag until a focused view supplies the live value, returns
+the Core Graphics handle through both AppKit accessors, and releases the
+handle during deallocation. This is required by Studio 0.743 startup and is
+implemented without a host-specific workaround.
+
 The compatibility diff includes AppKit window/view/input behavior,
 CoreFoundation lifetime handling, Objective-C autorelease safety, keyboard/font
 compatibility, and diagnostic logging. `patches/0001-citric-runtime-compat.patch`
