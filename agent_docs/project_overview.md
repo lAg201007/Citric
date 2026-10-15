@@ -7,6 +7,11 @@ the macOS Roblox Studio client on Linux. Its current branch stores the
 compatibility patches, launcher, scripts, and diagnostic record; Rosemary source
 is materialized only in a temporary build checkout.
 
+The AppKit overlay also registers `-[NSButtonCell drawBezelWithFrame:inView:]`
+with the correct CGRect/object ABI and renders the requested bezel frame using
+the supplied control view. Automated coverage and pinned-base application pass;
+graphical Studio confirmation remains pending.
+
 The GitHub repository is a standalone Citric repository. Locally, `origin`
 points to Citric and `upstream` points to Rosemary, so updates can be fetched
 without pretending that GitHub has a formal fork relationship. Its branch
@@ -25,6 +30,13 @@ retain the removed Rosemary source, so history and reproducibility are kept.
 The patch-overlay migration is complete. Future work resumes from
 docs/current-state.md and should preserve the separation between source changes,
 local runtime assets, and user account state.
+
+The current import deployment adds `patches/0003-upstream-pr77-80.patch` to
+the series while keeping the Rosemary v0.2.3 base pinned. It reconciles
+upstream runtime, autorelease-pool, drawable-lifetime, input/locale, and Qt
+compatibility work with Citric's existing chooser and diagnostic changes.
+Automated validation is recorded in docs/upstream-imports.md; the rebuilt
+runtime awaits a bounded Studio Play/Stop memory test.
 
 The launcher normalizes Studio's numeric locale to `C` and records the
 before/after values. This addresses the observed Play failure where valid
@@ -58,6 +70,39 @@ launcher, it records main-loop gaps, script/event/backing pumps,
 CoreFoundation callbacks, and AppKit/CoreVideo display-link scheduling and
 callback times. This helps investigate periodic Play stalls without assuming
 that the cause is a fixed timer.
+
+The launcher also supports a one-shot memory investigation. When
+`logs/.memory-trace-once` is armed, `scripts/run-studio.sh` starts the
+privacy-conscious `scripts/trace-studio-memory.py` sampler before Studio and
+stops it when the launch exits. The ignored JSONL trace samples the Studio
+process tree and available host memory, swap, pressure, cgroup, and zram
+metrics without recording command lines, environments, file paths, memory
+contents, clipboard contents, or Studio log contents. The next normal Studio
+session is the reproduction window; analysis remains pending until the user
+returns its generated trace.
+
+The memory investigation now recognizes only fixed `PlaySoloManager` start and
+stop events from the session log. It emits privacy-safe boundary snapshots and
+follow-up snapshots 60 and 120 seconds after Stop, including aggregate
+`smaps` mapping categories, private/shared totals, and fixed VMA-size buckets
+without addresses, labels, individual sizes, or paths. Boundary and periodic
+30-second samples use the same privacy-preserving aggregation. A diagnostic
+launch requests mimalloc shutdown statistics through `MIMALLOC_SHOW_STATS=1`;
+the parser recognizes fixed footer rows and records only presence and numeric
+summary fields. The bounded capture showed roughly 7.4 GiB retained after two
+idle minutes, dominated by anonymous mappings and swap. A clean exit returned
+status 0 and reduced host swap, but the 86.3 MiB mimalloc committed total does
+not reconcile with process RSS, so allocation ownership remains unknown.
+
+The next memory diagnostic supports an ignored
+`logs/.memory-trace-detailed-once` marker. It records per-VMA identity and
+addresses, permissions, labels/paths, mapping sizes, RSS/PSS, swap, and
+private/shared counters in the local mode-0600 JSONL trace at the normal
+cadence and Play/Stop checkpoints. The same run enables Rosemary's
+`ROSEMARY_TRACE_VM=1` request logging for guest `mmap` and `mprotect`; the
+summary helper keeps only fixed call counts. The default capture remains
+redacted, and this mode still attributes mappings rather than allocation
+call stacks.
 
 The AppKit file-panel compatibility layer now uses Rosemary's shared SDL-backed
 `chrome` file chooser for Import and Open from File. The latest manual retest
@@ -121,9 +166,18 @@ ROSEMARY_TRACE_CLIPBOARD and ROSEMARY_INPUT_TRACE. Manual validation remains
 incomplete: Studio-to-search paste works, while cut, search-to-other-control
 paste, and transfers involving external Linux applications still fail.
 
-The reusable clipboard work is prepared for upstream review as two stacked
-Rosemary v0.2.3 branches in `lAg201007/rosemary-citric-fixes`:
-`citric/pasteboard-bridge` contains the Carbon/Cocoa bridge and
-`citric/clipboard-text-actions` adds native AppKit and WebKit text actions.
-Both commits are included in open Rosemary PR #42. Full manual Studio and
-external-application validation is still pending.
+The reusable clipboard work is prepared for upstream review as two independent,
+one-commit Rosemary branches in `lAg201007/rosemary-citric-fixes`:
+`citric/pasteboard-carbon-bridge` contains the Carbon/Cocoa bridge and
+`citric/native-clipboard-actions` adds native AppKit and WebKit text actions.
+Both branches target current Rosemary main and are pushed to the fork; PR #42 remains open and
+untouched for the user to close manually before opening replacement PRs. Full
+manual Studio and external-application validation is still pending.
+
+The PR 77–80 import is now the validated memory-stability candidate. The
+launcher hides memory diagnostics during normal use; set
+`STUDIO_MEMORY_TRACE=1` for aggregate capture or `STUDIO_MEMORY_TRACE=detailed`
+for per-VMA and guest VM tracing when needed. In the latest bounded two-cycle
+test, memory stopped growing linearly and stayed stable for two minutes after
+the second Stop, with approximately 244 MiB above the settled baseline.
+Longer sessions remain unverified.

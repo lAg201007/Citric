@@ -4,6 +4,13 @@ Rosemary is a Rust 2024 workspace that loads macOS Mach-O applications through
 native or Microlift-backed execution and supplies Darwin, Objective-C,
 CoreFoundation, AppKit, Metal, and SDL compatibility layers.
 
+The AppKit compatibility layer now has an upstream-ready implementation of
+`+[NSGraphicsContext setCurrentContext:]` in the fork branch
+`citric/nsgraphicscontext-current-context`. It stores an explicitly selected
+context per thread, retains it until replacement or clearing, and releases it
+when the thread-local state is destroyed. An explicit nil value suppresses the
+focused-view fallback, matching AppKit's current-context semantics.
+
 Citric targets the Linux execution path. scripts/run-studio.sh selects the
 local release binary, validates and patches the Studio app when required, uses
 the local Darwin cache, and defaults SDL to X11/XWayland because that avoided a
@@ -15,6 +22,14 @@ the initial flipped flag until a focused view supplies the live value, returns
 the Core Graphics handle through both AppKit accessors, and releases the
 handle during deallocation. This is required by Studio 0.743 startup and is
 implemented without a host-specific workaround.
+
+`NSButtonCell` registers `drawBezelWithFrame:inView:` with the full CGRect and
+object-argument ABI used by AppKit. Its implementation renders only the bezel
+inside the supplied frame and takes control state from the supplied view; the
+existing combined bezel-and-title path remains separate. This avoids the
+startup selector abort while keeping the method suitable for upstream
+Rosemary. A focused regression covers registration, encoding, frame dimensions,
+and Objective-C dispatch.
 
 The compatibility diff includes AppKit window/view/input behavior,
 CoreFoundation lifetime handling, Objective-C autorelease safety, keyboard/font
@@ -32,6 +47,13 @@ metadata, checks the pinned SHA-256 when available, validates the bundle
 identifier/version/build, executable, and Intel Mach-O slice, and installs it
 under the ignored `app/full/RobloxStudio.app` path with a replacement
 confirmation.
+
+`patches/0003-upstream-pr77-80.patch` is the reconciled import layer for the
+upstream Rosemary PR 77–80 snapshots. It adds sharded runtime references and
+caches, per-turn autorelease pools, drawable/layer retirement, input and
+locale behavior, and selected Qt/AppKit/Foundation APIs while retaining
+Citric's portal/fallback chooser and diagnostics. Its source revisions,
+conflicts, and test evidence are recorded in docs/upstream-imports.md.
 
 `citric_launcher/studio_bundle.py --check-update` queries
 `clientsettings.roblox.com/v2/client-version/MacStudio`, validates the returned
@@ -70,6 +92,44 @@ run.
 
 Do not copy the authenticated prefix or raw logs into Git. Do not publish the
 proprietary app bundle without an explicit later decision.
+
+For the current Studio memory-leak investigation, `scripts/trace-studio-memory.py`
+is a low-overhead Linux `/proc` sampler. It follows the launcher parent and its
+descendants, records per-process RSS/PSS/anonymous/swap memory, thread count,
+file descriptors, VMA count, page faults, CPU time, and I/O counters, and
+periodically records host memory/swap, vmstat, memory PSI, cgroup memory
+statistics/events, and zram statistics when available. It emits mode `0600`
+JSONL with metadata and an explicit privacy contract. `scripts/run-studio.sh`
+enables it only when `STUDIO_MEMORY_TRACE=1` or `STUDIO_MEMORY_TRACE=detailed`
+is set for that invocation, uses a five-second default interval, and terminates
+it after the launcher exits. It
+removes the marker only after a sample sees the Rosemary executable in the
+process tree, preserving the capture request through early startup failures.
+The sampler tails the session log only to recognize fixed `PlaySoloManager`
+start/stop events, then emits immediate boundary snapshots and 60/120-second
+post-stop snapshots. Boundary snapshots aggregate `/proc/<pid>/smaps` by
+mapping kind and private/shared status, retaining counters but no labels,
+paths, addresses, or contents. A diagnostic launch requests
+`MIMALLOC_SHOW_STATS=1` in both the host Rosemary environment and the
+filtered Studio guest environment through `ROSEMARY_ENVIRON`, and enables
+`ROSEMARY_TRACE_INTERPOSE=1` for that run. These may produce shutdown-only
+aggregate allocator statistics and binding decisions, but they are not a
+per-allocation profiler. Normal launches do not inherit either diagnostic
+setting.
+
+For a deeper bounded run, the ignored `logs/.memory-trace-detailed-once`
+marker adds per-VMA addresses, permissions, labels/paths, sizes, RSS/PSS,
+swap, and private/shared counters to the local mode-0600 trace. It also sets
+`--detailed-vmas` for the sampler and `ROSEMARY_TRACE_VM=1` for Rosemary's
+guest `mmap`/`mprotect` request logging. The summarizer stores only fixed
+counts of those VM calls. This is mapping attribution, not allocation stack
+attribution. The local environment has no `perf`, Heaptrack, BPF tracer, or
+Valgrind available; `strace` would provide syscall events without allocator
+stacks, so a later stack profiler may require a concrete privileged setup.
+The normal reproduction must not use `--objc-debug`. The first bounded capture
+showed anonymous mappings dominating the retained footprint, while file
+mappings were negligible; it did not establish whether the bytes are live
+allocations or allocator-retained pages.
 
 For periodic Play-stutter diagnosis, `ROSEMARY_PERF_TRACE` is enabled by
 default by the launcher and writes trace metadata with session logs. The
@@ -140,8 +200,11 @@ focused responder's ancestor views. Manual validation remains incomplete:
 Toolbox and Explorer copy/cut work, while paste there and clipboard shortcuts
 in other controls still fail.
 
-For upstream review, these clipboard changes are isolated into two Rosemary
-v0.2.3 branches. The first changes only the Carbon/Cocoa pasteboard bridge;
-the second layers native AppKit and WebKit editing actions on top, keeping the
-two concerns independently reviewable. Both commits are included in open
-Rosemary PR #42.
+For upstream review, these clipboard changes are isolated into two independent
+one-commit Rosemary v0.2.3 branches. `citric/pasteboard-carbon-bridge` changes
+only the Carbon/Cocoa pasteboard bridge; `citric/native-clipboard-actions` adds
+native AppKit and WebKit editing actions independently, keeping the two
+concerns independently reviewable. Both branches target current Rosemary main
+and are pushed to the user's fork. Official PR #42 was
+left open and untouched for the user to close manually before creating the two
+replacement PRs.

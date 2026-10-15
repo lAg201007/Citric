@@ -16,10 +16,20 @@ Esta lista separa falhas reproduzidas, falhas corrigidas e erros que continuam a
 | Saídas 133, 134 e 139 em testes distintos | Houve crashes em tentativas de abertura, edição e Play; nem todos têm stack ou log preservado no novo repo. | Não agrupar como uma única causa. Capturar cada caso com log novo. |
 | Janela “Initializing plugins” reaparece | Reproduzida no Wayland após ser escondida. Com SDL X11/XWayland não reapareceu numa observação, sem bloquear outras partes do Studio. | Não há correção interna de modal/lifecycle confirmada. O launcher agora recomenda Wayland conforme preferência do usuário; reavaliar esse sintoma nesse backend. |
 | Janela preta sem título | Várias janelas vazias foram observadas em uma sessão antiga, associadas a Studio/plugins/emulador. Numa observação XWayland posterior, apenas a janela principal permaneceu. | Observação melhorou; não há prova de que todas as janelas vazias estejam resolvidas. |
-| Studio 0.743 exits during startup: `+[NSGraphicsContext graphicsContextWithCGContext:flipped:]` unrecognized | Rosemary v0.2.3 launched the updated Studio bundle (0.743.0.7431133), then exited with code 134 on this missing AppKit selector. The plugin patcher completed successfully. | Implemented in the Citric patch with Core Graphics context retention and lifecycle tests. Headless smoke launch passed this selector but could not reach window creation because the test session has no display; user desktop retest pending. |
+| Studio 0.743 exits during startup: missing `NSGraphicsContext` selectors | The first failure was `+[NSGraphicsContext graphicsContextWithCGContext:flipped:]`; after that was implemented, three launches exited with code 134 on missing `+[NSGraphicsContext setCurrentContext:]`. The plugin patcher completed successfully. | Both APIs are implemented in the Citric patch. The current-context setter retains and releases per-thread context state and has regression coverage. The rebuilt binary needs a desktop startup retest. |
+
+| Studio 0.743 exits during startup: `NSButtonCell` does not recognize `drawBezelWithFrame:inView:` | A later launch reached AppKit button drawing and aborted with code 134 on the unregistered selector. | The selector is registered with the CGRect/object ABI and renders only the supplied bezel frame using the supplied control view. Automated checks pass, and the user confirmed that Studio now opens normally after the fix. |
 
 | Import/Open chooser entries were white with invisible names | In `run-20261013T213755-38660.log`, the chooser opened and Up navigated, but dark appearance paired white text with a hardcoded white list/field surface. The user later retested the corrected build and confirmed readable names, successful file selection, and clean cancellation in Import. | Fixed in the latest patch and release binary with a theme-specific input background and a dark-mode filename rendering regression test. Open from File still needs separate manual confirmation. |
 
 ## Próxima captura recomendada
 
 Use scripts/run-studio.sh com nome de log novo. Não inicie o Studio direto sob GDB, pois a inicialização por esse caminho produziu o erro diferente setBackgroundStyle:. Guarde o log bruto fora do Git e registre comando, nome de log, código de saída e última mensagem do runtime. Se precisar de GDB, inicie o Studio normalmente e anexe ao processo depois.
+
+For the memory-growth investigation, use the already-armed one-shot capture for
+one controlled Play/Stop cycle. Leave Studio idle for two minutes after Stop,
+then exit normally so allocator shutdown statistics can be recorded if this
+Rosemary build supports them. The trace contains only fixed Play event names
+and aggregated mapping categories; keep the raw session log and trace under
+ignored `logs/` and do not commit them. A forced kill prevents allocator
+shutdown output but still leaves periodic memory and Play-boundary snapshots.

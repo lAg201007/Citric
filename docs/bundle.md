@@ -55,3 +55,13 @@ The launcher can download the pinned Roblox Studio 0.742.0.7421053 macOS x86_64 
 At launcher startup, Citric checks Roblox's published Mac Studio version against the selected installed bundle. If a newer release is available, the button displays `UPDATE STUDIO NEW VERSION <version>`. Clicking it fetches the release metadata again and downloads `https://setup.rbxcdn.com/mac/<clientVersionUpload>-RobloxStudioApp.zip` for that release. Before replacing the current bundle, the installer restricts the request to Roblox's HTTPS CDN, enforces archive size and safe-path limits, and verifies the app identifier, advertised version/build, executable, and x86_64 Mach-O architecture. The new bundle is staged and validated before the existing bundle is moved aside; download or validation failures leave the current bundle unchanged. Replacement requires user confirmation.
 
 Citric does not currently receive or use a per-release SHA-256 checksum from the version-check metadata. The original pinned build keeps its recorded checksum; later builds use the official HTTPS release metadata plus archive and bundle validation. This verifies that the downloaded archive matches the advertised Studio bundle identity and architecture; it is not an automated runtime compatibility test against every Rosemary release. Citric checks for updates automatically at launcher startup but never downloads or replaces Studio until the user clicks the update button. The checked-in bundle manifest describes the local snapshot at the time it was recorded; installing a different bundle changes that local snapshot and requires refreshing the manifest before using it to verify the replacement.
+
+
+## PR 77–80 integration build
+
+The current local runtime remains Rosemary v0.2.3 with reconciled Citric ports
+of PRs 77–80. The locked offline Release build installed `bin/rosemary` with
+SHA-256 `07072320b4441b4ef0c9834f3de9e4bdac7e43ebc93e65ce1d94c71b18aaa7ce`
+and ELF build ID `f3d8383bcda1f2bfca16fc355ce29263811b786e`. The previous local
+binary is preserved as ignored `bin/.rosemary.before-pr77-80-20261015`.
+[upstream-imports.md](upstream-imports.md) records provenance and validation.

@@ -212,10 +212,83 @@ The installed build has not been launched into Studio. User validation of the sh
 
 ## Roblox Studio 0.743 startup compatibility
 
-The updated local Studio bundle reports version `0.743.0.7431133`. Launches through `scripts/run-studio.sh` failed with exit code 134 after Rosemary received the unimplemented `+[NSGraphicsContext graphicsContextWithCGContext:flipped:]` selector. Rosemary now implements this factory with a retained Core Graphics context, `CGContext`/`graphicsPort` accessors, initial flipped-state storage, and cleanup on deallocation.
+The updated local Studio bundle reports version `0.743.0.7431133`. The first startup failure was the unimplemented `+[NSGraphicsContext graphicsContextWithCGContext:flipped:]` factory. After that was added, three launches through `scripts/run-studio.sh` exited with code 134 within roughly 2.5 seconds on the missing class method `+[NSGraphicsContext setCurrentContext:]`. This setter is now implemented as retained per-thread context state, with replacement and nil clearing releasing the previous context. The factory and setter changes are in the canonical patch.
 
-- `cargo test --locked --offline -p appkit`: 335 tests passed, plus the AppKit theme integration test.
+- `cargo test --locked --offline -p appkit -- --test-threads=1`: 336 tests passed, plus the AppKit theme integration test.
 - `cargo fmt --all -- --check` and `git diff --check` passed.
-- `cargo build --locked --offline --release -p rosemary` passed. The release binary SHA-256 is `7c808dc50464a6351dac759f83460fd2a6029e223d8f4ca74a83a331ca1e6ce1`; ELF build ID is `dba17823c35df6931107e8f1543fc597798e113e`.
+- `./scripts/build-studio.sh` built and installed Rosemary v0.2.3. The binary SHA-256 is `740424aaeedc6fdb8a52cc24e809cb959f358b4d930c3a78955bcf75120d345b`; ELF build ID is `db0236205bf57749a402a8b39ff3bffb3228a9e4`.
 - The regenerated canonical patch applies cleanly to pinned Rosemary commit `91e2de231604237ed5faa81513ba441d7b0a79bb`; `./scripts/build-studio.sh --check-only` passed.
-- A headless smoke launch passed the former missing-selector point, then exited because no display server/screens were available to create a window. Full startup must be retested by launching Studio through Citric in the user's graphical session.
+- `git diff --check` passed after patch regeneration. The one-shot memory trace remains armed; the three failed starts happened too quickly for it to sample the Rosemary process. Full startup must be retested by launching Studio through Citric in the user's graphical session before continuing the Play/Stop memory test.
+
+The subsequent startup gap was `-[NSButtonCell drawBezelWithFrame:inView:]`.
+The canonical patch now registers the selector with encoding
+`v56@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16@48` and renders only the bezel in
+the passed frame. The focused regression verifies selector dispatch and
+frame-sized output. The patch applies cleanly to pinned Rosemary v0.2.3;
+`cargo fmt -p appkit -- --check` passes; and the complete offline AppKit suite
+passes 337 unit tests plus the theme integration test. The user then tested
+Studio and confirmed that it opened normally after this fix.
+
+## Play-boundary memory capture
+
+The opt-in memory trace follows the session log for fixed
+`PlaySoloManager` start/stop tokens and writes snapshots at each boundary,
+60/120 seconds after Stop, and periodic 30-second intervals. Snapshots include
+per-process status and `smaps` totals grouped by mapping kind, private/shared
+status, and fixed VMA-size buckets (`<1 MiB`, `1–<16 MiB`, `16–<256 MiB`,
+`>=256 MiB`, `unknown`). Addresses, mapping labels, individual VMA sizes,
+paths, and log lines are discarded. `run-studio.sh` requests
+`MIMALLOC_SHOW_STATS=1` only while the diagnostic trace is active, for
+allocator summary output on clean exit when supported by the packaged build.
+This does not enable per-allocation stack traces.
+
+The launcher forwards `MIMALLOC_SHOW_STATS` into the guest environment and
+enables Rosemary's allocator-interposition trace only for an explicitly enabled capture.
+After a traced session, `summarize-memory-diagnostics.py` recognizes multiple
+fixed mimalloc footer row labels and records whether a report was observed,
+allocator binding counts, and whether allocator crossing warnings or heap-check
+messages appeared. It stores only fixed markers and counts in the `.meta`
+sidecar, never copies log lines or allocator footer values. This detects
+missing diagnostics but still does not provide allocation call stacks.
+
+For a detailed run, `STUDIO_MEMORY_TRACE=detailed` opts into
+per-VMA `smaps` records for the Rosemary process: address ranges, permissions,
+file labels, mapping sizes, and resident, proportional, anonymous, private,
+shared, and swap counters. The same run enables `ROSEMARY_TRACE_VM=1` to log
+guest `mmap` and `mprotect` requests. These raw paths and addresses stay in the
+gitignored `logs/` directory; the launcher creates the capture with mode 0600,
+and does not activate capture on subsequent launches automatically. Aggregate
+mode (`STUDIO_MEMORY_TRACE=1`) omits individual paths and addresses. This detailed mode identifies mappings and
+VM requests, but still does not capture allocation call stacks.
+
+Verification: four tracer tests cover event filtering, incremental log reads,
+privacy-safe `smaps` aggregation, and a synthetic live run with both delayed
+checkpoints. Two launcher tests and two diagnostic-summary tests passed. The
+full Python suite passed 33/33; `bash -n scripts/run-studio.sh`, Python
+bytecode compilation, and `git diff --check` passed. Applying the event parser
+to the existing ignored session log found four Play starts and four Stops
+without emitting any log text. The prior bounded Studio Play/Stop run with two
+minutes of idle time completed through the Studio window X. Its trace ended
+through the sampler signal handler and the launcher wrote exit code `0`;
+the corrected summary reports `mimalloc_stats_report_observed=1`. Manual
+inspection of the footer found 86.3 MiB committed. This value does not
+reconcile with process RSS plus swap; allocation stack tracing and
+retaining-subsystem attribution remain pending. These observations describe the earlier investigation, before PRs 77–80.
+
+
+## PR 77–80 integration
+
+The reconciled import and its automated checks are recorded in
+[upstream-imports.md](upstream-imports.md), including the subsequent two-cycle
+manual test and its stable two-minute post-Stop observation. The user reports
+that repeated Play no longer causes the previous linear increase. Longer
+sessions and the remaining approximately 244 MiB increase are not fully explained.
+
+Diagnostics now require `STUDIO_MEMORY_TRACE=1` or
+`STUDIO_MEMORY_TRACE=detailed` for each invocation; `0` or an unset variable
+leaves them disabled. Legacy one-shot/persistent markers are ignored. Launcher
+regressions verify default-off behavior even with stale markers, preservation
+of inherited guest settings, both opt-in modes, and successive explicit runs.
+
+Final opt-in diagnostics verification: all 37 Python tests passed, shell syntax
+validation passed, and all three patches applied cleanly to the pinned base.

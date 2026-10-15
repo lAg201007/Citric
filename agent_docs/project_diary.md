@@ -1,5 +1,121 @@
 # Project diary
 
+- On 2026-10-15, Rosemary PRs 77–80 were reconciled into
+  `patches/0003-upstream-pr77-80.patch` while the v0.2.3 base remained pinned.
+  The import keeps Citric's chooser, input aliases, and memory diagnostics and
+  adds upstream runtime caches, autorelease-pool boundaries, drawable/layer
+  retirement, input/locale behavior, and selected compatibility APIs. The
+  imported tests are documented in `docs/upstream-imports.md`; one unchanged
+  Metal heap-fit failure remains. No commit or push was made so the existing
+  diagnostic worktree state stays recoverable for the user's bounded test.
+
+- On 2026-10-15, the memory investigation added a detailed, one-shot mapping
+  capture for the unexplained Play-correlated retention. Arming the ignored
+  `logs/.memory-trace-detailed-once` marker records per-VMA addresses,
+  permissions, labels/paths, sizes, RSS/PSS, swap, and private/shared
+  counters at the normal cadence and Play/Stop checkpoints. The same launch
+  enables Rosemary's `ROSEMARY_TRACE_VM=1` request logging for guest
+  `mmap`/`mprotect`, while the summarizer retains only fixed counts. The
+  default trace remains redacted and all detailed output is mode 0600 under
+  ignored `logs/`.
+- This improves mapping-level attribution without pretending to provide
+  allocator call stacks. The diagnostic environment has no perf, Heaptrack,
+  BPF tracer, or Valgrind; strace is available but only observes syscalls.
+  Analyze the bounded detailed capture first, then request a concrete
+  privileged profiler setup only if stack attribution is still necessary.
+
+- On 2026-10-15, anonymous-memory attribution was strengthened. Boundary and
+  periodic 30-second snapshots now aggregate `/proc/<pid>/smaps` by mapping
+  kind, sharing, and fixed VMA-size buckets (`<1 MiB`, `1–<16 MiB`,
+  `16–<256 MiB`, `>=256 MiB`, and `unknown`) without addresses, labels,
+  individual sizes, paths, or contents. The mimalloc summary parser now
+  recognizes multiple fixed footer row labels; the earlier metadata false-zero
+  is corrected for future runs. The prior bounded run's corrected summary
+  detected the footer; manual inspection found 86.3 MiB committed, while
+  process RSS remained around 8.3 GiB RSS plus swap after Stop. Host swap fell about 4.2
+  GiB on clean process exit and status was 0. This confirms clean shutdown and
+  Play-correlated anonymous retention, but the allocator total does not explain
+  the process footprint and no allocation owner is identified. The next run is
+  armed for a short capture after memory pressure recovers.
+
+- On 2026-10-15, the bounded one-cycle capture completed in
+  `logs/run-20261015T010138-120845.memory.jsonl`. It recorded Play start at
+  35 seconds, Stop at 300.7 seconds, and checkpoints at 60 and 120 seconds.
+  Rosemary RSS plus swap grew by about 7.44 GiB during Play and remained about
+  7.37 GiB above the pre-Play level at 120 seconds. At that point anonymous
+  mappings accounted for roughly 3.05 GiB RSS and 7.61 GiB swap; named
+  anonymous mappings added about 0.24 GiB RSS and 1.15 GiB swap, while file
+  mappings were negligible. VMA count ranged from 3,016 to 3,181 and threads
+  peaked at 111. Host swap rose from 18.31 to 28.96 GiB, ending at 26.96 GiB;
+  minimum MemAvailable was 1.29 GiB. Kernel and cgroup OOM counters stayed at
+  zero, and the log had no hang, crash, or OOM marker. The user closed Studio
+  with the window X; the trace ended through its signal handler and the
+  launcher exit-code sidecar is `0`. The result establishes Play-correlated
+  retention and points to anonymous memory, but cannot yet separate live
+  allocations from allocator-retained pages. The next diagnostic must add
+  allocation attribution.
+
+- On 2026-10-15, the memory investigation was extended from periodic aggregate
+  sampling to a bounded Play-cycle attribution capture. The tracer tails only
+  the session log's fixed `PlaySoloManager` markers, emits sanitized start and
+  stop snapshots, and schedules snapshots 60 and 120 seconds after Stop. Each
+  boundary snapshot aggregates the Rosemary process's `smaps` counters by
+  mapping kind and private/shared status without retaining addresses, labels,
+  paths, or log text. The one-shot launcher also requests
+  `MIMALLOC_SHOW_STATS=1` for clean-exit allocator totals only. The full Python
+  suite and focused memory/launcher checks passed, and a private parse of the
+  previous session found four starts and four stops. No allocation profiler is
+  installed and no leak cause is established. The capture has now completed;
+  the next action is a bounded allocation-attribution run with stack sampling
+  or equivalent low-overhead profiling. Avoid another long stress run while
+  swap pressure is high.
+
+- On 2026-10-14, the user reported a severe Studio memory leak: resident usage
+  can grow continuously toward 30 GB and push the system into swap. A
+  one-shot, low-overhead tracer was added to the normal Citric launch path.
+  It follows the Studio process tree and records process memory breakdowns,
+  swap, threads, descriptors, VMAs, faults, CPU/I/O, and host pressure and
+  allocator-related counters where Linux exposes them. JSONL output is created
+  with restrictive permissions under ignored `logs/`. The marker is cleared
+  only after a trace sample sees the Rosemary executable, so a startup abort
+  leaves the request armed. The user's next session hung after about 12
+  minutes and was force-killed; that run has no process-level trace, so
+  system-wide swap growth does not identify the responsible process. The
+  marker has been re-armed and no leak cause is established. Keep
+  `--objc-debug` disabled for this reproduction.
+
+- On 2026-10-15, the first complete memory trace captured 37m50s before the
+  user force-killed a hung Studio session. The Rosemary process peaked at
+  6.10 GiB RSS and accumulated 26.33 GiB swap; host swap rose from 13.17 to
+  43.82 GiB, available RAM fell to 0.61 GiB, and memory PSI showed severe
+  stalls. Studio's main thread reported a sustained hang after about 29
+  minutes. Kernel and cgroup OOM-kill counters remained zero, so this was
+  OOM-like system pressure, not a confirmed kernel OOM kill. The process
+  accounts for a major portion of swapped memory, but aggregate tracing does
+  not identify the allocating subsystem. The capture is ignored under
+  `logs/`, and force-killing left the arm marker in place.
+
+- Further correlation on 2026-10-15 found four Play/Stop cycles in the same
+  run. The two longer cycles added 8.6 GiB and 6.4 GiB of process RSS+swap;
+  7.2 GiB and 6.0 GiB, respectively, remained after one minute idle. This
+  supports the user's observation that Play leaves memory retained. It does
+  not yet distinguish a leak from a cache or deferred cleanup; next capture
+  should be a single bounded Play cycle with allocation or anonymous-map
+  snapshots before/after Stop.
+
+- On 2026-10-14, the clipboard proposal was rebuilt as two independently
+  reviewable one-commit branches on current Rosemary main. The Carbon/Cocoa
+  bridge is `citric/pasteboard-carbon-bridge` at
+  `2b561ba87d7fcf542073487bbfae992d6500bcae`; native AppKit and WebKit text
+  actions are `citric/native-clipboard-actions` at
+  `b2ca8ba9c4bf41c6b41453995618957ba0038112`. The second branch's cut test
+  publishes through its own clipboard callback, so it does not depend on the
+  first branch's test mutex. Both were pushed to the user's fork and are
+  intended to target `microlift:main`. PR #42 was deliberately left open and
+  untouched because the user will close it and create the replacement PRs.
+  AppKit, WebKit, theme, formatting, and patch checks passed; manual Studio and
+  external-Linux clipboard checks remain open.
+
 - On 2026-10-14, Studio 0.743.0.7431133 began aborting during startup because
   Rosemary lacked `+[NSGraphicsContext graphicsContextWithCGContext:flipped:]`.
   The upstreamable fix retains the Core Graphics context, exposes AppKit's
@@ -253,3 +369,32 @@ different early selector failure.
   unsupported accessories. Automated tests and the v0.2.3 build passed; the
   user still needs to restart Studio and test Open from File with a working
   session portal.
+
+- On 2026-10-15, Studio 0.743 aborted during startup because `NSButtonCell`
+  did not recognize `drawBezelWithFrame:inView:`. The canonical overlay now
+  registers the selector with the CGRect/object ABI and separates bezel-only
+  rendering from the existing title path. A pinned-base application check,
+  formatting, and the complete offline AppKit suite passed. The reusable
+  lesson is to preserve the caller's frame and control view when implementing
+  AppKit drawing selectors; a generic full-control helper can duplicate title
+  rendering or ignore subframes. The user confirmed that Studio opened normally
+  after the fix.
+# On 2026-10-15, the missing `+[NSGraphicsContext setCurrentContext:]`
+# implementation was isolated into one upstream-reviewable commit,
+# `2004fef36d09c2dbd4ab5005777b7fad64caf54f`, on the fork branch
+# `citric/nsgraphicscontext-current-context`. The implementation stores an
+# explicitly selected context per thread, retains it until replacement or
+# clearing, releases it during thread teardown, and preserves the focused-view
+# fallback when no explicit context has been selected. AppKit regression tests
+# cover retention across an autorelease-pool drain and explicit nil clearing.
+# The branch is based directly on Rosemary main and is pushed to the fork;
+# the official PR is intentionally left for the user to open.
+
+- On 2026-10-15, the imported Rosemary PR 77–80 lifetime and allocator-related
+  changes were evaluated with two bounded Studio Play/Stop cycles. The prior
+  linear growth was not reproduced: the process stayed stable for two minutes
+  after the second Stop, with about 244 MiB above the settled between-cycle
+  baseline and exit code 0. This is strong manual evidence for the import while
+  longer sessions remain unverified. Memory diagnostics were changed to be
+  opt-in through `STUDIO_MEMORY_TRACE=1` or `STUDIO_MEMORY_TRACE=detailed`,
+  keeping future tracking available without affecting normal launches.

@@ -1,10 +1,10 @@
 # Estado atual
 
-Snapshot date: October 14, 2026 (America/Recife).
+Snapshot date: October 15, 2026 (America/Recife).
 
 ## Ponto de partida
 
-Citric is pinned to the official Rosemary v0.2.3 release at commit `91e2de231604237ed5faa81513ba441d7b0a79bb`. The canonical patch series applies to this exact upstream revision and carries Citric-only compatibility changes across 35 Rust files, including guest-PC attribution for the Play redraw trace. Rosemary v0.2.3 already contains Citric's merged `systemFontSizeForControlSize:`, `NSButtonCell` background-style, and Num Lock changes, so the overlay no longer duplicates them. `scripts/build-studio.sh` fetches the exact pinned revision, applies `patches/series` in a temporary source tree, and builds `bin/rosemary`. Citric’s current snapshot contains the launcher, scripts, documentation, and patches; prior Git history remains unchanged and still includes Rosemary source.
+Citric is pinned to the official Rosemary v0.2.3 release at commit `91e2de231604237ed5faa81513ba441d7b0a79bb`. The canonical patch series applies to this exact upstream revision and carries Citric-only compatibility changes, including guest-PC attribution for the Play redraw trace. Rosemary v0.2.3 already contains Citric's merged `systemFontSizeForControlSize:`, `NSButtonCell` background-style, and Num Lock changes, so the overlay no longer duplicates them. `scripts/build-studio.sh` fetches the exact pinned revision, applies `patches/series` in a temporary source tree, and builds `bin/rosemary`. Citric’s current snapshot contains the launcher, scripts, documentation, and patches; prior Git history remains unchanged and still includes Rosemary source.
 
 A solicitação original de execução no Linux está fora do repositório CaseSolved. Nenhum código, place ou asset do jogo CaseSolved foi copiado para Citric. O nome Citric foi escolhido pelo usuário para este novo repositório.
 
@@ -32,9 +32,47 @@ A solicitação original de execução no Linux está fora do repositório CaseS
 - O projeto grande foi usado em testes Edit. Play e execução completa de scripts ainda não têm validação estável e repetível nesta cópia.
 - Outros aborts de Objective-C e panic do runtime estão listados em docs/crashes.md.
 
+## Rosemary PR 77–80 integration
+
+The local three-patch series now ports PRs 77–80 while keeping the v0.2.3
+base fixed. It adds per-turn autorelease pools, drawable/layer lifetime fixes,
+runtime and Metal heap improvements, input/locale behavior, and Qt compatibility
+APIs. Existing Citric portal/fallback chooser features and diagnostic work are
+preserved. See [upstream-imports.md](upstream-imports.md) for source revisions,
+reconciliation decisions, test results and subsequent Studio validation.
+
+The user reports that the previous linear Play/Stop memory growth stopped after
+the import. Two short Play cycles completed with exit code 0, no process swap,
+and stable memory for two minutes after the second Stop (about 5.24 GiB PSS).
+About 244 MiB remained above the settled between-cycle baseline. The original
+runaway behavior was not reproduced in this bounded test; longer sessions
+remain unverified. Memory diagnostics are now hidden and disabled by default;
+`STUDIO_MEMORY_TRACE=1` or `STUDIO_MEMORY_TRACE=detailed` enables a test run.
+Legacy marker files no longer activate capture.
+
+## Memory growth investigation
+
+The existing trace links process memory growth to longer Play sessions but does
+not distinguish live allocations from allocator-retained pages. The one-shot
+capture recognizes PlaySoloManager start/stop events from the session log
+without retaining log lines. It emits process and host-memory snapshots at
+each boundary and 60 and 120 seconds after Stop, including a
+`/proc/<pid>/smaps` aggregate by mapping kind and private/shared status without
+file names or addresses. Boundary and periodic 30-second samples now include
+fixed VMA-size buckets (`<1 MiB`, `1–<16 MiB`, `16–<256 MiB`, `>=256 MiB`, and
+`unknown`) without retaining individual sizes. The completed run exited with
+status `0`; its corrected mimalloc summary detected the footer, and manual
+inspection found 86.3 MiB committed. Host swap fell about 4.2 GiB on process
+exit. That allocator total
+does not reconcile with the roughly 8.3 GiB RSS-plus-swap process footprint,
+so the trace establishes anonymous Play-correlated retention but not its
+allocation owner. Avoid another long reproduction while host memory pressure
+is high.
+
 ## Implemented; remaining manual validation
 
-- Studio 0.743.0.7431133 exposed the missing `NSGraphicsContext graphicsContextWithCGContext:flipped:` selector at startup. The canonical patch now wraps and retains the Core Graphics context and preserves flipped state, with AppKit regression tests. The full AppKit suite and release build pass; the headless launch advanced past the original selector but a desktop retest is still needed.
+- Studio 0.743.0.7431133 exposed two missing `NSGraphicsContext` APIs in sequence. The Core Graphics factory and the per-thread `setCurrentContext:` class method are now implemented in the canonical patch, with context ownership and clearing covered by AppKit regression tests. Three starts before the setter fix exited with code 134; after rebuilding Rosemary, a desktop startup retest is still needed. The one-shot memory trace remains armed because those failed starts ended before the tracer could sample a Rosemary process.
+- A subsequent Studio 0.743 startup reached `NSButtonCell` drawing and aborted on the missing `drawBezelWithFrame:inView:` selector. The canonical patch now registers the correct CGRect/object ABI and draws only the caller-provided bezel frame using the supplied control view. Pinned-base application, formatting, and the complete offline AppKit suite pass; the user then confirmed that Studio opens normally after the fix.
 
 - The GTK launcher offers a pinned initial download for Roblox Studio 0.742.0.7421053 macOS x86_64. That archive is checked against its recorded SHA-256 and the extracted app is validated before installation.
 - At startup, the launcher checks Roblox's published Mac Studio release against the selected installed bundle and shows `UPDATE STUDIO NEW VERSION <version>` when a newer release is available. Clicking the update action refreshes release metadata and downloads the archive named by the returned `clientVersionUpload`. The installer checks the official HTTPS CDN host and exact build path, archive size and safe ZIP paths, bundle ID, version and build number, executable, and x86_64 Mach-O architecture. It validates a staged bundle before any replacement; failed downloads or validation leave the installed bundle untouched, and replacing a bundle requires confirmation.

@@ -18,7 +18,19 @@ The asynchronous AppKit selectors found in Studio's file-panel paths are registe
 
 ## Core Graphics-backed NSGraphicsContext
 
-The Roblox Studio 0.743.0.7431133 startup log showed that AppKit did not recognize `+[NSGraphicsContext graphicsContextWithCGContext:flipped:]`. Rosemary now creates a context wrapper that retains the supplied Core Graphics context, exposes it through `CGContext` and `graphicsPort`, and preserves the initial flipped state when there is no focused view. The wrapper releases the retained graphics context when deallocated. Regression tests cover nil input, context identity and lifetime, both flipped states, and the focused-view override. The full AppKit tests pass; a Studio launch in a real graphical desktop still needs user confirmation.
+The Roblox Studio 0.743.0.7431133 startup log first showed that AppKit did not recognize `+[NSGraphicsContext graphicsContextWithCGContext:flipped:]`. Rosemary creates a context wrapper that retains the supplied Core Graphics context, exposes it through `CGContext` and `graphicsPort`, and preserves the initial flipped state when there is no focused view. The wrapper releases the retained graphics context when deallocated. After that selector was implemented, three subsequent starts exposed the missing class method `+[NSGraphicsContext setCurrentContext:]` and exited with code 134. Rosemary now implements the setter as per-thread state: a non-nil context is retained, replacing or clearing it releases the old value, and explicitly setting nil suppresses the focused-view fallback. Regression tests cover nil input, context identity and lifetime, both flipped states, the focused-view override, and retaining/clearing the current context. The full AppKit tests pass; a Studio launch in a real graphical desktop still needs user confirmation.
+
+## NSButtonCell bezel drawing
+
+Studio 0.743 next exposed the missing `-[NSButtonCell
+drawBezelWithFrame:inView:]` selector during startup. The canonical patch now
+registers the method with the AppKit CGRect/object ABI and draws only the
+bezel in the frame supplied by the caller, using the supplied control view for
+button state. The existing combined bezel-and-title renderer remains used for
+normal button drawing. The focused regression verifies selector registration,
+encoding, frame-sized output, and Objective-C dispatch. The pinned-base patch
+application and complete offline AppKit suite pass; a graphical Studio startup
+retest is still required.
 
 ## Carbon/AppKit clipboard bridge
 
@@ -117,3 +129,13 @@ Motivação: o crash de autorelease acontecia quando objc_autoreleasePoolPush al
 O Studio local já contém um patch binário em libqcocoa.dylib para trocar a criação incompatível de QColorDialog por um fallback suportado. scripts/patch-color-dialog.py é idempotente quando reconhece a versão esperada, mantém um backup ao alterar um plugin original e aborta sem modificar versões desconhecidas.
 
 A janela de FillColor foi testada pelo usuário e confirmada visível/funcional numa sessão posterior. Essa confirmação é manual e não equivale a uma suíte de testes do plugin.
+
+
+## Imported runtime, lifetime, input and API changes
+
+The three-patch series includes reconciled ports of Rosemary PRs 77–80.
+Per-turn autorelease pools and drawable-ring lifetime fixes address concrete
+retention mechanisms that may contribute to the observed memory growth.
+Implemented behavior and automated coverage are recorded in
+[upstream-imports.md](upstream-imports.md); the effect in Studio remains
+unconfirmed until the user repeats the bounded memory test.

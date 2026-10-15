@@ -1,5 +1,120 @@
 # Project progress
 
+No active deployment. The latest completed deployment is
+`memory_stability_release_20261015`: the reconciled PR 77–80 import is present as
+`patches/0003-upstream-pr77-80.patch` after the existing two overlays, with the
+Rosemary v0.2.3 base still pinned. The imported runtime and compatibility
+checks are documented in docs/upstream-imports.md; one pre-existing Metal
+heap-fit test remains failing and is unchanged by the import. The rebuilt
+runtime is validated by a bounded two-cycle Play/Stop capture with stable memory
+after the second Stop. Diagnostics are now opt-in through
+`STUDIO_MEMORY_TRACE=1` or `detailed`; longer-session confirmation remains
+future work.
+
+The previous latest completed deployment was
+`appkit_button_cell_bezel_20261015`: the canonical patch now implements and
+registers `-[NSButtonCell drawBezelWithFrame:inView:]` for the pinned Rosemary
+v0.2.3 base. It draws only the bezel in the supplied frame using the supplied
+control view, with a regression test for dispatch, ABI encoding, and rendered
+frame dimensions. The patch applies cleanly, formatting passes, and the full
+offline AppKit suite passed 337 unit tests plus one theme integration test.
+The user launched Studio and confirmed that it opened normally after the fix.
+Citric commit `30757c2` is pushed. The standalone Rosemary branch
+`citric/nsbuttoncell-draw-bezel` is based on current main `01a5301`, passes 288
+AppKit unit tests plus the theme integration test, and is pushed to the user's
+fork; no official PR was opened.
+
+The previous latest completed deployment was
+`memory_attribution_20261015`: a detailed one-shot capture is prepared and
+armed through the ignored `logs/.memory-trace-detailed-once` marker. It records
+per-VMA addresses, permissions, labels/paths, sizes, RSS/PSS/swap, and
+private/shared counters at periodic and Play/Stop snapshots, and enables
+Rosemary `mmap`/`mprotect` request tracing. The default capture remains
+redacted and the detailed JSONL is mode 0600 under ignored `logs/`.
+
+Verification: `python3 -m unittest discover -s tests` passed 36 tests;
+`bash -n scripts/run-studio.sh`, Python compilation, and `git diff --check`
+passed. The next milestone is one short user-run Play/Stop cycle followed by
+analysis; this mapping capture still cannot attribute allocator call stacks.
+
+Latest completed deployment: `rosemary_set_current_context_pr_20261015`. The
+AppKit current-context implementation is prepared as the single commit
+`2004fef36d09c2dbd4ab5005777b7fad64caf54f` on the fork branch
+`citric/nsgraphicscontext-current-context`, based directly on Rosemary
+`main` at `01a5301a7955155d3b6d9872991bdfae9f9fcffc`. It adds retained
+per-thread `NSGraphicsContext` state, replacement and nil clearing, teardown
+cleanup, and regression coverage. The branch is clean and pushed to the
+user's fork; opening the official PR remains a manual user action. The
+companion factory implementation remains independently available on
+`citric/nsgraphicscontext-cgcontext`.
+
+The 2026-10-15 diagnostic audit closed a launch-environment gap: the
+guest Studio process now receives `MIMALLOC_SHOW_STATS=1` through
+`ROSEMARY_ENVIRON`, and the same one-shot run enables
+`ROSEMARY_TRACE_INTERPOSE=1`. This makes the next bounded capture more useful
+for allocator attribution while preserving normal-launch behavior. The
+sampler still does not provide allocation call stacks, so the retaining
+subsystem remains unresolved. The next milestone is one short Play/Stop
+capture after host memory pressure recovers, followed by targeted Rosemary
+cache counters or stack sampling if allocator output remains aggregate-only.
+
+The source and automated preparation for the bounded memory capture are
+complete, and the capture has been collected. `scripts/trace-studio-memory.py` recognizes sanitized
+PlaySoloManager start/stop markers, emits immediate process/host snapshots at
+those boundaries, and schedules 60-second and 120-second post-stop snapshots.
+Boundary snapshots include a no-path/no-address `/proc/<pid>/smaps` aggregate
+grouped by mapping kind and private/shared status. `scripts/run-studio.sh`
+passes the session log to the tracer and requests `MIMALLOC_SHOW_STATS=1` only
+for the diagnostic launch. The marker remains armed until Rosemary is observed
+so an early startup failure does not consume it.
+
+Verification is current: the full Python suite passed 30/30 before the final
+shell formatting change; the focused memory and launcher suite passed 6/6
+afterward; `bash -n`, Python compilation, and `git diff --check` passed. A
+private parse of the ignored prior session found four Play starts and four
+stops. The ignored trace `logs/run-20261015T010138-120845.memory.jsonl` records
+one cycle: RSS plus swap grew 7.44 GiB from Play start to Stop and retained
+7.37 GiB after 120 seconds. Anonymous mappings dominated the retained bytes
+(about 3.05 GiB RSS and 7.61 GiB swap, plus named anonymous mappings), while
+file mappings were negligible. Host swap peaked at 28.96 GiB, MemAvailable
+reached 1.29 GiB, and OOM counters stayed at zero. The user closed Studio with
+the window X; the trace recorded its final signal record and the launcher exit
+code sidecar is `0`, confirming that capture shutdown completed. The next
+milestone is allocation attribution with stack traces; this aggregate capture
+already establishes abnormal Play-correlated retention but cannot identify its
+owner.
+
+The first complete Studio memory trace is available at
+`logs/run-20261014T235818-107572.memory.jsonl` (ignored by Git). Across 37m50s,
+the Studio/Rosemary process reached 26.33 GiB swap with a 6.10 GiB RSS
+high-water mark; system swap rose from 13.17 to 43.82 GiB and MemAvailable
+dropped to 0.61 GiB. The Studio main thread began reporting a hang around 29
+minutes into the run. Kernel and cgroup OOM-kill counters stayed at zero, so
+the evidence supports severe system-wide memory pressure but not a kernel OOM
+kill. The process is a major source of swap use; the allocating subsystem is
+unknown. VMA count, threads, and descriptors stayed comparatively stable and
+do not explain the memory growth. The user force-killed the launch, leaving no
+end record or exit code.
+Four Play/Stop events in the captured log align with process memory increases:
+the two longer cycles added 8.6 and 6.4 GiB of RSS+swap, with 7.2 and 6.0 GiB
+still retained after one minute idle. This confirms Play-correlated retention,
+but not yet a leak versus a persistent cache.
+The arm marker remains set for a later bounded capture. Avoid another long,
+unbounded reproduction and keep `--objc-debug` disabled.
+
+Latest completed deployment: `split_clipboard_pr42_20261014`. The former
+two-commit clipboard proposal was split into two independent one-commit
+branches targeting current Rosemary main
+`01a5301a7955155d3b6d9872991bdfae9f9fcffc`. `citric/pasteboard-carbon-bridge`
+is `2b561ba87d7fcf542073487bbfae992d6500bcae` and
+`citric/native-clipboard-actions` is
+`b2ca8ba9c4bf41c6b41453995618957ba0038112`. The second contains native
+AppKit/WebKit actions without depending on the first branch's test mutex. Both
+are pushed to the user's fork. Official PR #42 remains open and
+untouched because the user will close it and open replacement PRs manually.
+Automated validation passed on both branches; manual Studio and external-Linux
+clipboard validation remains pending. There is no active deployment.
+
 Latest completed deployment: `studio_0743_graphics_context_20261014`. Studio
 0.743.0.7431133's startup crash on the missing
 `NSGraphicsContext graphicsContextWithCGContext:flipped:` selector is fixed in

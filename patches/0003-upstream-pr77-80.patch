@@ -1,0 +1,3617 @@
+diff --git a/crates/appkit/src/animation.rs b/crates/appkit/src/animation.rs
+index 9d611f786e6715a18ffbbc72c7ede90df601b05e..03a7f5194586f9c7de67d103a835ea316d53e058 100644
+--- a/crates/appkit/src/animation.rs
++++ b/crates/appkit/src/animation.rs
+@@ -30,7 +30,9 @@ fn current() -> Id {
+     static CURRENT: OnceLock<usize> = OnceLock::new();
+     *CURRENT.get_or_init(|| {
+         let class = objc::class::lookup(c"NSAnimationContext").expect("declared");
+-        objc::object::create_instance(class, 0) as usize
++        let context = objc::object::create_instance(class, 0);
++        objc::arc::make_immortal(context);
++        context as usize
+     }) as Id
+ }
+ 
+diff --git a/crates/appkit/src/application.rs b/crates/appkit/src/application.rs
+index 7fae524e940a9b3cab27663512049941755bdcaf..7e66e817ab9b3f6e6cec845d9bdc721d69389e63 100644
+--- a/crates/appkit/src/application.rs
++++ b/crates/appkit/src/application.rs
+@@ -32,6 +32,8 @@ pub struct Application {
+     /// How deep the modal nesting is, so `-stopModal` ends one session rather
+     /// than all of them.
+     modal_depth: usize,
++    /// What the innermost stopped session answers: `-stopModalWithCode:`'s code.
++    modal_code: isize,
+ }
+ 
+ pub const INSTANCE_SIZE: usize = size_of::<Application>();
+@@ -95,7 +97,7 @@ unsafe extern "C" fn shared_application(class: Id, _sel: Sel) -> Id {
+     let app = objc::object::create_instance(class, 0);
+     // Retained forever: `NSApp` is a process-lifetime global, and an application
+     // a guest can release is one it can make dangle.
+-    objc::arc::retain(app);
++    objc::arc::make_immortal(app);
+     SHARED.store(app as usize, std::sync::atomic::Ordering::Release);
+     // SAFETY: the cell is this crate's own, and the guest reads it as `NSApp`.
+     unsafe { *(crate::ns_app_cell() as *mut u64) = app as usize as u64 };
+@@ -357,6 +359,19 @@ const MODAL_PANEL_MODE: &str = "NSModalPanelRunLoopMode";
+ ///
+ /// `receiver` must be an application.
+ unsafe fn turn(receiver: Id, mode: &str) {
++    // Popped on unwind too: a skipped pop would leave the next one draining
++    // the wrong pool.
++    struct Pool(*mut c_void);
++    impl Drop for Pool {
++        fn drop(&mut self) {
++            objc::arc::pool_pop(self.0);
++        }
++    }
++    let _pool = Pool(objc::arc::pool_push());
++    unsafe { turn_in_pool(receiver, mode) };
++}
++
++unsafe fn turn_in_pool(receiver: Id, mode: &str) {
+     let turn_started = corefoundation::perf_trace_start();
+     if let Some(started) = turn_started {
+         let previous = LAST_TURN_START
+@@ -514,6 +529,7 @@ unsafe extern "C" fn terminate(receiver: Id, _sel: Sel, _sender: Id) {
+     // SAFETY: a delegate method is `void (id, SEL, NSNotification *)`.
+     unsafe { send_if_implemented(delegate, "applicationWillTerminate:", notification) };
+     foundation::notification::post(WILL_TERMINATE, receiver, std::ptr::null_mut());
++    darwin::exit::finalize(0);
+     std::process::exit(0);
+ }
+ 
+@@ -630,25 +646,31 @@ unsafe extern "C" fn windows(_receiver: Id, _sel: Sel) -> Id {
+     unsafe { corefoundation::api::CFAutorelease(array) as Id }
+ }
+ 
+-unsafe extern "C" fn enumerate_windows_with_options(
+-    _receiver: Id,
+-    _sel: Sel,
+-    _options: isize,
+-    block: Id,
+-) {
++unsafe extern "C" fn enumerate_windows(_receiver: Id, _sel: Sel, options: u64, block: Id) {
++    // SAFETY: `void (^)(NSWindow *, BOOL *)`, as the selector declares.
+     let Some(invoke) = (unsafe { crate::animation::invoke(block) }) else {
+         return;
+     };
+-    let call: unsafe extern "C" fn(Id, Id, *mut i8) = unsafe { std::mem::transmute(invoke) };
+-    let mut stop = 0i8;
+-    for window in crate::window::open_windows() {
+-        // SAFETY: the method's `@?` encoding makes this a callable
+-        // `void (^)(NSWindow *, BOOL *)` block, and `stop` lives through each call.
+-        unsafe { call(block, window, &mut stop) };
++    // `NSWindowListOrderedFrontToBack`.
++    let windows = match options & 1 != 0 {
++        true => crate::window::front_to_back(),
++        false => crate::window::open_windows(),
++    };
++    for window in &windows {
++        objc::arc::retain(*window);
++    }
++    let mut stop = 0u8;
++    for window in &windows {
++        // SAFETY: the block's own prototype.
++        unsafe {
++            let f: unsafe extern "C" fn(Id, Id, *mut u8) = std::mem::transmute(invoke);
++            f(block, *window, &mut stop);
++        }
+         if stop != 0 {
+             break;
+         }
+     }
++    windows.into_iter().for_each(objc::arc::release);
+ }
+ 
+ unsafe extern "C" fn key_window(_receiver: Id, _sel: Sel) -> Id {
+@@ -863,10 +885,16 @@ unsafe extern "C" fn end_modal_session(receiver: Id, _sel: Sel, _session: Id) {
+ }
+ 
+ /// `-stopModal` and `-abortModal`, which end the innermost session.
+-unsafe extern "C" fn stop_modal(receiver: Id, _sel: Sel) {
++unsafe extern "C" fn stop_modal(receiver: Id, sel: Sel) {
++    // SAFETY: an application.
++    unsafe { stop_modal_with_code(receiver, sel, modal_response::STOP) };
++}
++
++unsafe extern "C" fn stop_modal_with_code(receiver: Id, _sel: Sel, code: isize) {
+     // SAFETY: an application.
+     let app = unsafe { &mut *(receiver as *mut Application) };
+     app.modal_depth = app.modal_depth.saturating_sub(1);
++    app.modal_code = code;
+ }
+ 
+ /// `-runModalForWindow:`, the blocking form.
+@@ -887,7 +915,8 @@ unsafe extern "C" fn run_modal_for_window(receiver: Id, sel: Sel, window: Id) ->
+         }
+     }
+     unsafe { end_modal_session(receiver, sel, window) };
+-    modal_response::STOP
++    // SAFETY: an application.
++    unsafe { (*(receiver as *const Application)).modal_code }
+ }
+ 
+ /// Send `selector` to `target` if it has one, and do nothing if it does not.
+@@ -1029,7 +1058,7 @@ pub(crate) fn install() {
+         "setPresentationOptions:" => set_presentation_options, c"v24@0:8Q16";
+         "nextEventMatchingMask:untilDate:inMode:dequeue:" => next_event, c"@48@0:8Q16@24@32B40";
+         "windows" => windows, c"@16@0:8";
+-        "enumerateWindowsWithOptions:usingBlock:" => enumerate_windows_with_options, c"v32@0:8q16@?24";
++        "enumerateWindowsWithOptions:usingBlock:" => enumerate_windows, c"v32@0:8Q16@?24";
+         "windowWithWindowNumber:" => window_with_window_number, c"@24@0:8q16";
+         "keyWindow" => key_window, c"@16@0:8";
+         "mainWindow" => key_window, c"@16@0:8";
+@@ -1063,6 +1092,9 @@ pub(crate) fn install() {
+         "endModalSession:" => end_modal_session, c"v24@0:8^v16";
+         "runModalForWindow:" => run_modal_for_window, c"q24@0:8@16";
+         "stopModal" => stop_modal, c"v16@0:8";
++        "stopModalWithCode:" => stop_modal_with_code, c"v24@0:8q16";
++        "occlusionState" => crate::window::visible_occlusion, c"Q16@0:8";
++        "endSheet:" => ignored_sender, c"v24@0:8@16";
+         "abortModal" => stop_modal, c"v16@0:8";
+     });
+ }
+@@ -1371,4 +1403,35 @@ mod tests {
+         );
+         loop_.remove_source(&source, corefoundation::runloop::DEFAULT_MODE);
+     }
++
++    #[test]
++    fn what_a_turn_autoreleases_is_released_when_it_ends() {
++        crate::bootstrap();
++        static OBJECT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++
++        unsafe extern "C" fn perform(_info: *mut std::ffi::c_void) {
++            let object = OBJECT.load(std::sync::atomic::Ordering::SeqCst) as Id;
++            objc::arc::autorelease(objc::arc::retain(object));
++        }
++
++        let app = objc::object::create_instance(
++            objc::class::lookup(c"NSApplication").expect("NSApplication"),
++            0,
++        );
++        let object =
++            objc::object::create_instance(objc::class::lookup(c"NSObject").expect("NSObject"), 0);
++        OBJECT.store(object as usize, std::sync::atomic::Ordering::SeqCst);
++        let source = corefoundation::runloop::new_source(Some(perform), 0);
++        let loop_ = corefoundation::runloop::main();
++        loop_.add_source(&source, corefoundation::runloop::DEFAULT_MODE);
++        source.signal();
++
++        let outer = objc::arc::pool_push();
++        // SAFETY: `app` is an application.
++        unsafe { turn(app, corefoundation::runloop::DEFAULT_MODE) };
++        assert_eq!(objc::arc::retain_count(object), 1);
++        objc::arc::pool_pop(outer);
++        loop_.remove_source(&source, corefoundation::runloop::DEFAULT_MODE);
++        objc::arc::release(object);
++    }
+ }
+diff --git a/crates/appkit/src/cell.rs b/crates/appkit/src/cell.rs
+index 8403f442130611fde76344ca97510ce61e7bfe12..273a7c2a434f093ca20a5ec50de89a1916f509c8 100644
+--- a/crates/appkit/src/cell.rs
++++ b/crates/appkit/src/cell.rs
+@@ -244,4 +244,19 @@ mod tests {
+         crate::label::forget(field);
+         objc::arc::release(field);
+     }
++
++    #[test]
++    fn a_text_field_cell_answers_what_its_field_does() {
++        crate::bootstrap();
++        let cell = objc::class::lookup(c"NSTextFieldCell").expect("NSTextFieldCell");
++        for name in [
++            "setFont:",
++            "font",
++            "setAlignment:",
++            "setDrawsBackground:",
++            "setEditable:",
++        ] {
++            assert!(cell.method(objc::sel::get(name)).is_some(), "{name}");
++        }
++    }
+ }
+diff --git a/crates/appkit/src/cgcontext.rs b/crates/appkit/src/cgcontext.rs
+index 5fd32f89c3bbe533f6c13e4556ab27803c18f503..dd0c01532f8e68a55e4a21459a3a25f64d237481 100644
+--- a/crates/appkit/src/cgcontext.rs
++++ b/crates/appkit/src/cgcontext.rs
+@@ -716,6 +716,31 @@ pub unsafe extern "C" fn CGColorGetConstantColor(name: CFTypeRef) -> CFTypeRef {
+     std::ptr::null()
+ }
+ 
++pub unsafe extern "C" fn CGColorGetTypeID() -> corefoundation::base::CFTypeID {
++    corefoundation::base::type_id_of(
++        objc::class::lookup(c"__CGColor").expect("installed during bootstrap"),
++    )
++}
++
++pub unsafe extern "C" fn CGColorGetColorSpace(color: CFTypeRef) -> CFTypeRef {
++    static SPACE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
++    if color_of(color).is_none() {
++        return std::ptr::null();
++    }
++    // SAFETY: a fresh space, kept for the process as Apple's shared ones are.
++    *SPACE.get_or_init(|| unsafe { crate::graphics::CGColorSpaceCreateDeviceRGB() } as usize)
++        as CFTypeRef
++}
++
++pub unsafe extern "C" fn CGColorSpaceGetModel(space: CFTypeRef) -> i32 {
++    match space.is_null() {
++        true => -1,
++        false => 1,
++    }
++}
++
++unsafe extern "C" fn ignored_context_rect(_context: CFTypeRef, _rect: NSRect) {}
++
+ pub unsafe extern "C" fn CGPathCreateMutable() -> CFTypeRef {
+     let class = objc::class::lookup(c"__CGPath").expect("installed during bootstrap");
+     // SAFETY: `Path` is the registered class layout.
+@@ -957,6 +982,10 @@ exports::exports! {
+         "CGColorGetNumberOfComponents" => CGColorGetNumberOfComponents,
+         "CGColorGetAlpha" => CGColorGetAlpha,
+         "CGColorGetConstantColor" => CGColorGetConstantColor,
++        "CGColorGetTypeID" => CGColorGetTypeID,
++        "CGColorGetColorSpace" => CGColorGetColorSpace,
++        "CGColorSpaceGetModel" => CGColorSpaceGetModel,
++        "CGContextAddRect" | "CGContextAddEllipseInRect" => ignored_context_rect,
+         "CGColorSpaceCreatePattern" | "CGPatternCreate" => null_object,
+         "CGPatternRelease" | "CGShadingRelease" => release_object,
+         "CGPathCreateMutable" => CGPathCreateMutable,
+diff --git a/crates/appkit/src/color.rs b/crates/appkit/src/color.rs
+index a6e13bb58cccbe8ae3e4fd34e3b1b782304ba53d..e2e08c097029b0b59679f3f94aafbe1cf7ee8c3b 100644
+--- a/crates/appkit/src/color.rs
++++ b/crates/appkit/src/color.rs
+@@ -78,7 +78,7 @@ fn singleton(name: &str, red: f64, green: f64, blue: f64, alpha: f64) -> Id {
+     let color = allocate(red, green, blue, alpha);
+     // Retained forever: a named colour a guest can release is one it can make
+     // dangle, and these are handed out unowned.
+-    objc::arc::retain(color);
++    objc::arc::make_immortal(color);
+     colors.push((name.to_string(), color as usize));
+     color
+ }
+diff --git a/crates/appkit/src/controls.rs b/crates/appkit/src/controls.rs
+index 95b018229c0a6eceac6fde01fcb385f993b4f30f..dd3baf5e80fd3ac8a8653fe4baaeb559c3e2f699 100644
+--- a/crates/appkit/src/controls.rs
++++ b/crates/appkit/src/controls.rs
+@@ -495,6 +495,8 @@ mod slot {
+     /// `-contentTintColor`, retained.
+     pub const TINT_COLOR: usize = 20;
+     pub const BACKGROUND_STYLE: usize = 21;
++    pub const ACTION_MASK: usize = 22;
++    pub const ACTION_MASK_SET: usize = 23;
+     pub const BUTTON_OBJECTS: [usize; 8] = [
+         TINT_COLOR,
+         IMAGE,
+@@ -516,7 +518,7 @@ mod slot {
+     pub const KNOB_PROPORTION: usize = 1;
+ }
+ 
+-const ROW: usize = 22;
++const ROW: usize = 24;
+ 
+ fn read(table: &Mutex<HashMap<usize, Vec<usize>>>, receiver: Id, at: usize) -> usize {
+     table
+@@ -1697,6 +1699,50 @@ fn scroller_part(size: NSSize, value: f64, proportion: f64, which: usize) -> NSR
+     }
+ }
+ 
++unsafe extern "C" fn control_size_to_fit(receiver: Id, _sel: Sel) {
++    // SAFETY: `-intrinsicContentSize` is `NSSize (id, SEL)` and `-setFrameSize:`
++    // `void (id, SEL, NSSize)`, both on every view.
++    unsafe {
++        let size: unsafe extern "C" fn(Id, Sel) -> NSSize = std::mem::transmute(objc::msg::entry());
++        let size = size(receiver, objc::sel::get("intrinsicContentSize"));
++        if size.width <= 0.0 || size.height <= 0.0 {
++            return;
++        }
++        let set: unsafe extern "C" fn(Id, Sel, NSSize) = std::mem::transmute(objc::msg::entry());
++        set(receiver, objc::sel::get("setFrameSize:"), size);
++    }
++}
++
++fn control_action_mask(receiver: Id) -> u64 {
++    if read(buttons(), receiver, slot::ACTION_MASK_SET) == 0 {
++        1 << 2 // NSEventMaskLeftMouseUp.
++    } else {
++        read(buttons(), receiver, slot::ACTION_MASK) as u64
++    }
++}
++
++unsafe extern "C" fn control_set_continuous(receiver: Id, sel: Sel, flag: u8) {
++    let mask = control_action_mask(receiver);
++    let periodic = 1 << 16; // NSEventMaskPeriodic.
++    let mask = if flag != 0 {
++        mask | periodic
++    } else {
++        mask & !periodic
++    };
++    unsafe { control_send_action_on(receiver, sel, mask) };
++}
++
++unsafe extern "C" fn control_is_continuous(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(control_action_mask(receiver) & (1 << 16) != 0)
++}
++
++unsafe extern "C" fn control_send_action_on(receiver: Id, _sel: Sel, mask: u64) -> i64 {
++    let previous = control_action_mask(receiver);
++    write(buttons(), receiver, slot::ACTION_MASK, mask as usize);
++    write(buttons(), receiver, slot::ACTION_MASK_SET, 1);
++    previous as i64
++}
++
+ pub(crate) fn install() {
+     let class = objc::class::lookup(c"NSStackView").expect("declared before its methods");
+     methods!(class, {
+@@ -1762,6 +1808,10 @@ pub(crate) fn install() {
+         "sendAction:to:" => control_send_action, c"c32@0:8:16@24";
+         "setTag:" => control_set_tag, c"v24@0:8q16";
+         "tag" => control_tag, c"q16@0:8";
++        "sizeToFit" => control_size_to_fit, c"v16@0:8";
++        "setContinuous:" => control_set_continuous, c"v20@0:8c16";
++        "isContinuous" => control_is_continuous, c"c16@0:8";
++        "sendActionOn:" => control_send_action_on, c"q24@0:8Q16";
+     });
+ 
+     let class = objc::class::lookup(c"NSButton").expect("declared before its methods");
+@@ -1869,6 +1919,33 @@ pub(crate) fn install() {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn a_control_keeps_its_action_mask_and_continuous_setting() {
++        crate::bootstrap();
++        let class = objc::class::lookup(c"NSControl").unwrap();
++        let object = objc::object::create_instance(class, 0);
++        unsafe {
++            let send: unsafe extern "C" fn(Id, Sel, u64) -> i64 =
++                std::mem::transmute(objc::msg::entry());
++            let set: unsafe extern "C" fn(Id, Sel, u8) = std::mem::transmute(objc::msg::entry());
++            let get: unsafe extern "C" fn(Id, Sel) -> u8 = std::mem::transmute(objc::msg::entry());
++            assert_eq!(
++                send(object, objc::sel::get("sendActionOn:"), 1 << 1),
++                1 << 2
++            );
++            assert_eq!(send(object, objc::sel::get("sendActionOn:"), 0), 1 << 1);
++            set(object, objc::sel::get("setContinuous:"), 1);
++            assert_eq!(get(object, objc::sel::get("isContinuous")), 1);
++            assert_eq!(
++                send(object, objc::sel::get("sendActionOn:"), 1 << 2),
++                1 << 16
++            );
++            assert_eq!(get(object, objc::sel::get("isContinuous")), 0);
++        }
++        forget(object);
++        objc::arc::release(object);
++    }
++
+     #[test]
+     fn button_cell_draw_bezel_uses_its_frame_and_control_view() {
+         crate::bootstrap();
+diff --git a/crates/appkit/src/cursor.rs b/crates/appkit/src/cursor.rs
+index e18afc3b4fff4b79196eff87fede0e34d0fb9f9f..b6ec4124b378043e92b5f8294710e0540497b47a 100644
+--- a/crates/appkit/src/cursor.rs
++++ b/crates/appkit/src/cursor.rs
+@@ -808,7 +808,7 @@ fn cursor_for(shape: usize) -> Id {
+     // SAFETY: freshly allocated.
+     unsafe { (*cursor).shape = shape };
+     // Retained forever: `+arrowCursor` hands one out unowned.
+-    objc::arc::retain(cursor as Id);
++    objc::arc::make_immortal(cursor as Id);
+     cursors.push((shape, cursor as usize));
+     cursor as Id
+ }
+diff --git a/crates/appkit/src/displaylink.rs b/crates/appkit/src/displaylink.rs
+index c8f581f9b7e401d7cef217d1e1774e9be8a76e95..0524527e5567eef5e0ffb39680f0104ace329321 100644
+--- a/crates/appkit/src/displaylink.rs
++++ b/crates/appkit/src/displaylink.rs
+@@ -150,6 +150,7 @@ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
+         // a frame loop that does not run.
+         objc::fail!("-[CADisplayLink]: the target does not respond to its selector");
+     };
++    objc::arc::retain(object);
+     // SAFETY: a display link action is `void (id, SEL, CADisplayLink *)`.
+     let callback_started = corefoundation::perf_trace_start();
+     unsafe {
+@@ -157,6 +158,7 @@ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
+         f(target, selector, object);
+     }
+     corefoundation::perf_trace_record("appkit.display_link_callback", callback_started);
++    objc::arc::release(object);
+ }
+ 
+ /// Put the link on the main loop at its current interval.
+diff --git a/crates/appkit/src/event.rs b/crates/appkit/src/event.rs
+index 714dde7b773e6f60830ebad734de823c2e053826..156a521e6e98a74aec541b381f0c0450baa86fc5 100644
+--- a/crates/appkit/src/event.rs
++++ b/crates/appkit/src/event.rs
+@@ -492,7 +492,7 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+             let mapped_modifiers = map_host_control_shortcut(
+                 scancode,
+                 modifiers,
+-                crate::decor::config().control_shortcuts,
++                crate::decor::config().control_shortcuts && !crate::keymap::swapping(),
+             );
+             if mapped_modifiers != modifiers {
+                 input_trace(&format!(
+@@ -608,7 +608,15 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+                     previous.0, previous.1,
+                 ));
+             }
+-            crate::cgevent::note_mouse_delta(camera_dx, camera_dy);
++            let ended = crate::screen::end_recentring_if_idle();
++            let (x, y) = match ended || crate::screen::recentring() {
++                true => {
++                    let (px, py) = pointer_position();
++                    warp_pointer(px + dx, py + dy);
++                    (px + dx, py + dy)
++                }
++                false => (x, y),
++            };
+             crate::cgevent::note_mouse_delta(camera_dx, camera_dy);
+             crate::screen::hold_at_edge(id, x, y, dx, dy);
+             // Update the coordinate frame before a window drag reads the global
+@@ -851,7 +859,10 @@ fn key_equivalent(window: Id, fields: Fields, text: &str) -> bool {
+         ));
+         return true;
+     }
+-    if !should_offer_command_shortcut_alias(modifiers, crate::decor::config().control_shortcuts) {
++    if !should_offer_command_shortcut_alias(
++        modifiers,
++        crate::decor::config().control_shortcuts && !crate::keymap::swapping(),
++    ) {
+         return false;
+     }
+     let aliased = nsevent::make(Fields {
+@@ -1273,6 +1284,9 @@ pub fn route(window: Id, event: Id) {
+         },
+         false => responder_of(window),
+     };
++    if kind == kind::LEFT_MOUSE_DOWN {
++        focus_clicked(window, start);
++    }
+     let Some((responder, method)) = chain(start, sel) else {
+         if matches!(
+             kind,
+@@ -1347,6 +1361,32 @@ pub fn route(window: Id, event: Id) {
+     ));
+ }
+ 
++fn focus_clicked(window: Id, view: Id) {
++    let sel = objc::sel::get("acceptsFirstResponder");
++    // SAFETY: null or a live object this runtime allocated.
++    let Some(method) = unsafe { objc::object::class_of(view) }.and_then(|c| c.method(sel)) else {
++        return;
++    };
++    if crate::view::is_default_accepts_first_responder(method.implementation()) {
++        return;
++    }
++    // SAFETY: `BOOL (id, SEL)`, the class's own implementation.
++    let accepts = unsafe {
++        let f: unsafe extern "C" fn(Id, objc::sel::Sel) -> u8 =
++            std::mem::transmute(method.implementation());
++        f(view, sel) != 0
++    };
++    if !accepts || responder_of(window) == view {
++        return;
++    }
++    // SAFETY: `-makeFirstResponder:` is `BOOL (id, SEL, NSResponder *)`.
++    unsafe {
++        let f: unsafe extern "C" fn(Id, objc::sel::Sel, Id) -> u8 =
++            std::mem::transmute(objc::msg::entry());
++        f(window, objc::sel::get("makeFirstResponder:"), view);
++    }
++}
++
+ /// The responder method an event type is delivered through.
+ fn responder_selector(kind: u64) -> Option<&'static str> {
+     Some(match kind {
+@@ -1604,7 +1644,9 @@ fn track_pointer(window: u32, x: f32, y: f32) -> (f32, f32) {
+     }
+     POINTER_WINDOW.store(window, std::sync::atomic::Ordering::Relaxed);
+     let mut pointer = POINTER.lock().unwrap_or_else(|e| e.into_inner());
+-    *pointer = (x, y);
++    if crate::screen::mouse_is_associated() && !crate::screen::recentring() {
++        *pointer = (x, y);
++    }
+     *pointer
+ }
+ 
+@@ -1646,7 +1688,7 @@ pub(crate) fn desktop_pointer() -> Option<(f32, f32)> {
+ }
+ 
+ pub(crate) fn frozen_pointer() -> Option<(f32, f32)> {
+-    if crate::screen::mouse_is_associated() {
++    if crate::screen::mouse_is_associated() && !crate::screen::recentring() {
+         return None;
+     }
+     desktop_pointer()
+diff --git a/crates/appkit/src/geometry.rs b/crates/appkit/src/geometry.rs
+index 52295f55f0c9d47b32f8441ead751cc364fc0fc1..82cbc5204c6aaa6574498717fee1e6efbf4b5583 100644
+--- a/crates/appkit/src/geometry.rs
++++ b/crates/appkit/src/geometry.rs
+@@ -93,6 +93,33 @@ pub unsafe extern "C" fn CGRectEqualToRect(a: NSRect, b: NSRect) -> u8 {
+     u8::from(standardized(a) == standardized(b))
+ }
+ 
++#[allow(non_snake_case)]
++pub unsafe extern "C" fn NSIsEmptyRect(rect: NSRect) -> u8 {
++    u8::from(rect.size.width <= 0.0 || rect.size.height <= 0.0)
++}
++
++#[allow(non_snake_case)]
++pub unsafe extern "C" fn NSUnionRect(a: NSRect, b: NSRect) -> NSRect {
++    match unsafe { (NSIsEmptyRect(a) != 0, NSIsEmptyRect(b) != 0) } {
++        (true, true) => NSRect::default(),
++        (true, false) => b,
++        (false, true) => a,
++        (false, false) => {
++            let x = a.origin.x.min(b.origin.x);
++            let y = a.origin.y.min(b.origin.y);
++            let right = (a.origin.x + a.size.width).max(b.origin.x + b.size.width);
++            let top = (a.origin.y + a.size.height).max(b.origin.y + b.size.height);
++            NSRect {
++                origin: NSPoint { x, y },
++                size: NSSize {
++                    width: right - x,
++                    height: top - y,
++                },
++            }
++        }
++    }
++}
++
+ /// `BOOL NSPointInRect(NSPoint, NSRect)`.
+ #[allow(non_snake_case)]
+ pub unsafe extern "C" fn NSPointInRect(point: NSPoint, rect: NSRect) -> u8 {
+diff --git a/crates/appkit/src/keymap.rs b/crates/appkit/src/keymap.rs
+index 31736b28eeb5bbb33e5a6f1b972ddd825cdcf40f..1af4472e157ccdf1d9bc7ee307630bdb3164c507 100644
+--- a/crates/appkit/src/keymap.rs
++++ b/crates/appkit/src/keymap.rs
+@@ -228,7 +228,28 @@ static VIRTUAL_KEYS: &[(u32, u16)] = &[
+ /// know it would be a bug with nothing to say so.
+ pub const UNKNOWN: u16 = 0xFFFF;
+ 
++pub(crate) fn swapping() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("ROSEMARY_SWAP_CTRL_CMD").is_some_and(|v| v != "0"))
++}
++
++fn swap_ctrl_cmd(sdl_modifiers: u16) -> u16 {
++    if !swapping() {
++        return sdl_modifiers;
++    }
++    let ctrl = sdl_modifiers & (keymod::LCTRL | keymod::RCTRL);
++    let gui = sdl_modifiers & (keymod::LGUI | keymod::RGUI);
++    (sdl_modifiers & !(ctrl | gui)) | (ctrl << 4) | (gui >> 4)
++}
++
+ pub fn virtual_key(scancode: u32) -> u16 {
++    let scancode = match (swapping(), scancode) {
++        (true, scancode::LCTRL) => scancode::LGUI,
++        (true, scancode::RCTRL) => scancode::RGUI,
++        (true, scancode::LGUI) => scancode::LCTRL,
++        (true, scancode::RGUI) => scancode::RCTRL,
++        _ => scancode,
++    };
+     VIRTUAL_KEYS
+         .iter()
+         .find(|(sdl, _)| *sdl == scancode)
+@@ -258,6 +279,7 @@ pub mod flags {
+ }
+ 
+ pub fn modifiers(sdl_modifiers: u16) -> u64 {
++    let sdl_modifiers = swap_ctrl_cmd(sdl_modifiers);
+     let mut out = 0;
+     for (from, to) in [
+         (keymod::SHIFT, flags::SHIFT),
+@@ -324,7 +346,7 @@ mod carbon {
+ /// Carbon's bits. Qt's key mapper asks this rather than `+[NSEvent modifierFlags]`.]
+ #[allow(non_snake_case)]
+ pub unsafe extern "C" fn GetCurrentKeyModifiers() -> u32 {
+-    let held = sdl3::video::keyboard_modifiers();
++    let held = swap_ctrl_cmd(sdl3::video::keyboard_modifiers());
+     [
+         (keymod::GUI, carbon::CMD_KEY),
+         (keymod::SHIFT, carbon::SHIFT_KEY),
+diff --git a/crates/appkit/src/lib.rs b/crates/appkit/src/lib.rs
+index ba30cb15ed86ca1546e0311f210836d42f86e7ed..12c7f3fcc7f9613d1c4aaa4cf479d44f5480d605 100644
+--- a/crates/appkit/src/lib.rs
++++ b/crates/appkit/src/lib.rs
+@@ -230,6 +230,8 @@ exports::exports! {
+         "CGRectGetMidY" => geometry::CGRectGetMidY,
+         "CGRectGetMaxY" => geometry::CGRectGetMaxY,
+         "NSPointInRect" => geometry::NSPointInRect,
++        "NSIsEmptyRect" => geometry::NSIsEmptyRect,
++        "NSUnionRect" => geometry::NSUnionRect,
+         "NSMouseInRect" => geometry::NSMouseInRect,
+         "NSInsetRect" => geometry::NSInsetRect,
+         "NSRectFill" => color::NSRectFill,
+diff --git a/crates/appkit/src/menu.rs b/crates/appkit/src/menu.rs
+index 8856d254b277cbc7f35764e8f3ea384f2d6be698..3cbd4b0c0dab45f2e71d41d5514b882b926490b7 100644
+--- a/crates/appkit/src/menu.rs
++++ b/crates/appkit/src/menu.rs
+@@ -602,6 +602,8 @@ pub(crate) fn install() {
+         "supermenu" => supermenu, c"@16@0:8";
+         "autoenablesItems" => autoenables_items, c"c16@0:8";
+         "setAutoenablesItems:" => set_autoenables_items, c"v20@0:8c16";
++        "setMinimumWidth:" => ignored_width, c"v24@0:8d16";
++        "minimumWidth" => zero_width, c"d16@0:8";
+         "update" => update, c"v16@0:8";
+         "performKeyEquivalent:" => perform_key_equivalent, c"c24@0:8@16";
+         "performActionForItemAtIndex:" => perform_action_for_item_at_index, c"v24@0:8q16";
+@@ -1460,3 +1462,9 @@ mod tests {
+         assert!(titles(other).is_empty());
+     }
+ }
++
++unsafe extern "C" fn ignored_width(_receiver: Id, _sel: Sel, _width: f64) {}
++
++unsafe extern "C" fn zero_width(_receiver: Id, _sel: Sel) -> f64 {
++    0.0
++}
+diff --git a/crates/appkit/src/panel.rs b/crates/appkit/src/panel.rs
+index 0a1a9b88d177146d7764ab07da75eef16aca8876..ab1560705145b7597de0603a6addbf25f7c272a2 100644
+--- a/crates/appkit/src/panel.rs
++++ b/crates/appkit/src/panel.rs
+@@ -54,6 +54,12 @@ struct PanelState {
+     shows_hidden_files: bool,
+     can_select_hidden_extension: bool,
+     selected: Vec<SelectedPath>,
++    name_field_label: Option<String>,
++    options: HashMap<&'static str, bool>,
++    running: bool,
++    sheet: bool,
++    active_window: u32,
++    refresh_requested: bool,
+ }
+ 
+ static PANELS: OnceLock<Mutex<HashMap<usize, PanelState>>> = OnceLock::new();
+@@ -461,7 +467,7 @@ enum PickerShortcut {
+     Refresh,
+ }
+ 
+-fn run_picker(panel: &PanelState) -> Option<PickerResult> {
++fn run_picker(receiver: Id, panel: &PanelState) -> Option<PickerResult> {
+     if chrome::Font::system(400).is_none() {
+         eprintln!("rosemary: appkit: no system font is available for the file chooser");
+         return None;
+@@ -533,6 +539,7 @@ fn run_picker(panel: &PanelState) -> Option<PickerResult> {
+     sdl3::video::show_window(window);
+     sdl3::video::raise_window(window);
+     let id = sdl3::video::window_id(window);
++    update(receiver, |state| state.active_window = id);
+     let mut theme = chrome::Theme::for_appearance(
+         sdl3::video::system_theme() == sdl3::video::SystemTheme::Dark,
+     );
+@@ -541,6 +548,14 @@ fn run_picker(panel: &PanelState) -> Option<PickerResult> {
+         use sdl3::keycodes::scancode;
+         use sdl3::video::Event;
+ 
++        let refresh = panels()
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .get_mut(&(receiver as usize))
++            .is_some_and(|state| std::mem::take(&mut state.refresh_requested));
++        if refresh {
++            refresh_picker(&mut picker, &directory, panel);
++        }
+         let layout = picker.layout(
+             chrome::Rect::new(
+                 0.0,
+@@ -837,6 +852,7 @@ fn run_picker(panel: &PanelState) -> Option<PickerResult> {
+         None
+     });
+     sdl3::video::stop_text_input(window);
++    update(receiver, |state| state.active_window = 0);
+     sdl3::video::destroy_window(window);
+     if started_video {
+         sdl3::video::quit_video();
+@@ -850,7 +866,22 @@ fn run_picker(panel: &PanelState) -> Option<PickerResult> {
+     })
+ }
+ 
+-fn select(receiver: Id) -> i64 {
++fn select(receiver: Id, sheet: bool) -> i64 {
++    struct ActivePanel(Id);
++    impl Drop for ActivePanel {
++        fn drop(&mut self) {
++            update(self.0, |state| {
++                state.running = false;
++                state.sheet = false;
++                state.active_window = 0;
++            });
++        }
++    }
++    update(receiver, |state| {
++        state.running = true;
++        state.sheet = sheet;
++    });
++    let _active = ActivePanel(receiver);
+     let mut panel = state(receiver);
+     panel.selected.clear();
+     #[cfg(target_os = "linux")]
+@@ -858,7 +889,7 @@ fn select(receiver: Id) -> i64 {
+     #[cfg(not(target_os = "linux"))]
+     let portal_outcome = PortalOutcome::Unavailable;
+     let Some(result) = resolve_picker_result(portal_outcome, panel.shows_hidden_files, || {
+-        run_picker(&panel)
++        run_picker(receiver, &panel)
+     }) else {
+         update(receiver, |state| state.selected.clear());
+         return CANCEL;
+@@ -916,11 +947,11 @@ fn complete(handler: Id, response: i64) {
+ }
+ 
+ unsafe extern "C" fn run_modal(receiver: Id, _sel: Sel) -> i64 {
+-    select(receiver)
++    select(receiver, false)
+ }
+ 
+ unsafe extern "C" fn begin_with_completion(receiver: Id, _sel: Sel, handler: Id) {
+-    let response = select(receiver);
++    let response = select(receiver, false);
+     complete(handler, response);
+ }
+ 
+@@ -930,7 +961,7 @@ unsafe extern "C" fn begin_sheet_with_completion(
+     _window: Id,
+     handler: Id,
+ ) {
+-    let response = select(receiver);
++    let response = select(receiver, true);
+     complete(handler, response);
+ }
+ 
+@@ -1056,7 +1087,98 @@ unsafe extern "C" fn treats_file_packages_as_directories(receiver: Id, _sel: Sel
+     u8::from(state(receiver).treats_file_packages_as_directories)
+ }
+ 
+-unsafe extern "C" fn ignored_flag(_receiver: Id, _sel: Sel, _value: u8) {}
++// Static keys avoid allocating or leaking selector names on each property access.
++fn option_key(selector: Sel) -> &'static str {
++    // SAFETY: selectors are runtime-owned NUL-terminated names.
++    match unsafe { std::ffi::CStr::from_ptr(selector) }.to_bytes() {
++        b"setCanCreateDirectories:" | b"canCreateDirectories" => "canCreateDirectories",
++        b"setResolvesAliases:" | b"resolvesAliases" => "resolvesAliases",
++        b"setExtensionHidden:" | b"isExtensionHidden" => "extensionHidden",
++        b"setAllowsOtherFileTypes:" | b"allowsOtherFileTypes" => "allowsOtherFileTypes",
++        b"setShowsTagField:" | b"showsTagField" => "showsTagField",
++        _ => unreachable!("only registered panel option selectors reach this method"),
++    }
++}
++
++unsafe extern "C" fn set_option(receiver: Id, selector: Sel, value: u8) {
++    let key = option_key(selector);
++    update(receiver, |state| {
++        state.options.insert(key, value != 0);
++    });
++}
++
++unsafe extern "C" fn option(receiver: Id, selector: Sel) -> u8 {
++    let key = option_key(selector);
++    u8::from(
++        state(receiver)
++            .options
++            .get(key)
++            .copied()
++            .unwrap_or(key == "resolvesAliases"),
++    )
++}
++
++unsafe extern "C" fn name_field_string(receiver: Id, _sel: Sel) -> Id {
++    objc::arc::autorelease(foundation::string::from_str(
++        &state(receiver).filename.unwrap_or_default(),
++    ))
++}
++
++unsafe extern "C" fn set_name_field_label(receiver: Id, _sel: Sel, value: Id) {
++    let label = unsafe { string_text(value) };
++    update(receiver, |state| state.name_field_label = label);
++}
++
++unsafe extern "C" fn name_field_label(receiver: Id, _sel: Sel) -> Id {
++    objc::arc::autorelease(foundation::string::from_str(
++        state(receiver)
++            .name_field_label
++            .as_deref()
++            .unwrap_or("Save As:"),
++    ))
++}
++
++unsafe extern "C" fn is_visible(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(state(receiver).running)
++}
++
++unsafe extern "C" fn is_sheet(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(state(receiver).sheet)
++}
++
++unsafe extern "C" fn validate_visible_columns(receiver: Id, _sel: Sel) {
++    update(receiver, |state| state.refresh_requested = true);
++    if state(receiver).active_window != 0 {
++        crate::dialog::deliver_modal(&sdl3::video::Event::Other(
++            sdl3::video::event_type::WINDOW_EXPOSED,
++        ));
++    }
++}
++
++unsafe extern "C" fn cancel_panel(receiver: Id, _sel: Sel, _sender: Id) {
++    let window = state(receiver).active_window;
++    if window != 0 {
++        crate::dialog::deliver_modal(&sdl3::video::Event::WindowClosed { window });
++    }
++}
++
++unsafe extern "C" fn close_panel(receiver: Id, sel: Sel) {
++    unsafe { cancel_panel(receiver, sel, std::ptr::null_mut()) };
++}
++
++unsafe extern "C" fn accept_panel(receiver: Id, _sel: Sel, _sender: Id) {
++    let window = state(receiver).active_window;
++    if window != 0 {
++        crate::dialog::deliver_modal(&sdl3::video::Event::Key {
++            window,
++            scancode: sdl3::keycodes::scancode::RETURN,
++            key: 0,
++            modifiers: 0,
++            down: true,
++            repeat: false,
++        });
++    }
++}
+ 
+ pub(crate) fn install() {
+     for name in [c"NSOpenPanel", c"NSSavePanel"] {
+@@ -1094,14 +1216,32 @@ pub(crate) fn install() {
+             "canChooseDirectories" => can_choose_directories, c"c16@0:8";
+             "setAllowsMultipleSelection:" => set_multiple, c"v20@0:8c16";
+             "allowsMultipleSelection" => allows_multiple, c"c16@0:8";
+-            "setCanCreateDirectories:" => ignored_flag, c"v20@0:8c16";
+-            "setResolvesAliases:" => ignored_flag, c"v20@0:8c16";
++            "setCanCreateDirectories:" => set_option, c"v20@0:8c16";
++            "setResolvesAliases:" => set_option, c"v20@0:8c16";
+             "showsHiddenFiles" => shows_hidden_files, c"c16@0:8";
+             "setShowsHiddenFiles:" => set_shows_hidden_files, c"v20@0:8c16";
+             "canSelectHiddenExtension" => can_select_hidden_extension, c"c16@0:8";
+             "setCanSelectHiddenExtension:" => set_can_select_hidden_extension, c"v20@0:8c16";
+             "treatsFilePackagesAsDirectories" => treats_file_packages_as_directories, c"c16@0:8";
+             "setTreatsFilePackagesAsDirectories:" => set_treats_file_packages_as_directories, c"v20@0:8c16";
++            "nameFieldStringValue" => name_field_string, c"@16@0:8";
++            "setNameFieldLabel:" => set_name_field_label, c"v24@0:8@16";
++            "nameFieldLabel" => name_field_label, c"@16@0:8";
++            "canCreateDirectories" => option, c"c16@0:8";
++            "resolvesAliases" => option, c"c16@0:8";
++            "setExtensionHidden:" => set_option, c"v20@0:8c16";
++            "isExtensionHidden" => option, c"c16@0:8";
++            "setAllowsOtherFileTypes:" => set_option, c"v20@0:8c16";
++            "allowsOtherFileTypes" => option, c"c16@0:8";
++            "setShowsTagField:" => set_option, c"v20@0:8c16";
++            "showsTagField" => option, c"c16@0:8";
++            "validateVisibleColumns" => validate_visible_columns, c"v16@0:8";
++            "isVisible" => is_visible, c"c16@0:8";
++            "isSheet" => is_sheet, c"c16@0:8";
++            "close" => close_panel, c"v16@0:8";
++            "orderOut:" => cancel_panel, c"v24@0:8@16";
++            "cancel:" => cancel_panel, c"v24@0:8@16";
++            "ok:" => accept_panel, c"v24@0:8@16";
+             "dealloc" => dealloc, c"v16@0:8";
+         });
+     }
+@@ -1121,6 +1261,42 @@ mod tests {
+         CALLBACK_RESPONSE.store(response as i64, Ordering::SeqCst);
+     }
+ 
++    #[test]
++    fn qt_panel_options_round_trip_without_retaining_state_after_deallocation() {
++        crate::bootstrap();
++        let class = objc::class::lookup(c"NSSavePanel").unwrap();
++        let panel = objc::object::create_instance(class, 0);
++        // SAFETY: these are the registered AppKit property prototypes.
++        unsafe {
++            let set: unsafe extern "C" fn(Id, Sel, u8) = std::mem::transmute(objc::msg::entry());
++            let get: unsafe extern "C" fn(Id, Sel) -> u8 = std::mem::transmute(objc::msg::entry());
++            for (setter, getter) in [
++                ("setCanCreateDirectories:", "canCreateDirectories"),
++                ("setResolvesAliases:", "resolvesAliases"),
++                ("setExtensionHidden:", "isExtensionHidden"),
++                ("setAllowsOtherFileTypes:", "allowsOtherFileTypes"),
++                ("setShowsTagField:", "showsTagField"),
++            ] {
++                set(panel, objc::sel::get(setter), 1);
++                for _ in 0..100 {
++                    assert_eq!(get(panel, objc::sel::get(getter)), 1);
++                }
++                set(panel, objc::sel::get(setter), 0);
++                assert_eq!(get(panel, objc::sel::get(getter)), 0);
++            }
++            let name = foundation::string::from_str("example.rbxl");
++            set_filename(panel, std::ptr::null(), name);
++            let pool = objc::arc::pool_push();
++            let returned = name_field_string(panel, std::ptr::null());
++            assert_eq!(string_text(returned).as_deref(), Some("example.rbxl"));
++            objc::arc::pool_pop(pool);
++            objc::arc::release(name);
++        }
++        assert_eq!(state(panel).options.len(), 5);
++        objc::arc::release(panel);
++        assert!(!panels().lock().unwrap().contains_key(&(panel as usize)));
++    }
++
+     #[test]
+     fn accessory_view_is_retained_replaced_and_released_with_panel() {
+         crate::bootstrap();
+diff --git a/crates/appkit/src/responder.rs b/crates/appkit/src/responder.rs
+index e42023642155292fb5f2716fc2632d4bb3483a50..89f722d8ca2d9af0285a68f4209c136f19753d77 100644
+--- a/crates/appkit/src/responder.rs
++++ b/crates/appkit/src/responder.rs
+@@ -258,11 +258,8 @@ unsafe extern "C" fn interpret_key_events(receiver: Id, _sel: Sel, events: Id) {
+     };
+     let command_sel = objc::sel::get("doCommandBySelector:");
+     // SAFETY: a live responder this method was sent to.
+-    let Some(method) =
+-        (unsafe { objc::object::class_of(receiver) }).and_then(|class| class.method(command_sel))
+-    else {
+-        return;
+-    };
++    let method =
++        (unsafe { objc::object::class_of(receiver) }).and_then(|class| class.method(command_sel));
+     for event in array.values.iter().copied() {
+         let event = event as Id;
+         if event.is_null() {
+@@ -288,6 +285,15 @@ unsafe extern "C" fn interpret_key_events(receiver: Id, _sel: Sel, events: Id) {
+             continue;
+         }
+         let Some(command) = command_for(key_code, modifiers) else {
++            let chord = crate::keymap::flags::COMMAND | crate::keymap::flags::CONTROL;
++            if modifiers & chord == 0
++                && let Some(text) = sdl3::video::take_next_text()
++            {
++                crate::text::commit(receiver, &text);
++            }
++            continue;
++        };
++        let Some(method) = method else {
+             continue;
+         };
+         // SAFETY: `-doCommandBySelector:` is `void (id, SEL, SEL)`, and the
+diff --git a/crates/appkit/src/screen.rs b/crates/appkit/src/screen.rs
+index a49ec23207cd15f3649df3ac918e271b26365854..4ba568c09b2aef8bd025e5399194b05cb1697469 100644
+--- a/crates/appkit/src/screen.rs
++++ b/crates/appkit/src/screen.rs
+@@ -68,7 +68,7 @@ pub(crate) fn screen_object(class_name: &std::ffi::CStr, display: u32) -> Id {
+     unsafe { (*screen).display = display as usize };
+     // Retained forever: a screen a guest can release is one it can make dangle,
+     // and these are handed out unowned by `+mainScreen`.
+-    objc::arc::retain(screen as Id);
++    objc::arc::make_immortal(screen as Id);
+     screens.push((class_name.to_owned(), display, screen as usize));
+     screen as Id
+ }
+@@ -1209,6 +1209,12 @@ pub unsafe extern "C" fn CGWarpMouseCursorPosition(point: foundation::geometry::
+     };
+     crate::event::note_warp_delta(moved.0, moved.1);
+     crate::event::warp_pointer(local.0, local.1);
++    if mouse_is_associated()
++        && let Some(window) = target
++        && recentre(window, point)
++    {
++        return 0;
++    }
+ 
+     let relative: Vec<_> = windows
+         .iter()
+@@ -1301,6 +1307,87 @@ fn forget_relative_warp() {
+     *RELATIVE_WARP.lock().unwrap_or_else(|e| e.into_inner()) = None;
+ }
+ 
++#[derive(Clone, Copy)]
++struct Recentring {
++    window: usize,
++    target: (f32, f32),
++    at: std::time::Instant,
++    active: bool,
++}
++
++static RECENTRING: std::sync::Mutex<Option<Recentring>> = std::sync::Mutex::new(None);
++
++const RECENTRE_WITHIN: std::time::Duration = std::time::Duration::from_millis(250);
++const RECENTRE_IDLE: std::time::Duration = std::time::Duration::from_millis(300);
++
++fn recentre(window: sdl3::Window, point: (f32, f32)) -> bool {
++    let now = std::time::Instant::now();
++    let mut state = RECENTRING.lock().unwrap_or_else(|e| e.into_inner());
++    let same = state.filter(|r| r.window == window as usize);
++    match same {
++        Some(r) if r.active => {
++            *state = Some(Recentring {
++                target: point,
++                at: now,
++                ..r
++            });
++            return true;
++        }
++        Some(r)
++            if now - r.at < RECENTRE_WITHIN
++                && (r.target.0 - point.0).abs() < 0.5
++                && (r.target.1 - point.1).abs() < 0.5 =>
++        {
++            sdl3::video::set_hint(sdl3::video::HINT_RELATIVE_CURSOR_VISIBLE, c"1");
++            if sdl3::video::set_relative_mouse_mode(window, true) {
++                forget_relative_warp();
++                *state = Some(Recentring {
++                    at: now,
++                    active: true,
++                    ..r
++                });
++                return true;
++            }
++        }
++        _ => {}
++    }
++    *state = Some(Recentring {
++        window: window as usize,
++        target: point,
++        at: now,
++        active: false,
++    });
++    false
++}
++
++pub(crate) fn recentring() -> bool {
++    RECENTRING
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .is_some_and(|r| r.active)
++}
++
++pub(crate) fn end_recentring_if_idle() -> bool {
++    let ended = {
++        let mut state = RECENTRING.lock().unwrap_or_else(|e| e.into_inner());
++        match *state {
++            Some(r) if r.active && r.at.elapsed() > RECENTRE_IDLE => state.take(),
++            _ => None,
++        }
++    };
++    let Some(r) = ended else {
++        return false;
++    };
++    let window = r.window as sdl3::Window;
++    let local = crate::event::pointer_position();
++    sdl3::video::warp_mouse_in_window(window, local.0, local.1);
++    sdl3::video::set_relative_mouse_mode(window, false);
++    let origin = crate::window::global_position(window).unwrap_or((0, 0));
++    let global = (local.0 + origin.0 as f32, local.1 + origin.1 as f32);
++    warp_physical(Some(window), global, local);
++    true
++}
++
+ /// `CGError CGAssociateMouseAndMouseCursorPosition(boolean_t connected)`.
+ ///
+ /// Disassociating is the second half of mouse look: a game hides the cursor and
+@@ -1500,8 +1587,8 @@ fn end_edge_hold() {
+ /// Called again when a window takes focus, because SDL leaves the mode when
+ /// focus goes and a window made after the guest disassociated never had it.
+ pub fn apply_mouse_association() {
+-    // From here the association decides relative mode, an edge hold included.
+     *EDGE_HOLD.lock().unwrap_or_else(|e| e.into_inner()) = None;
++    *RECENTRING.lock().unwrap_or_else(|e| e.into_inner()) = None;
+     let relative = !mouse_is_associated();
+     // Disassociating is not hiding: on macOS the cursor stays on screen where
+     // it was, and only `+[NSCursor hide]` takes it away - which this tree
+diff --git a/crates/appkit/src/view.rs b/crates/appkit/src/view.rs
+index 49308aafa48b2e4b1d990ed7b6cb7cbac10ecf3d..e7bdc6de171c94073fe8f39023fcbaf462068a1a 100644
+--- a/crates/appkit/src/view.rs
++++ b/crates/appkit/src/view.rs
+@@ -1781,6 +1781,11 @@ unsafe extern "C" fn wants_best_resolution(receiver: Id, _sel: Sel) -> u8 {
+ }
+ 
+ /// Answered as true, because a view here is always ready to be drawn into.
++/// Identify the inherited default so a generic container does not steal focus.
++pub(crate) fn is_default_accepts_first_responder(implementation: objc::class::Imp) -> bool {
++    implementation == yes as *const () as objc::class::Imp
++}
++
+ unsafe extern "C" fn yes(_receiver: Id, _sel: Sel) -> u8 {
+     1
+ }
+diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
+index 0a9f2077d5abe51054950e0846d121924e95f372..c7636031330af44acfc1c741c3f138a8062b830c 100644
+--- a/crates/appkit/src/window.rs
++++ b/crates/appkit/src/window.rs
+@@ -26,9 +26,10 @@ pub struct Window {
+     /// `NSWindowCollectionBehavior`, which a program reads back to decide
+     /// whether it may go full screen.
+     collection_behavior: usize,
++    /// Weak: a responder freed while it has focus must not leave this dangling.
+     first_responder: Id,
+-    /// `-initialFirstResponder`, a nib outlet and so not retained: made the
+-    /// first responder when the window is first ordered front without one.
++    /// `-initialFirstResponder`, a nib outlet and so weak, not retained: made
++    /// the first responder when the window is first ordered front without one.
+     initial_first_responder: Id,
+     /// `-setNextResponder:`, unretained; a window has none until given one.
+     next_responder: Id,
+@@ -75,6 +76,9 @@ pub struct Window {
+     title_visibility: isize,
+     /// `-windowController`, not retained: the controller owns the window.
+     window_controller: Id,
++    /// When this window was last ordered front, from [`ORDERED`]: the stacking
++    /// order, which creation order is not.
++    ordered: u64,
+ }
+ 
+ struct Sheet {
+@@ -420,6 +424,16 @@ pub fn sdl_windows() -> Vec<sdl3::Window> {
+         .collect()
+ }
+ 
++/// The last value handed to [`Window::ordered`].
++static ORDERED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++/// Every shown window, frontmost first.
++pub(crate) fn front_to_back() -> Vec<Id> {
++    let mut windows: Vec<Id> = all().into_iter().filter(|w| is_shown(*w)).collect();
++    windows.sort_by_key(|w| std::cmp::Reverse(window_of(*w).ordered));
++    windows
++}
++
+ /// Every window this crate has made, most recent last.
+ pub fn all() -> Vec<Id> {
+     WINDOWS
+@@ -1531,6 +1545,7 @@ fn order_front(receiver: Id, make_key: bool) {
+         sdl3::video::raise_window(sdl);
+     }
+     window_of(receiver).shown = 1;
++    window_of(receiver).ordered = ORDERED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+     trace!(
+         "{receiver:p} shown at sdl {:?} size {:?}",
+         sdl3::video::window_position(sdl),
+@@ -1598,6 +1613,8 @@ unsafe extern "C" fn dealloc(receiver: Id, sel: Sel) {
+     ));
+     // SAFETY: `-orderOut:` is `void (id, SEL, id)`; it also gives up key status.
+     unsafe { order_out(receiver, sel, std::ptr::null_mut()) };
++    objc::arc::destroy_weak(&mut window.first_responder);
++    objc::arc::destroy_weak(&mut window.initial_first_responder);
+     WINDOWS
+         .lock()
+         .unwrap_or_else(|e| e.into_inner())
+@@ -2086,7 +2103,7 @@ unsafe extern "C" fn set_next_responder(receiver: Id, _sel: Sel, responder: Id)
+ }
+ 
+ unsafe extern "C" fn set_initial_first_responder(receiver: Id, _sel: Sel, responder: Id) {
+-    window_of(receiver).initial_first_responder = responder;
++    objc::arc::store_weak(&mut window_of(receiver).initial_first_responder, responder);
+ }
+ 
+ unsafe extern "C" fn initial_first_responder(receiver: Id, _sel: Sel) -> Id {
+@@ -2112,7 +2129,7 @@ unsafe extern "C" fn make_first_responder(receiver: Id, _sel: Sel, responder: Id
+     if !unsafe { responder_agrees(current, "resignFirstResponder") } {
+         return 0;
+     }
+-    window_of(receiver).first_responder = responder;
++    objc::arc::store_weak(&mut window_of(receiver).first_responder, responder);
+     if unsafe { responder_agrees(responder, "becomeFirstResponder") } {
+         update_text_input(receiver);
+         return 1;
+@@ -2120,7 +2137,10 @@ unsafe extern "C" fn make_first_responder(receiver: Id, _sel: Sel, responder: Id
+     // A refusal leaves the window itself as the responder, which is the null
+     // this file spells it with - unless the refusal already moved it on.
+     if window_of(receiver).first_responder == responder {
+-        window_of(receiver).first_responder = std::ptr::null_mut();
++        objc::arc::store_weak(
++            &mut window_of(receiver).first_responder,
++            std::ptr::null_mut(),
++        );
+     }
+     update_text_input(receiver);
+     0
+@@ -2441,6 +2461,15 @@ unsafe extern "C" fn yes_with_object(_receiver: Id, _sel: Sel, _object: Id) -> u
+     1
+ }
+ 
++/// `NSWindowOcclusionStateVisible`: no compositor here reports occlusion.
++pub(crate) unsafe extern "C" fn visible_occlusion(_receiver: Id, _sel: Sel) -> u64 {
++    1 << 1
++}
++
++unsafe extern "C" fn zero_border(_receiver: Id, _sel: Sel, _edge: usize) -> f64 {
++    0.0
++}
++
+ unsafe extern "C" fn nil(_receiver: Id, _sel: Sel) -> Id {
+     std::ptr::null_mut()
+ }
+@@ -2622,6 +2651,11 @@ pub(crate) fn install() {
+         "setHidesOnDeactivate:" => set_hides_on_deactivate, c"v20@0:8c16";
+         "setReleasedWhenClosed:" => ignored_flag, c"v20@0:8c16";
+         "setOpaque:" => ignored_flag, c"v20@0:8c16";
++        "orderBack:" => ignored_object, c"v24@0:8@16";
++        "occlusionState" => visible_occlusion, c"Q16@0:8";
++        "setToolbar:" => ignored_object, c"v24@0:8@16";
++        "contentBorderThicknessForEdge:" => zero_border, c"d24@0:8Q16";
++        "setDefaultButtonCell:" => ignored_object, c"v24@0:8@16";
+         "setRestorable:" => ignored_flag, c"v20@0:8c16";
+         // No state restoration, so nothing ever asks the class to restore.
+         "setRestorationClass:" => ignored_integer, c"v24@0:8#16";
+@@ -3348,4 +3382,17 @@ mod tests {
+         assert_eq!(answered, 1);
+         assert_eq!(window_of(window).first_responder, handler);
+     }
++
++    #[test]
++    fn a_freed_first_responder_is_forgotten() {
++        crate::bootstrap();
++        let window =
++            objc::object::create_instance(objc::class::lookup(c"NSWindow").expect("NSWindow"), 0);
++        let view =
++            objc::object::create_instance(objc::class::lookup(c"NSView").expect("NSView"), 0);
++        objc::arc::store_weak(&mut window_of(window).first_responder, view);
++        objc::arc::release(view);
++        assert!(window_of(window).first_responder.is_null());
++        objc::arc::destroy_weak(&mut window_of(window).first_responder);
++    }
+ }
+diff --git a/crates/appkit/src/workspace.rs b/crates/appkit/src/workspace.rs
+index bc88a1a1920d838f1eaa198af0e70a49025db8a3..8ba7f85e4183bd90adbfbe2be1b1b24a54bfe8b6 100644
+--- a/crates/appkit/src/workspace.rs
++++ b/crates/appkit/src/workspace.rs
+@@ -79,6 +79,26 @@ unsafe extern "C" fn open_url(_receiver: Id, _sel: Sel, url: Id) -> u8 {
+     u8::from(sdl3::open_url(&target))
+ }
+ 
++unsafe extern "C" fn open_file(_receiver: Id, _sel: Sel, path: Id) -> u8 {
++    if path.is_null() {
++        return 0;
++    }
++    // SAFETY: an `NSString`.
++    let bytes = unsafe { foundation::string::bytes(path) };
++    let Ok(guest) = std::str::from_utf8(&bytes) else {
++        return 0;
++    };
++    let host = prefix::ns::host_path(guest);
++    let url = corefoundation::url::new_file_url(&host.to_string_lossy(), host.is_dir());
++    let text = unsafe { corefoundation::url::as_url(url) }.map(|u| u.text.clone());
++    unsafe { corefoundation::api::CFRelease(url) };
++    text.is_some_and(|text| sdl3::open_url(&text)).into()
++}
++
++unsafe extern "C" fn open_file_with(receiver: Id, sel: Sel, path: Id, _application: Id) -> u8 {
++    unsafe { open_file(receiver, sel, path) }
++}
++
+ fn open_target(url: &corefoundation::url::Contents) -> Option<String> {
+     if url.scheme().is_empty() {
+         return None;
+@@ -362,6 +382,8 @@ pub(crate) fn install() {
+     methods!(class, {
+         "URLForApplicationToOpenURL:" => application_url_for_url, c"@24@0:8@16";
+         "openURL:" => open_url, c"c24@0:8@16";
++        "openFile:" => open_file, c"c24@0:8@16";
++        "openFile:withApplication:" => open_file_with, c"c32@0:8@16@24";
+         "notificationCenter" => notification_center, c"@16@0:8";
+         "frontmostApplication" => frontmost_application, c"@16@0:8";
+         "runningApplications" => workspace_running_applications, c"@16@0:8";
+diff --git a/crates/corefoundation/src/api.rs b/crates/corefoundation/src/api.rs
+index f76baaeddce73234ff07cc7be437121711ca05bb..a4c70b3ee515ee6838c64be080bc2cba4cf46c6d 100644
+--- a/crates/corefoundation/src/api.rs
++++ b/crates/corefoundation/src/api.rs
+@@ -959,6 +959,27 @@ pub unsafe extern "C" fn CFStringCompare(a: CFTypeRef, b: CFTypeRef, options: u6
+     }
+ }
+ 
++fn affix(string: CFTypeRef, affix: CFTypeRef, suffix: bool) -> u8 {
++    let (Some(string), Some(affix)) = (unsafe { string::as_string(string) }, unsafe {
++        string::as_string(affix)
++    }) else {
++        return 0;
++    };
++    let (whole, part) = (string.utf16(), affix.utf16());
++    u8::from(match suffix {
++        true => whole.ends_with(&part),
++        false => whole.starts_with(&part),
++    })
++}
++
++pub unsafe extern "C" fn CFStringHasPrefix(string: CFTypeRef, prefix: CFTypeRef) -> u8 {
++    affix(string, prefix, false)
++}
++
++pub unsafe extern "C" fn CFStringHasSuffix(string: CFTypeRef, suffix: CFTypeRef) -> u8 {
++    affix(string, suffix, true)
++}
++
+ #[repr(C)]
+ pub struct CFRange {
+     location: CFIndex,
+@@ -2441,6 +2462,17 @@ pub unsafe extern "C" fn CFUUIDGetTypeID() -> CFTypeID {
+     crate::base::type_id_of(crate::uuid::class())
+ }
+ 
++pub unsafe extern "C" fn CFUUIDCreateFromUUIDBytes(
++    _allocator: CFAllocatorRef,
++    low: u64,
++    high: u64,
++) -> CFTypeRef {
++    let mut bytes = [0u8; 16];
++    bytes[..8].copy_from_slice(&low.to_le_bytes());
++    bytes[8..].copy_from_slice(&high.to_le_bytes());
++    crate::uuid::new(bytes)
++}
++
+ pub unsafe extern "C" fn CFUUIDCreate(_allocator: CFAllocatorRef) -> CFTypeRef {
+     crate::uuid::new(crate::uuid::generate())
+ }
+@@ -3476,3 +3508,28 @@ mod tests {
+         assert!(unsafe { CFDataGetBytePtr(std::ptr::null()) }.is_null());
+     }
+ }
++
++pub unsafe extern "C" fn CFNullGetTypeID() -> CFTypeID {
++    objc::class::lookup(c"NSNull").map_or(0, crate::base::type_id_of)
++}
++
++pub unsafe extern "C" fn CFBagGetTypeID() -> CFTypeID {
++    0x7fff_ba90
++}
++
++pub unsafe extern "C" fn CFCopyDescription(object: CFTypeRef) -> CFTypeRef {
++    if object.is_null() {
++        return std::ptr::null();
++    }
++    // SAFETY: `-description` is `id (id, SEL)` on every object.
++    let text = unsafe {
++        let f: unsafe extern "C" fn(Id, objc::sel::Sel) -> Id =
++            std::mem::transmute(objc::msg::entry());
++        f(object as Id, objc::sel::get("description"))
++    };
++    objc::arc::retain(text) as CFTypeRef
++}
++
++pub unsafe extern "C" fn CFCopyTypeIDDescription(_type: CFTypeID) -> CFTypeRef {
++    string::from_bytes(b"CFType", false)
++}
+diff --git a/crates/corefoundation/src/base.rs b/crates/corefoundation/src/base.rs
+index 183731748926a4ece8d04c3a50a3fbfd7cd42621..8c59aa4f038fa1d9a2d75fdbf09e9422dfb64690 100644
+--- a/crates/corefoundation/src/base.rs
++++ b/crates/corefoundation/src/base.rs
+@@ -272,7 +272,7 @@ pub fn interned_name(text: &str) -> u64 {
+     }
+     let object = crate::string::from_bytes(text.as_bytes(), false);
+     // Retained forever: a global a guest may release is one it can make dangle.
+-    objc::arc::retain(object as objc::object::Id);
++    objc::arc::make_immortal(object as objc::object::Id);
+     let address = object as usize as u64;
+     strings.push((text.to_string(), address));
+     address
+diff --git a/crates/corefoundation/src/lib.rs b/crates/corefoundation/src/lib.rs
+index b89464aaeee65d0849ddb0329875fe64bcc3037a..4dd0f656d8b58af3c8948f70f779a822f4af02fa 100644
+--- a/crates/corefoundation/src/lib.rs
++++ b/crates/corefoundation/src/lib.rs
+@@ -140,6 +140,12 @@ exports::exports! {
+         "CFStringGetBytes" => api::CFStringGetBytes,
+         "CFStringCreateExternalRepresentation" => api::CFStringCreateExternalRepresentation,
+         "CFStringCompare" => api::CFStringCompare,
++        "CFStringHasPrefix" => api::CFStringHasPrefix,
++        "CFStringHasSuffix" => api::CFStringHasSuffix,
++        "CFNullGetTypeID" => api::CFNullGetTypeID,
++        "CFBagGetTypeID" => api::CFBagGetTypeID,
++        "CFCopyDescription" => api::CFCopyDescription,
++        "CFCopyTypeIDDescription" => api::CFCopyTypeIDDescription,
+         "CFStringCompareWithOptions" => api::CFStringCompareWithOptions,
+         "CFStringFindWithOptions" => api::CFStringFindWithOptions,
+         "CFStringCreateMutable" => api::CFStringCreateMutable,
+@@ -212,6 +218,7 @@ exports::exports! {
+         "CFDataReplaceBytes" => api::CFDataReplaceBytes,
+         "CFUUIDGetTypeID" => api::CFUUIDGetTypeID,
+         "CFUUIDCreate" => api::CFUUIDCreate,
++        "CFUUIDCreateFromUUIDBytes" => api::CFUUIDCreateFromUUIDBytes,
+         "CFUUIDGetUUIDBytes" => api::CFUUIDGetUUIDBytes,
+         "CFUUIDCreateString" => api::CFUUIDCreateString,
+         "CFUUIDGetConstantUUIDWithBytes" => api::CFUUIDGetConstantUUIDWithBytes,
+diff --git a/crates/corefoundation/src/uuid.rs b/crates/corefoundation/src/uuid.rs
+index 5c685e147344e4bf273f57659ff7e4e1e4d483a6..62aa6b8c85e5bb6b2d7d1700770a1ca4dee7c613 100644
+--- a/crates/corefoundation/src/uuid.rs
++++ b/crates/corefoundation/src/uuid.rs
+@@ -85,7 +85,7 @@ pub fn constant(bytes: Bytes) -> CFTypeRef {
+     }
+     let object = new(bytes);
+     // Retained forever: a constant a guest may release is one it can make dangle.
+-    objc::arc::retain(object as Id);
++    objc::arc::make_immortal(object as Id);
+     constants.push((bytes, object as usize));
+     object
+ }
+diff --git a/crates/coreservices/src/collator.rs b/crates/coreservices/src/collator.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..867011e90018e0c71c116eae8fa67d500613272a
+--- /dev/null
++++ b/crates/coreservices/src/collator.rs
+@@ -0,0 +1,256 @@
++use std::cmp::Ordering;
++use std::ffi::c_void;
++
++const CASE_INSENSITIVE: u32 = 1 << 3;
++const PUNCTUATION_SIGNIFICANT: u32 = 1 << 15;
++const DIGITS_AS_NUMBER: u32 = 1 << 17;
++
++const PARAM_ERR: i32 = -50;
++
++struct Collator {
++    options: u32,
++}
++
++pub unsafe extern "C" fn LocaleRefFromLocaleString(_name: *const i8, locale: *mut usize) -> i32 {
++    if locale.is_null() {
++        return PARAM_ERR;
++    }
++    // SAFETY: the caller's out-parameter.
++    unsafe { *locale = 1 };
++    0
++}
++
++pub unsafe extern "C" fn UCCreateCollator(
++    _locale: usize,
++    _variant: u32,
++    options: u32,
++    collator: *mut *mut c_void,
++) -> i32 {
++    if collator.is_null() {
++        return PARAM_ERR;
++    }
++    // SAFETY: the caller's out-parameter; [`UCDisposeCollator`] frees it.
++    unsafe { *collator = Box::into_raw(Box::new(Collator { options })).cast() };
++    0
++}
++
++pub unsafe extern "C" fn UCDisposeCollator(collator: *mut *mut c_void) -> i32 {
++    if collator.is_null() {
++        return PARAM_ERR;
++    }
++    // SAFETY: a collator [`UCCreateCollator`] made, or null.
++    unsafe {
++        let made = std::mem::replace(&mut *collator, std::ptr::null_mut());
++        if !made.is_null() {
++            drop(Box::from_raw(made as *mut Collator));
++        }
++    }
++    0
++}
++
++fn options_of(collator: *mut c_void) -> u32 {
++    match collator.is_null() {
++        true => 0,
++        // SAFETY: a collator [`UCCreateCollator`] made.
++        false => unsafe { (*(collator as *const Collator)).options },
++    }
++}
++
++unsafe fn decode(text: *const u16, length: usize) -> Vec<char> {
++    if text.is_null() || length == 0 {
++        return Vec::new();
++    }
++    // SAFETY: the caller's obligation.
++    let units = unsafe { std::slice::from_raw_parts(text, length) };
++    char::decode_utf16(units.iter().copied())
++        .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
++        .collect()
++}
++
++#[derive(PartialEq, Eq, PartialOrd, Ord)]
++enum Token {
++    Number(usize, Vec<char>),
++    Char(char),
++}
++
++fn tokens(text: &[char], options: u32, fold: bool) -> Vec<Token> {
++    let mut out = Vec::new();
++    let mut at = 0;
++    while at < text.len() {
++        let c = text[at];
++        if options & DIGITS_AS_NUMBER != 0 && c.is_ascii_digit() {
++            let start = at;
++            while at < text.len() && text[at].is_ascii_digit() {
++                at += 1;
++            }
++            let digits: Vec<char> = text[start..at]
++                .iter()
++                .copied()
++                .skip_while(|d| *d == '0')
++                .collect();
++            out.push(Token::Number(digits.len(), digits));
++            continue;
++        }
++        at += 1;
++        if options & PUNCTUATION_SIGNIFICANT == 0 && (c.is_ascii_punctuation() || c.is_whitespace())
++        {
++            continue;
++        }
++        out.extend(match fold {
++            true => c.to_lowercase().map(Token::Char).collect::<Vec<_>>(),
++            false => vec![Token::Char(c)],
++        });
++    }
++    out
++}
++
++fn compare(a: &[char], b: &[char], options: u32) -> Ordering {
++    let primary = tokens(a, options, true).cmp(&tokens(b, options, true));
++    if primary != Ordering::Equal || options & CASE_INSENSITIVE != 0 {
++        return primary;
++    }
++    let case = |text: &[char]| -> Vec<bool> {
++        tokens(text, options, false)
++            .iter()
++            .map(|t| matches!(t, Token::Char(c) if c.is_uppercase()))
++            .collect()
++    };
++    case(a).cmp(&case(b))
++}
++
++pub unsafe extern "C" fn UCCompareText(
++    collator: *mut c_void,
++    text1: *const u16,
++    length1: usize,
++    text2: *const u16,
++    length2: usize,
++    equivalent: *mut u8,
++    order: *mut i32,
++) -> i32 {
++    // SAFETY: the caller states each text covers its length.
++    let (a, b) = unsafe { (decode(text1, length1), decode(text2, length2)) };
++    let ordering = compare(&a, &b, options_of(collator));
++    // SAFETY: the caller's out-parameters, each optional.
++    unsafe {
++        if !equivalent.is_null() {
++            *equivalent = u8::from(ordering == Ordering::Equal);
++        }
++        if !order.is_null() {
++            *order = ordering as i32;
++        }
++    }
++    0
++}
++
++pub unsafe extern "C" fn UCGetCollationKey(
++    collator: *mut c_void,
++    text: *const u16,
++    length: usize,
++    max: usize,
++    actual: *mut usize,
++    key: *mut u32,
++) -> i32 {
++    let options = options_of(collator) & !DIGITS_AS_NUMBER;
++    // SAFETY: the caller states the text covers its length.
++    let chars = unsafe { decode(text, length) };
++    let mut values: Vec<u32> = tokens(&chars, options, true)
++        .into_iter()
++        .filter_map(|t| match t {
++            Token::Char(c) => Some(c as u32 + 1),
++            Token::Number(..) => None,
++        })
++        .collect();
++    if options & CASE_INSENSITIVE == 0 {
++        values.push(0);
++        values.extend(chars.iter().map(|c| u32::from(c.is_uppercase()) + 1));
++    }
++    if values.len() > max || (key.is_null() && max != 0) {
++        return PARAM_ERR;
++    }
++    // SAFETY: the caller's buffer of `max` values and out-parameter.
++    unsafe {
++        if !key.is_null() {
++            std::ptr::copy_nonoverlapping(values.as_ptr(), key, values.len());
++        }
++        if !actual.is_null() {
++            *actual = values.len();
++        }
++    }
++    0
++}
++
++pub unsafe extern "C" fn UCCompareCollationKeys(
++    key1: *const u32,
++    length1: usize,
++    key2: *const u32,
++    length2: usize,
++    equivalent: *mut u8,
++    order: *mut i32,
++) -> i32 {
++    let slice = |key: *const u32, length: usize| match key.is_null() || length == 0 {
++        true => &[][..],
++        // SAFETY: the caller states the key covers its length.
++        false => unsafe { std::slice::from_raw_parts(key, length) },
++    };
++    let ordering = slice(key1, length1).cmp(slice(key2, length2));
++    // SAFETY: the caller's out-parameters, each optional.
++    unsafe {
++        if !equivalent.is_null() {
++            *equivalent = u8::from(ordering == Ordering::Equal);
++        }
++        if !order.is_null() {
++            *order = ordering as i32;
++        }
++    }
++    0
++}
++
++exports::exports! {
++    functions {
++        "LocaleRefFromLocaleString" => LocaleRefFromLocaleString,
++        "UCCreateCollator" => UCCreateCollator,
++        "UCDisposeCollator" => UCDisposeCollator,
++        "UCCompareText" => UCCompareText,
++        "UCGetCollationKey" => UCGetCollationKey,
++        "UCCompareCollationKeys" => UCCompareCollationKeys,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn order(a: &str, b: &str, options: u32) -> i32 {
++        let (a, b): (Vec<u16>, Vec<u16>) = (a.encode_utf16().collect(), b.encode_utf16().collect());
++        let mut collator = std::ptr::null_mut();
++        let (mut equivalent, mut order) = (0u8, 0i32);
++        // SAFETY: each pointer covers what it is said to.
++        unsafe {
++            assert_eq!(UCCreateCollator(1, 0, options, &mut collator), 0);
++            UCCompareText(
++                collator,
++                a.as_ptr(),
++                a.len(),
++                b.as_ptr(),
++                b.len(),
++                &mut equivalent,
++                &mut order,
++            );
++            UCDisposeCollator(&mut collator);
++        }
++        assert!(collator.is_null());
++        assert_eq!(equivalent != 0, order == 0);
++        order
++    }
++
++    #[test]
++    fn texts_order_as_a_user_reads_them() {
++        assert_eq!(order("apple", "Banana", 0), -1);
++        assert_eq!(order("apple", "Apple", CASE_INSENSITIVE), 0);
++        assert_eq!(order("apple", "Apple", 0), -1);
++        assert_eq!(order("file9", "file10", DIGITS_AS_NUMBER), -1);
++        assert_eq!(order("file9", "file10", 0), 1);
++        assert_eq!(order("a-b", "ab", 0), 0);
++        assert_eq!(order("a-b", "ab", PUNCTUATION_SIGNIFICANT), -1);
++    }
++}
+diff --git a/crates/coreservices/src/icons.rs b/crates/coreservices/src/icons.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..085c8e551dce99f2d0afaf2f8ace3462e020b6fd
+--- /dev/null
++++ b/crates/coreservices/src/icons.rs
+@@ -0,0 +1,43 @@
++use std::ffi::c_void;
++
++const NO_SUCH_ICON_ERR: i16 = -2582;
++
++pub unsafe extern "C" fn GetIconRef(
++    _volume: i16,
++    _creator: u32,
++    _kind: u32,
++    icon: *mut *mut c_void,
++) -> i16 {
++    if !icon.is_null() {
++        // SAFETY: the caller's out-parameter.
++        unsafe { *icon = std::ptr::null_mut() };
++    }
++    NO_SUCH_ICON_ERR
++}
++
++pub unsafe extern "C" fn ReleaseIconRef(_icon: *mut c_void) -> i16 {
++    0
++}
++
++exports::exports! {
++    functions {
++        "GetIconRef" => GetIconRef,
++        "ReleaseIconRef" => ReleaseIconRef,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn no_icon_is_handed_out() {
++        let mut icon = 1 as *mut c_void;
++        // SAFETY: a writable out-parameter.
++        assert_eq!(
++            unsafe { GetIconRef(-32768, 0, 0, &mut icon) },
++            NO_SUCH_ICON_ERR
++        );
++        assert!(icon.is_null());
++    }
++}
+diff --git a/crates/coreservices/src/lib.rs b/crates/coreservices/src/lib.rs
+index 267bcc8ae5ad08f27002a1a60feb7564518646f7..b02d654b27d43a2af4b52baf55864f5a912ae235 100644
+--- a/crates/coreservices/src/lib.rs
++++ b/crates/coreservices/src/lib.rs
+@@ -4,12 +4,16 @@
+     non_snake_case
+ )]
+ 
++pub mod collator;
+ pub mod events;
+ pub mod files;
++pub mod icons;
+ pub mod process;
+ 
+ exports::group! {
++    collator,
+     events,
+     files,
++    icons,
+     process,
+ }
+diff --git a/crates/darwin/src/bsd.rs b/crates/darwin/src/bsd.rs
+index 738dc1ca5866a927e9e5f0fe308f408de061d251..d8231c3458a91592761c1e136780aabffc43b193 100644
+--- a/crates/darwin/src/bsd.rs
++++ b/crates/darwin/src/bsd.rs
+@@ -43,6 +43,12 @@ pub unsafe extern "C" fn cxa_atexit(func: *const (), arg: *mut c_void, dso: *con
+     crate::exit::register(handler, arg, dso as u64, func as u64)
+ }
+ 
++pub extern "C" fn exit(status: c_int) -> ! {
++    crate::exit::finalize(0);
++    // SAFETY: ends the process; the remaining host handlers run as usual.
++    unsafe { libc::exit(status) }
++}
++
+ /// `void __cxa_finalize(void *dso)`
+ pub extern "C" fn cxa_finalize(dso: *const ()) {
+     crate::exit::finalize(dso as u64);
+@@ -456,6 +462,7 @@ exports::exports! {
+         "atexit_b" => atexit_b,
+         "__cxa_atexit" => cxa_atexit,
+         "__cxa_finalize" => cxa_finalize,
++        "exit" => exit,
+         "pthread_atfork" => pthread_atfork,
+         "__assert_rtn" => assert_rtn,
+         "srandomdev" => srandomdev,
+diff --git a/crates/darwin/src/env.rs b/crates/darwin/src/env.rs
+index c0d7f1691b37a0850290fc02a877b6b836200bfc..aa078769011c5b78c949940837e09dfcf3566d45 100644
+--- a/crates/darwin/src/env.rs
++++ b/crates/darwin/src/env.rs
+@@ -22,7 +22,10 @@ fn block() -> std::sync::MutexGuard<'static, bool> {
+         return initialized;
+     }
+     let entries = handed_off().unwrap_or_else(|| {
+-        let host: Vec<_> = std::env::vars_os().collect();
++        let app = APP_LAUNCH.load(std::sync::atomic::Ordering::Relaxed);
++        let host: Vec<_> = std::env::vars_os()
++            .filter(|(name, _)| !(app && is_locale_var(name.as_encoded_bytes())))
++            .collect();
+         initial(&host, &guest_value)
+     });
+     let entries: Vec<_> = entries
+@@ -54,7 +57,17 @@ const BASELINE: &[&str] = &["HOME", "USER", "LOGNAME", "SHELL", "PATH", "TMPDIR"
+ /// which describe the user rather than the host's software, and which a
+ /// command-line guest is lost without.
+ fn passes_through(name: &[u8]) -> bool {
+-    matches!(name, b"TERM" | b"COLORTERM" | b"LANG") || name.starts_with(b"LC_")
++    matches!(name, b"TERM" | b"COLORTERM") || is_locale_var(name)
++}
++
++fn is_locale_var(name: &[u8]) -> bool {
++    name == b"LANG" || name.starts_with(b"LC_")
++}
++
++static APP_LAUNCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++
++pub fn launch_as_app() {
++    APP_LAUNCH.store(true, std::sync::atomic::Ordering::Relaxed);
+ }
+ 
+ /// The starting block of a guest no other guest launched, as `NAME=VALUE`.
+diff --git a/crates/darwin/src/fs.rs b/crates/darwin/src/fs.rs
+index ae8fbd4bcba2ab4a5b3ae240e0aa932bc4a1bce8..dddbfe587d26da9550be285deee75f5ae715a7e2 100644
+--- a/crates/darwin/src/fs.rs
++++ b/crates/darwin/src/fs.rs
+@@ -498,6 +498,40 @@ pub unsafe extern "C" fn clonefileat(
+ /// # Safety
+ ///
+ /// Both arguments are NUL-terminated strings.
++pub unsafe extern "C" fn clonefile(from: *const c_char, to: *const c_char, flags: c_int) -> c_int {
++    let here = crate::stat::DARWIN_AT_FDCWD;
++    unsafe { clonefileat(here, from, here, to, flags) }
++}
++
++pub unsafe extern "C" fn renameatx_np(
++    from_dirfd: c_int,
++    from: *const c_char,
++    to_dirfd: c_int,
++    to: *const c_char,
++    flags: u32,
++) -> c_int {
++    const RENAME_SWAP: u32 = 2;
++    const RENAME_EXCL: u32 = 4;
++    let here = crate::stat::DARWIN_AT_FDCWD;
++    if from_dirfd != here || to_dirfd != here || flags & !(RENAME_SWAP | RENAME_EXCL) != 0 {
++        crate::errno::set(libc::EINVAL);
++        return -1;
++    }
++    let mut linux = 0;
++    if flags & RENAME_SWAP != 0 {
++        linux |= libc::RENAME_EXCHANGE;
++    }
++    if flags & RENAME_EXCL != 0 {
++        linux |= libc::RENAME_NOREPLACE;
++    }
++    with_pair(from, to, |from, to| {
++        if !may_write(from) || !may_write(to) {
++            return -1;
++        }
++        unsafe { libc::renameat2(libc::AT_FDCWD, from, libc::AT_FDCWD, to, linux) }
++    })
++}
++
+ pub unsafe extern "C" fn rename(from: *const c_char, to: *const c_char) -> c_int {
+     with_pair(from, to, |from, to| {
+         // Both ends: a system file renamed away is as gone as one deleted.
+@@ -719,6 +753,8 @@ exports::exports! {
+         "truncate" => truncate,
+         "link" => link,
+         "clonefileat" => clonefileat,
++        "clonefile" => clonefile,
++        "renameatx_np" => renameatx_np,
+         "rename" => rename,
+         "symlink" => symlink,
+         "mkstemp" => mkstemp,
+@@ -726,3 +762,60 @@ exports::exports! {
+         "mkdtempat_np" => mkdtempat_np,
+     }
+ }
++
++#[cfg(test)]
++mod imported_api_tests {
++    use super::*;
++    use std::ffi::CString;
++
++    struct Directory(std::path::PathBuf);
++    impl Directory {
++        fn new(name: &str) -> Self {
++            let path =
++                std::env::temp_dir().join(format!("citric-fs-{name}-{}", std::process::id()));
++            std::fs::create_dir_all(&path).unwrap();
++            Self(path)
++        }
++        fn path(&self, name: &str) -> CString {
++            CString::new(self.0.join(name).as_os_str().as_bytes()).unwrap()
++        }
++    }
++    impl Drop for Directory {
++        fn drop(&mut self) {
++            let _ = std::fs::remove_dir_all(&self.0);
++        }
++    }
++
++    #[test]
++    fn clonefile_copies_contents_and_never_overwrites_an_existing_target() {
++        let dir = Directory::new("clone");
++        std::fs::write(dir.0.join("source"), b"original").unwrap();
++        let (source, target) = (dir.path("source"), dir.path("target"));
++        unsafe {
++            assert_eq!(clonefile(source.as_ptr(), target.as_ptr(), 0), 0);
++            assert_eq!(std::fs::read(dir.0.join("target")).unwrap(), b"original");
++            std::fs::write(dir.0.join("source"), b"changed").unwrap();
++            assert_eq!(clonefile(source.as_ptr(), target.as_ptr(), 0), -1);
++            assert_eq!(crate::errno::get(), libc::EEXIST);
++            assert_eq!(std::fs::read(dir.0.join("target")).unwrap(), b"original");
++        }
++    }
++
++    #[test]
++    #[cfg(target_os = "linux")]
++    fn renameatx_preserves_exclusive_and_exchange_semantics() {
++        let dir = Directory::new("rename");
++        std::fs::write(dir.0.join("a"), b"first").unwrap();
++        std::fs::write(dir.0.join("b"), b"second").unwrap();
++        let (a, b) = (dir.path("a"), dir.path("b"));
++        let here = crate::stat::DARWIN_AT_FDCWD;
++        unsafe {
++            assert_eq!(renameatx_np(here, a.as_ptr(), here, b.as_ptr(), 4), -1);
++            assert_eq!(crate::errno::get(), libc::EEXIST);
++            assert_eq!(std::fs::read(dir.0.join("a")).unwrap(), b"first");
++            assert_eq!(renameatx_np(here, a.as_ptr(), here, b.as_ptr(), 2), 0);
++            assert_eq!(std::fs::read(dir.0.join("a")).unwrap(), b"second");
++            assert_eq!(std::fs::read(dir.0.join("b")).unwrap(), b"first");
++        }
++    }
++}
+diff --git a/crates/darwin/src/passthrough.rs b/crates/darwin/src/passthrough.rs
+index 6164d8247dcf68373aad11d1e98fc02a3f2dc038..6283bae02fed81a5a4120aa50112721c77cbad0c 100644
+--- a/crates/darwin/src/passthrough.rs
++++ b/crates/darwin/src/passthrough.rs
+@@ -107,7 +107,6 @@ pub const CLAIMED: &[&str] = &[
+     "difftime",
+     "mktime",
+     "time",
+-    "exit",
+     "munmap",
+     "mprotect",
+     "mlock",
+diff --git a/crates/darwin/src/pthread/once.rs b/crates/darwin/src/pthread/once.rs
+index 19fb70f7a54f677461a9844959d56c529eab0448..cf9ea20bd5e80181523930180381853cef69346e 100644
+--- a/crates/darwin/src/pthread/once.rs
++++ b/crates/darwin/src/pthread/once.rs
+@@ -41,6 +41,9 @@ pub unsafe fn once<F: FnOnce()>(at: u64, body: F) -> i32 {
+     }
+ 
+     let state = record.u32(STATE);
++    if state.load(Ordering::Acquire) == DONE {
++        return 0;
++    }
+     let mut body = Some(body);
+     loop {
+         match state.compare_exchange(NEVER, RUNNING, Ordering::Acquire, Ordering::Acquire) {
+diff --git a/crates/darwin/src/sysctl.rs b/crates/darwin/src/sysctl.rs
+index 2ec6a668af1ad1680df105dd350c3b3f8e6af587..7dbf8df0f47aca0ba4ed13ba212615d0b8e90128 100644
+--- a/crates/darwin/src/sysctl.rs
++++ b/crates/darwin/src/sysctl.rs
+@@ -226,8 +226,14 @@ fn host_value(mib: &[i32]) -> Option<Value> {
+ /// The defaults describe macOS 15.0. A program that branches on the OS version needs
+ /// a *specific* answer far more than it needs a true one, and the environment is where
+ /// that belongs rather than a rebuild.
++///
++/// Read once: [`macos_version`] is derived from it and cached, and the two must
++/// keep agreeing if the variable changes later.
+ fn release() -> String {
+-    env_or("ROSEMARY_DARWIN_RELEASE", "24.0.0")
++    static RELEASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
++    RELEASE
++        .get_or_init(|| env_or("ROSEMARY_DARWIN_RELEASE", "24.0.0"))
++        .clone()
+ }
+ 
+ /// The macOS version the [`release`] above implies, as `(major, minor, patch)`.
+@@ -237,15 +243,18 @@ fn release() -> String {
+ /// question and must not get two answers. Darwin 20 is macOS 11 and each is one
+ /// apart after that; before it, every Darwin was some 10.x.
+ pub fn macos_version() -> (i32, i32, i32) {
+-    let release = release();
+-    let mut parts = release.split('.').map(|p| p.parse::<i32>().unwrap_or(0));
+-    let darwin = parts.next().unwrap_or(24);
+-    let minor = parts.next().unwrap_or(0);
+-    let patch = parts.next().unwrap_or(0);
+-    match darwin >= 20 {
+-        true => (darwin - 9, minor, patch),
+-        false => (10, darwin - 4, minor),
+-    }
++    static VERSION: std::sync::OnceLock<(i32, i32, i32)> = std::sync::OnceLock::new();
++    *VERSION.get_or_init(|| {
++        let release = release();
++        let mut parts = release.split('.').map(|p| p.parse::<i32>().unwrap_or(0));
++        let darwin = parts.next().unwrap_or(24);
++        let minor = parts.next().unwrap_or(0);
++        let patch = parts.next().unwrap_or(0);
++        match darwin >= 20 {
++            true => (darwin - 9, minor, patch),
++            false => (10, darwin - 4, minor),
++        }
++    })
+ }
+ 
+ /// `kern.osproductversion`, spelled as macOS does: no patch component when it is 0.
+@@ -912,6 +921,17 @@ pub(crate) fn lock_guest_arch(arch: GuestArch) -> std::sync::MutexGuard<'static,
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn the_release_and_the_macos_version_keep_agreeing() {
++        let version = macos_version();
++        let first = release();
++        // SAFETY: no other test reads or writes this variable.
++        unsafe { std::env::set_var("ROSEMARY_DARWIN_RELEASE", "99.0.0") };
++        assert_eq!(release(), first);
++        assert_eq!(macos_version(), version);
++        unsafe { std::env::remove_var("ROSEMARY_DARWIN_RELEASE") };
++    }
++
+     /// Ask a key the way a guest does, and get the bytes back.
+     fn ask(mib: &[i32]) -> Option<Vec<u8>> {
+         let mut len: libc::size_t = 0;
+diff --git a/crates/darwin/src/tls/mod.rs b/crates/darwin/src/tls/mod.rs
+index a51f16fd0c06d55ddf8b7810b904f33e61e08269..fcc0fdcb40c0afdace40e431b9c35b881cebabba 100644
+--- a/crates/darwin/src/tls/mod.rs
++++ b/crates/darwin/src/tls/mod.rs
+@@ -42,15 +42,26 @@ pub fn tsd_base() -> u64 {
+     base
+ }
+ 
++#[cfg(not(target_os = "macos"))]
++thread_local! {
++    static BASE: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
++}
++
+ #[cfg(not(target_os = "macos"))]
+ pub fn tsd_base() -> u64 {
++    let cached = BASE.with(|base| base.get());
++    if cached != 0 {
++        return cached;
++    }
+     let key = synthetic_key();
+     // SAFETY: `key` was created by `pthread_key_create` below and is never deleted.
+     let existing = unsafe { libc::pthread_getspecific(key) };
+     if !existing.is_null() {
++        BASE.with(|base| base.set(existing as usize as u64));
+         return existing as usize as u64;
+     }
+     let base = allocate();
++    BASE.with(|cell| cell.set(base));
+     // SAFETY: as above; `base` is a leaked allocation this thread now owns, and
+     // `release` frees it when the thread ends.
+     unsafe { libc::pthread_setspecific(key, base as usize as *const core::ffi::c_void) };
+@@ -119,6 +130,11 @@ unsafe extern "C" fn release(block: *mut core::ffi::c_void) {
+     }
+     // SAFETY: as above; the last pass takes the array away before freeing it.
+     unsafe { libc::pthread_setspecific(synthetic_key(), core::ptr::null()) };
++    BASE.with(|base| {
++        if base.get() == block as usize as u64 {
++            base.set(0);
++        }
++    });
+     // SAFETY: as above. Reconstituting the same `Box<[u64]>` `allocate` leaked, with
+     // the same length.
+     drop(unsafe { Box::from_raw(core::ptr::slice_from_raw_parts_mut(words, WORDS)) });
+diff --git a/crates/darwin/src/xlocale.rs b/crates/darwin/src/xlocale.rs
+index c4dbe5e3d3f6c54a26578ac32b74652dfe941691..1549589d725749833f4ff616686fbbe9fe3b93f1 100644
+--- a/crates/darwin/src/xlocale.rs
++++ b/crates/darwin/src/xlocale.rs
+@@ -1,4 +1,4 @@
+-use std::ffi::{c_char, c_int, c_uint, c_void};
++use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
+ use std::sync::atomic::{AtomicI32, Ordering};
+ 
+ /// POSIX's distinguished `(locale_t)-1`, omitted by the Rust libc bindings on
+@@ -73,8 +73,13 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *m
+         crate::errno::set(libc::EINVAL);
+         return core::ptr::null_mut();
+     };
+-    // SAFETY: the caller's string and the translated host category.
+-    let name = unsafe { libc::setlocale(category, locale) };
++    // SAFETY: the caller's string, which is null or NUL-terminated.
++    let name = if !locale.is_null() && unsafe { *locale } == 0 {
++        unsafe { set_from_guest_environment(category) }
++    } else {
++        // SAFETY: the caller's string and the translated host category.
++        unsafe { libc::setlocale(category, locale) }
++    };
+     if !name.is_null() && (category == libc::LC_ALL || category == libc::LC_CTYPE) {
+         let max = unsafe { plain::__ctype_get_mb_cur_max() };
+         MB_CUR_MAX.store(max as c_int, Ordering::Relaxed);
+@@ -82,6 +87,37 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *m
+     name
+ }
+ 
++unsafe fn set_from_guest_environment(category: c_int) -> *mut c_char {
++    const CATEGORIES: [(c_int, &CStr); 6] = [
++        (libc::LC_COLLATE, c"LC_COLLATE"),
++        (libc::LC_CTYPE, c"LC_CTYPE"),
++        (libc::LC_MONETARY, c"LC_MONETARY"),
++        (libc::LC_NUMERIC, c"LC_NUMERIC"),
++        (libc::LC_TIME, c"LC_TIME"),
++        (libc::LC_MESSAGES, c"LC_MESSAGES"),
++    ];
++    let guest = |name: &CStr| {
++        // SAFETY: a NUL-terminated name; the answer is null or a guest string.
++        let value = unsafe { crate::env::getenv(name.as_ptr()) };
++        (!value.is_null() && unsafe { *value } != 0).then_some(value as *const c_char)
++    };
++    for (host, variable) in CATEGORIES {
++        if category != libc::LC_ALL && category != host {
++            continue;
++        }
++        let name = guest(c"LC_ALL")
++            .or_else(|| guest(variable))
++            .or_else(|| guest(c"LANG"))
++            .unwrap_or(c"C".as_ptr());
++        // SAFETY: a NUL-terminated name and a host category.
++        if unsafe { libc::setlocale(host, name) }.is_null() {
++            return core::ptr::null_mut();
++        }
++    }
++    // SAFETY: a query, which changes nothing.
++    unsafe { libc::setlocale(category, core::ptr::null()) }
++}
++
+ /// Darwin's `int __mb_cur_max`, the global `MB_CUR_MAX` read before it became
+ /// a function. Old headers still inline a load of it, so it has to follow the
+ /// global locale the way libSystem's does; 1 is the C locale's answer.
+@@ -846,6 +882,23 @@ exports::exports! {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn an_empty_name_reads_the_guests_environment() {
++        // SAFETY: NUL-terminated names; the locale is put back below.
++        unsafe {
++            for name in [c"LC_ALL", c"LC_NUMERIC", c"LANG"] {
++                crate::env::unsetenv(name.as_ptr());
++            }
++            let set = setlocale(category::NUMERIC, c"".as_ptr());
++            assert_eq!(CStr::from_ptr(set), c"C");
++            crate::env::setenv(c"LC_NUMERIC".as_ptr(), c"C.UTF-8".as_ptr(), 1);
++            let set = setlocale(category::NUMERIC, c"".as_ptr());
++            assert_eq!(CStr::from_ptr(set), c"C.UTF-8");
++            crate::env::unsetenv(c"LC_NUMERIC".as_ptr());
++            libc::setlocale(libc::LC_NUMERIC, c"C".as_ptr());
++        }
++    }
++
+     /// The switch is undone even when the wrapped call fails, which is the whole
+     /// reason it is a guard: a thread left in the guest's locale formats every
+     /// number this runtime prints afterwards.
+diff --git a/crates/foundation/src/appleevent.rs b/crates/foundation/src/appleevent.rs
+index 8015a9b4248eab3a4eb0719a3ddb3fe54d071ec0..1b98bf2fd305f1f4e92e71531cc9a9224b552ae1 100644
+--- a/crates/foundation/src/appleevent.rs
++++ b/crates/foundation/src/appleevent.rs
+@@ -734,7 +734,7 @@ unsafe extern "C" fn shared_manager(class: Id, _sel: Sel) -> Id {
+         };
+         // Retained forever, as every singleton in this tree is: one a guest can
+         // release is one it can make dangle by releasing what it never owned.
+-        objc::arc::retain(object);
++        objc::arc::make_immortal(object);
+         object as usize
+     }) as Id
+ }
+diff --git a/crates/foundation/src/characterset.rs b/crates/foundation/src/characterset.rs
+index 00ceb8c14135a18546e9bcd430af9cc68158ca54..886b50c775d410b55c2f3edeb02e8ae014cdcb11 100644
+--- a/crates/foundation/src/characterset.rs
++++ b/crates/foundation/src/characterset.rs
+@@ -22,6 +22,11 @@ const ALPHANUMERICS: usize = 7;
+ const PUNCTUATION: usize = 8;
+ /// A set made from characters or a range, whose members are in [`custom`].
+ const CUSTOM: usize = 9;
++const CONTROL: usize = 10;
++const LOWERCASE: usize = 11;
++const UPPERCASE: usize = 12;
++const SYMBOLS: usize = 13;
++const KINDS: usize = 14;
+ 
+ /// The members of each `CUSTOM` set: inclusive code point ranges, and whether
+ /// the set is everything *but* them.
+@@ -38,7 +43,7 @@ fn custom() -> &'static Mutex<HashMap<usize, Members>> {
+ 
+ /// One of Foundation's standard sets, made once for the process as Apple's are.
+ fn standard(kind: usize) -> Id {
+-    static SETS: std::sync::Mutex<[usize; 9]> = std::sync::Mutex::new([0; 9]);
++    static SETS: std::sync::Mutex<[usize; KINDS]> = std::sync::Mutex::new([0; KINDS]);
+     let mut sets = SETS.lock().unwrap_or_else(|e| e.into_inner());
+     if sets[kind] == 0 {
+         let class = objc::class::lookup(c"NSCharacterSet").expect("installed NSCharacterSet");
+@@ -115,6 +120,10 @@ pub(crate) unsafe fn contains_char(set: Id, c: char) -> bool {
+         // FIXME (ACCURACY): ASCII's members of the Unicode `P*` categories
+         // only; no table of the rest is kept.
+         PUNCTUATION => ascii.is_some_and(|b| b"!\"#%&'()*,-./:;?@[\\]_{}".contains(&b)),
++        CONTROL => c.is_control(),
++        LOWERCASE => c.is_lowercase(),
++        UPPERCASE => c.is_uppercase(),
++        SYMBOLS => ascii.is_some_and(|b| b"$+<=>^`|~".contains(&b)),
+         CUSTOM => {
+             let custom = custom().lock().unwrap_or_else(|e| e.into_inner());
+             let Some(members) = custom.get(&(set as usize)) else {
+@@ -292,3 +301,29 @@ mod tests {
+         }
+     }
+ }
++
++#[allow(non_snake_case)]
++pub unsafe extern "C" fn CFCharacterSetGetPredefined(set: isize) -> Id {
++    let kind = match set {
++        1 => CONTROL,
++        2 => WHITESPACE,
++        3 => WHITESPACE_AND_NEWLINE,
++        4 => DECIMAL_DIGITS,
++        5 => LETTERS,
++        6 => LOWERCASE,
++        7 => UPPERCASE,
++        10 => ALPHANUMERICS,
++        11 => PUNCTUATION,
++        14 => SYMBOLS,
++        15 => NEWLINE,
++        _ => CUSTOM,
++    };
++    standard(kind)
++}
++
++#[allow(non_snake_case)]
++pub unsafe extern "C" fn CFCharacterSetIsCharacterMember(set: Id, unit: u16) -> u8 {
++    char::from_u32(u32::from(unit))
++        .is_some_and(|c| unsafe { contains_char(set, c) })
++        .into()
++}
+diff --git a/crates/foundation/src/cookies.rs b/crates/foundation/src/cookies.rs
+index e02e64cde7e45b119f5eb606526d6312bf26e66a..d20cf427fd60610ef7b71146360b1ae393dc5e3b 100644
+--- a/crates/foundation/src/cookies.rs
++++ b/crates/foundation/src/cookies.rs
+@@ -676,7 +676,7 @@ unsafe extern "C" fn shared_storage(class: Id, _sel: Sel) -> Id {
+                 0,
+             )
+         };
+-        objc::arc::retain(storage);
++        objc::arc::make_immortal(storage);
+         storage as usize
+     }) as Id
+ }
+diff --git a/crates/foundation/src/filemanager.rs b/crates/foundation/src/filemanager.rs
+index e135f3aa57d528c022093ffac7b65bede4bbbe5f..7b8a03a9200747657abbc54a8b01b4b47ac8c7fb 100644
+--- a/crates/foundation/src/filemanager.rs
++++ b/crates/foundation/src/filemanager.rs
+@@ -18,7 +18,7 @@ unsafe extern "C" fn default_manager(class: Id, _sel: Sel) -> Id {
+         };
+         // Retained forever: a singleton a guest can release is one it can make
+         // dangle by releasing what it never owned.
+-        objc::arc::retain(manager);
++        objc::arc::make_immortal(manager);
+         manager as usize
+     }) as Id
+ }
+diff --git a/crates/foundation/src/locale.rs b/crates/foundation/src/locale.rs
+index da293ab15f14f8099791317ec027b74cb0b300f0..18dd110d00073503af2df3c6e818131789d73862 100644
+--- a/crates/foundation/src/locale.rs
++++ b/crates/foundation/src/locale.rs
+@@ -77,7 +77,7 @@ fn shared() -> Id {
+         let locale = objc::object::create_instance(class, 0);
+         // Retained forever: a singleton a guest can release is one it can make
+         // dangle by releasing what it never owned.
+-        objc::arc::retain(locale);
++        objc::arc::make_immortal(locale);
+         locale as usize
+     }) as Id
+ }
+@@ -285,7 +285,7 @@ pub mod cf {
+             return *object as Id;
+         }
+         let object = crate::string::from_str(text);
+-        objc::arc::retain(object);
++        objc::arc::make_immortal(object);
+         pool.push((text.to_string(), object as usize));
+         object
+     }
+diff --git a/crates/foundation/src/notification.rs b/crates/foundation/src/notification.rs
+index 4239feb81728283f7f30814c7e66b4c11e0789be..16e870ef549106964220fa486e5ae71a0a0fc922 100644
+--- a/crates/foundation/src/notification.rs
++++ b/crates/foundation/src/notification.rs
+@@ -303,7 +303,7 @@ fn center_of(class: &'static Class) -> Id {
+         let center = objc::object::create_instance(class, 0);
+         // Retained forever: a singleton a guest can release is one it can make
+         // dangle by releasing what it never owned.
+-        objc::arc::retain(center);
++        objc::arc::make_immortal(center);
+         center as usize
+     }) as Id
+ }
+@@ -524,7 +524,7 @@ pub mod cf {
+             let class = corefoundation::base::abstract_class(c"CFNotificationCenter", None);
+             let center = objc::object::create_instance(class, 0);
+             // Retained forever, as every singleton here is.
+-            objc::arc::retain(center);
++            objc::arc::make_immortal(center);
+             center as usize
+         }) as Id
+     }
+diff --git a/crates/foundation/src/processinfo.rs b/crates/foundation/src/processinfo.rs
+index 3e8a4d2caee35052387299eb3f5107ea4c2a2e8d..17a8f4b6e18b6e15092556c02689cbe83c1746d4 100644
+--- a/crates/foundation/src/processinfo.rs
++++ b/crates/foundation/src/processinfo.rs
+@@ -32,7 +32,7 @@ unsafe extern "C" fn process_info(class: Id, _sel: Sel) -> Id {
+         };
+         // Retained forever, as every singleton in this tree is: one a guest can
+         // release is one it can make dangle by releasing what it never owned.
+-        objc::arc::retain(object);
++        objc::arc::make_immortal(object);
+         object as usize
+     }) as Id
+ }
+diff --git a/crates/foundation/src/runtime.rs b/crates/foundation/src/runtime.rs
+index ff78d2071d55e1fa8bc3a27943cd97a606ab8e1b..68fc002c8141770b70b2c0f9cfb7168b5ff5add3 100644
+--- a/crates/foundation/src/runtime.rs
++++ b/crates/foundation/src/runtime.rs
+@@ -16,6 +16,8 @@ exports::exports! {
+         "NSFullUserName" => NSFullUserName,
+         "NSSetUncaughtExceptionHandler" => NSSetUncaughtExceptionHandler,
+         "NSGetUncaughtExceptionHandler" => NSGetUncaughtExceptionHandler,
++        "CFCharacterSetGetPredefined" => crate::characterset::CFCharacterSetGetPredefined,
++        "CFCharacterSetIsCharacterMember" => crate::characterset::CFCharacterSetIsCharacterMember,
+     }
+ }
+ 
+diff --git a/crates/foundation/src/string.rs b/crates/foundation/src/string.rs
+index 5137bb4bef8c4036c04a869980af9221533614c0..dc717070a479932ce4f061259b194c2bb83c6691 100644
+--- a/crates/foundation/src/string.rs
++++ b/crates/foundation/src/string.rs
+@@ -444,6 +444,22 @@ unsafe extern "C" fn init_with_bytes(
+     }
+ }
+ 
++unsafe extern "C" fn init_with_bytes_no_copy(
++    receiver: Id,
++    sel: Sel,
++    bytes: *mut u8,
++    length: usize,
++    ns: usize,
++    free_when_done: u8,
++) -> Id {
++    let string = unsafe { init_with_bytes(receiver, sel, bytes, length, ns) };
++    if free_when_done != 0 && !bytes.is_null() {
++        // SAFETY: the caller gave this buffer, from `malloc`, to the string.
++        unsafe { objc::allocator::guest_free(bytes.cast()) };
++    }
++    string
++}
++
+ unsafe extern "C" fn init_with_utf8(receiver: Id, _sel: Sel, cstr: *const c_char) -> Id {
+     // SAFETY: a NUL-terminated string or null.
+     unsafe {
+@@ -1541,6 +1557,8 @@ pub(crate) fn install() {
+         "fileSystemRepresentation" => file_system_representation, c"*16@0:8";
+         "mutableCopyWithZone:" => mutable_copy, c"@24@0:8^v16";
+         "initWithBytes:length:encoding:" => init_with_bytes, c"@40@0:8^v16Q24Q32";
++        "initWithBytesNoCopy:length:encoding:freeWhenDone:" => init_with_bytes_no_copy,
++            c"@44@0:8^v16Q24Q32c40";
+         "initWithData:encoding:" => init_with_data, c"@32@0:8@16Q24";
+         "initWithUTF8String:" => init_with_utf8, c"@24@0:8*16";
+         "initWithCString:encoding:" => init_with_cstring_encoding, c"@32@0:8*16Q24";
+diff --git a/crates/foundation/src/urlsession.rs b/crates/foundation/src/urlsession.rs
+index 230aaeb6ee943ee6475d47c91c5859681f75dbec..1bdb74d6be6e30e5a1a097a700db152192cc2258 100644
+--- a/crates/foundation/src/urlsession.rs
++++ b/crates/foundation/src/urlsession.rs
+@@ -794,7 +794,7 @@ unsafe extern "C" fn shared_session(_class: Id, _sel: Sel) -> Id {
+         let session = make(session_class(), Session { delegate: 0 });
+         // Retained forever: a singleton a guest can release is one it can make
+         // dangle by releasing what it never owned.
+-        objc::arc::retain(session);
++        objc::arc::make_immortal(session);
+         session as usize
+     }) as Id
+ }
+diff --git a/crates/foundation/src/value.rs b/crates/foundation/src/value.rs
+index c0788ba8de787967c804034b92ceb0b117a5ae1d..12bff9ee3d4e4f9b7a3ea00b90619079d9039f87 100644
+--- a/crates/foundation/src/value.rs
++++ b/crates/foundation/src/value.rs
+@@ -54,7 +54,7 @@ unsafe extern "C" fn null(class: Id, _sel: Sel) -> Id {
+         };
+         // Retained forever: a singleton that could be deallocated is one a guest
+         // can make dangle by releasing what it never owned.
+-        objc::arc::retain(object);
++        objc::arc::make_immortal(object);
+         object as usize
+     }) as Id
+ }
+diff --git a/crates/metal/src/encoder/bind.rs b/crates/metal/src/encoder/bind.rs
+index a8882d112c5143fe3e571510740312d4bfce8c34..e7edd415cd7c6de9e01abf6a75b33ecdc0339e6b 100644
+--- a/crates/metal/src/encoder/bind.rs
++++ b/crates/metal/src/encoder/bind.rs
+@@ -164,8 +164,8 @@ fn unbound(binding: &metal_translate::ResourceBinding, what: &str, represented:
+     } else {
+         "its descriptor keeps whatever the set last held"
+     };
+-    gpu::trace_once(format!("a shader resource {what}; {result}"));
+-    gpu::trace(format!(
++    gpu::trace_once(format_args!("a shader resource {what}; {result}"));
++    gpu::trace(format_args!(
+         "{:?} at Metal index {} of set {} {what}",
+         binding.kind, binding.metal_index, binding.descriptor_set
+     ));
+diff --git a/crates/metal/src/heap.rs b/crates/metal/src/heap.rs
+index db4276cad6aba3afc16f477472567c40dc1921d6..e5d7ae2dfdc60679cb39ac4af20e8265c4dc3cf8 100644
+--- a/crates/metal/src/heap.rs
++++ b/crates/metal/src/heap.rs
+@@ -26,6 +26,9 @@ pub struct Allocation {
+     pub contents: *mut u8,
+     /// The block this came out of, or `None` for a block of its own.
+     block: Option<usize>,
++    /// Which block held that index when this was carved: a spent block's
++    /// index is given to the next one, and a stale free must not reach it.
++    generation: u64,
+     offset: u64,
+     size: u64,
+     /// Whether this range has never been handed out before. A driver zeroes
+@@ -51,6 +54,7 @@ struct Block {
+     /// One past the highest offset ever carved out. Everything above it is
+     /// memory as the driver handed it over, which is zeroed.
+     reached: u64,
++    generation: u64,
+ }
+ 
+ // SAFETY: as for `Allocation`.
+@@ -61,6 +65,7 @@ struct State {
+     blocks: Vec<Block>,
+     /// Blocks a large allocation owns outright, by the index it was given.
+     dedicated: Vec<usize>,
++    generations: u64,
+ }
+ 
+ /// One memory type's blocks.
+@@ -104,10 +109,9 @@ impl Heap {
+         let block = crate::stats::timed(crate::stats::Counter::BufferBlockMicros, || {
+             self.block(device, capacity)
+         })?;
+-        state.blocks.push(block);
++        let index = state.place(block);
+         if size > BLOCK || dedicate_everything() {
+             // Its own block, freed when it is: nothing else is cut from it.
+-            let index = state.blocks.len() - 1;
+             state.dedicated.push(index);
+             let block = &mut state.blocks[index];
+             block.free.clear();
+@@ -116,6 +120,7 @@ impl Heap {
+                 memory: block.memory,
+                 contents: block.contents,
+                 block: Some(index),
++                generation: block.generation,
+                 offset: 0,
+                 size: capacity,
+                 pristine: true,
+@@ -132,6 +137,10 @@ impl Heap {
+             return;
+         };
+         let mut state = self.state.lock().expect("buffer heap");
++        if !state.owns(index, allocation.generation) {
++            debug_assert!(false, "a Metal heap range was freed after its block was");
++            return;
++        }
+         if let Some(at) = state.dedicated.iter().position(|owned| *owned == index) {
+             state.dedicated.swap_remove(at);
+             let block = &mut state.blocks[index];
+@@ -210,6 +219,7 @@ impl Heap {
+                 size,
+                 free: vec![(0, size)],
+                 reached: 0,
++                generation: 0,
+             });
+         }
+         // SAFETY: host-visible memory nothing else has mapped.
+@@ -226,11 +236,34 @@ impl Heap {
+             size,
+             free: vec![(0, size)],
+             reached: 0,
++            generation: 0,
+         })
+     }
+ }
+ 
+ impl State {
++    fn place(&mut self, mut block: Block) -> usize {
++        self.generations += 1;
++        block.generation = self.generations;
++        match self.blocks.iter().position(|spent| spent.size == 0) {
++            Some(index) => {
++                self.blocks[index] = block;
++                index
++            }
++            None => {
++                self.blocks.push(block);
++                self.blocks.len() - 1
++            }
++        }
++    }
++
++    /// Whether the block at `index` is still the one `generation` was cut from.
++    fn owns(&self, index: usize, generation: u64) -> bool {
++        self.blocks
++            .get(index)
++            .is_some_and(|block| block.size > 0 && block.generation == generation)
++    }
++
+     /// A wholly-free block to give back, once a second one is also free.
+     fn spare_block(&self) -> Option<usize> {
+         let mut empty = self
+@@ -279,6 +312,7 @@ impl State {
+                         false => unsafe { block.contents.add(aligned as usize) },
+                     },
+                     block: Some(index),
++                    generation: block.generation,
+                     offset: aligned,
+                     size,
+                     pristine,
+@@ -293,6 +327,14 @@ impl Block {
+     /// Return a range, merging it with whichever neighbours are also free.
+     fn release(&mut self, offset: u64, size: u64) {
+         let at = self.free.partition_point(|(start, _)| *start < offset);
++        debug_assert!(
++            (at == 0 || self.free[at - 1].0 + self.free[at - 1].1 <= offset)
++                && self
++                    .free
++                    .get(at)
++                    .is_none_or(|(next, _)| offset + size <= *next),
++            "a Metal heap range was freed twice"
++        );
+         self.free.insert(at, (offset, size));
+         // Merge forward first, so the backward merge sees the whole run.
+         if at + 1 < self.free.len() {
+@@ -324,6 +366,7 @@ impl Allocation {
+             memory: vk::DeviceMemory::null(),
+             contents: std::ptr::null_mut(),
+             block: None,
++            generation: 0,
+             offset: 0,
+             size: 0,
+             pristine: false,
+@@ -342,6 +385,7 @@ mod tests {
+             size,
+             free: vec![(0, size)],
+             reached: 0,
++            generation: 0,
+         }
+     }
+ 
+@@ -361,6 +405,7 @@ mod tests {
+         let mut state = State {
+             blocks: vec![block(1024)],
+             dedicated: Vec::new(),
++            generations: 0,
+         };
+         let first = state.carve(8, 1).expect("room");
+         assert_eq!(first.offset, 0);
+@@ -379,6 +424,7 @@ mod tests {
+         let mut state = State {
+             blocks: vec![block(1024)],
+             dedicated: Vec::new(),
++            generations: 0,
+         };
+         let first = state.carve(128, 1).expect("room");
+         assert!(first.pristine);
+@@ -390,11 +436,51 @@ mod tests {
+         assert!(!again.pristine);
+     }
+ 
++    #[test]
++    fn a_fresh_block_takes_the_slot_of_one_given_back() {
++        let mut state = State {
++            blocks: vec![block(1024), block(1024)],
++            dedicated: Vec::new(),
++            generations: 0,
++        };
++        state.blocks[0].size = 0;
++        state.blocks[0].free.clear();
++        assert_eq!(state.place(block(2048)), 0);
++        assert_eq!(state.place(block(2048)), 2);
++        assert_eq!(state.blocks.len(), 3);
++    }
++
++    #[test]
++    fn a_free_from_before_its_slot_was_reused_does_not_reach_the_new_block() {
++        let mut state = State::default();
++        let index = state.place(block(1024));
++        let stale = state.carve(128, 1).expect("room");
++        state.blocks[index].size = 0;
++        state.blocks[index].free.clear();
++        assert_eq!(state.place(block(1024)), index);
++        assert!(!state.owns(index, stale.generation));
++        let live = state.carve(128, 1).expect("room");
++        assert!(state.owns(index, live.generation));
++    }
++
++    #[test]
++    #[cfg(debug_assertions)]
++    #[should_panic(expected = "freed twice")]
++    fn a_double_free_is_caught() {
++        let mut state = State::default();
++        state.place(block(1024));
++        let taken = state.carve(128, 1).expect("room");
++        state.carve(128, 1).expect("room");
++        state.blocks[0].release(taken.offset, taken.size);
++        state.blocks[0].release(taken.offset, taken.size);
++    }
++
+     #[test]
+     fn a_block_which_fills_and_empties_is_whole_again() {
+         let mut state = State {
+             blocks: vec![block(1024)],
+             dedicated: Vec::new(),
++            generations: 0,
+         };
+         let mut taken = Vec::new();
+         while let Some(allocation) = state.carve(128, 1) {
+diff --git a/crates/metal/src/present.rs b/crates/metal/src/present.rs
+index 072efffe37ba20871ffb029de3358241d4927a0b..d9d3b9116fe08c96594c8cc544696d2e453ffe0c 100644
+--- a/crates/metal/src/present.rs
++++ b/crates/metal/src/present.rs
+@@ -131,8 +131,9 @@ unsafe extern "C" fn next_drawable(receiver: Id, _sel: Sel) -> Id {
+     }
+     // Before the cache is locked, which finishing a copied source needs.
+     crate::swapchain::retire_copied();
++    let mut retired = retire_stale(&mut CACHE.0.lock().expect("drawable cache"));
++    release_slots(&mut retired);
+     let mut cache = CACHE.0.lock().expect("drawable cache");
+-    retire_stale(&mut cache);
+     for entry in cache
+         .iter_mut()
+         .filter(|entry| entry.layer == receiver as usize)
+@@ -268,7 +269,7 @@ fn make_drawable(
+         Drawable {
+             gpu,
+             texture,
+-            layer,
++            layer: objc::arc::retain(layer),
+             readback: None,
+         },
+     );
+@@ -290,22 +291,35 @@ fn release_slots(slots: &mut Vec<CachedSlot>) {
+     }
+ }
+ 
+-fn retire_stale(cache: &mut Vec<Cached>) {
++/// Take out the rings nothing can use again, for the caller to release once the
++/// cache is unlocked: the last drawable of an abandoned layer frees the layer,
++/// and its teardown must not run under the lock.
++#[must_use]
++fn retire_stale(cache: &mut Vec<Cached>) -> Vec<CachedSlot> {
+     reclaim_dropped(cache);
++    // Every ring's drawables hold their layer, stale rings' included, so a
++    // layer only its own drawables hold is one the guest has let go of.
++    let mut held = std::collections::HashMap::<usize, usize>::new();
++    for entry in cache.iter() {
++        *held.entry(entry.layer).or_default() += entry.slots.len();
++    }
++    let mut retired = Vec::new();
+     let mut index = 0;
+     while index < cache.len() {
+-        if cache[index].stale
+-            && cache[index]
++        let entry = &cache[index];
++        let abandoned = objc::arc::retain_count(entry.layer as Id) <= held[&entry.layer];
++        if (entry.stale || abandoned)
++            && entry
+                 .slots
+                 .iter()
+                 .all(|slot| slot.state == SlotState::Available)
+         {
+-            let mut stale = cache.remove(index);
+-            release_slots(&mut stale.slots);
++            retired.append(&mut cache.remove(index).slots);
+         } else {
+             index += 1;
+         }
+     }
++    retired
+ }
+ 
+ /// Transfer a vended slot to a command buffer. A duplicate presentation of
+@@ -333,7 +347,9 @@ pub(crate) fn complete(drawable: Id) {
+         slot.complete();
+         CACHE.1.notify_all();
+     }
+-    retire_stale(&mut cache);
++    let mut retired = retire_stale(&mut cache);
++    drop(cache);
++    release_slots(&mut retired);
+ }
+ 
+ unsafe extern "C" fn drawable_texture(receiver: Id, _sel: Sel) -> Id {
+@@ -371,6 +387,7 @@ unsafe extern "C" fn drawable_dealloc(receiver: Id, _sel: Sel) {
+         &mut drawable.texture,
+         std::ptr::null_mut(),
+     ));
++    objc::arc::release(std::mem::replace(&mut drawable.layer, std::ptr::null_mut()));
+     // SAFETY: the body was established by `object::make` and is not read again.
+     unsafe { std::ptr::drop_in_place(drawable as *mut Drawable) };
+     objc::arc::finalize(receiver);
+@@ -1066,6 +1083,42 @@ fn blend_overlays<'a>(
+ mod drawable_pool_tests {
+     use super::*;
+ 
++    #[test]
++    fn a_layer_held_only_by_multiple_rings_is_retired() {
++        objc::bootstrap();
++        let class = objc::class::lookup(c"NSObject").unwrap();
++        let layer = objc::object::create_instance(class, 0);
++        // Six ring-owned references and one external owner.
++        for _ in 0..6 {
++            objc::arc::retain(layer);
++        }
++        let mut cache: Vec<_> = (0..2)
++            .map(|_| Cached {
++                layer: layer as usize,
++                width: 1,
++                height: 1,
++                pixel_format: 70,
++                stale: false,
++                slots: (0..3)
++                    .map(|_| CachedSlot {
++                        drawable: objc::object::create_instance(class, 0) as usize,
++                        state: SlotState::Available,
++                    })
++                    .collect(),
++            })
++            .collect();
++        assert!(retire_stale(&mut cache).is_empty());
++        objc::arc::release(layer);
++        let retired = retire_stale(&mut cache);
++        assert!(cache.is_empty());
++        assert_eq!(retired.len(), 6);
++        // These stand-in slots model ownership without constructing GPU images.
++        for slot in retired {
++            objc::arc::release(slot.drawable as Id);
++            objc::arc::release(layer);
++        }
++    }
++
+     #[test]
+     fn submitted_slot_is_not_available_until_completion() {
+         let mut slot = CachedSlot {
+diff --git a/crates/objc/src/address.rs b/crates/objc/src/address.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..bc6b33a9cc4c7745d67045ee1ea9b41093a450cb
+--- /dev/null
++++ b/crates/objc/src/address.rs
+@@ -0,0 +1,48 @@
++use std::collections::HashMap;
++use std::hash::{BuildHasherDefault, Hasher};
++
++#[derive(Default, Clone, Copy)]
++pub struct AddressHasher(u64);
++
++impl Hasher for AddressHasher {
++    fn finish(&self) -> u64 {
++        self.0
++    }
++
++    fn write(&mut self, bytes: &[u8]) {
++        for chunk in bytes.chunks(8) {
++            let mut word = [0u8; 8];
++            word[..chunk.len()].copy_from_slice(chunk);
++            self.0 = mix(u64::from_le_bytes(word) ^ self.0);
++        }
++    }
++
++    fn write_u64(&mut self, n: u64) {
++        self.0 = mix(n);
++    }
++
++    fn write_usize(&mut self, n: usize) {
++        self.write_u64(n as u64);
++    }
++}
++
++pub fn mix(n: u64) -> u64 {
++    let product = u128::from(n) * 0x9E37_79B9_7F4A_7C15;
++    (product as u64) ^ ((product >> 64) as u64)
++}
++
++pub type AddressMap<V> = HashMap<usize, V, BuildHasherDefault<AddressHasher>>;
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::collections::HashSet;
++
++    #[test]
++    fn aligned_addresses_spread() {
++        let buckets: HashSet<u64> = (0..64u64)
++            .map(|i| mix(0x7f00_0000_1000 + i * 16) & 63)
++            .collect();
++        assert!(buckets.len() > 32, "{} of 64 buckets used", buckets.len());
++    }
++}
+diff --git a/crates/objc/src/arc.rs b/crates/objc/src/arc.rs
+index 082dcc6b5aa0b68afb6eeabba05ef177cb1f2a66..d5baa6c81a7ed5345b812a83e43d763b44c405b7 100644
+--- a/crates/objc/src/arc.rs
++++ b/crates/objc/src/arc.rs
+@@ -2,16 +2,19 @@ use std::collections::{HashMap, HashSet};
+ use std::ffi::c_void;
+ use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, RwLock};
+ 
++use crate::address::AddressMap;
+ use crate::object::Id;
+ 
+-/// Extra references beyond the one an object is born with.
+-static COUNTS: LazyLock<Mutex<HashMap<usize, usize>>> =
+-    LazyLock::new(|| Mutex::new(HashMap::new()));
++const SHARDS: usize = 64;
+ 
+ static IMMORTAL: LazyLock<RwLock<HashSet<usize>>> = LazyLock::new(|| RwLock::new(HashSet::new()));
+ 
+-fn counts() -> MutexGuard<'static, HashMap<usize, usize>> {
+-    COUNTS.lock().unwrap_or_else(|e| e.into_inner())
++static COUNTS: [Mutex<AddressMap<usize>>; SHARDS] =
++    [const { Mutex::new(HashMap::with_hasher(std::hash::BuildHasherDefault::new())) }; SHARDS];
++
++fn counts(object: Id) -> MutexGuard<'static, AddressMap<usize>> {
++    let shard = (crate::address::mix(object as u64) >> 58) as usize % SHARDS;
++    COUNTS[shard].lock().unwrap_or_else(|e| e.into_inner())
+ }
+ 
+ fn is_immortal(object: Id) -> bool {
+@@ -84,7 +87,7 @@ pub fn retain(object: Id) -> Id {
+         (refcount.retain)(object);
+         return object;
+     }
+-    let mut map = counts();
++    let mut map = counts(object);
+     let extra = map.entry(object as usize).or_insert(0);
+     if crate::debug::enabled() {
+         *extra = extra
+@@ -120,7 +123,7 @@ pub fn release(object: Id) {
+         return (refcount.release)(object);
+     }
+     {
+-        let mut map = counts();
++        let mut map = counts(object);
+         if let Some(extra) = map.get_mut(&(object as usize)) {
+             *extra -= 1;
+             if *extra == 0 {
+@@ -147,7 +150,7 @@ pub fn retain_count(object: Id) -> usize {
+     if let Some(refcount) = os_object_refcount(object) {
+         return (refcount.count)(object);
+     }
+-    1 + counts().get(&(object as usize)).copied().unwrap_or(0)
++    1 + counts(object).get(&(object as usize)).copied().unwrap_or(0)
+ }
+ 
+ /// Send `-dealloc` if there is one, then give the memory back.
+@@ -193,6 +196,11 @@ struct Pool {
+ ///
+ /// The depth of the pool that was pushed, plus one so it is never null. Apple
+ /// returns an interior pointer; nothing may read it either way.
++/// The token of a pool pushed after this thread's pools were destroyed: a
++/// destructor running at thread exit gets one, and popping it does nothing.
++/// No real token is this value.
++const DEAD_POOL: *mut c_void = usize::MAX as *mut c_void;
++
+ pub fn pool_push() -> *mut c_void {
+     POOLS
+         .try_with(|pools| {
+@@ -208,7 +216,7 @@ pub fn pool_push() -> *mut c_void {
+             });
+             token
+         })
+-        .unwrap_or(std::ptr::null_mut())
++        .unwrap_or(DEAD_POOL)
+ }
+ 
+ /// Release everything added since the matching [`pool_push`].
+@@ -216,7 +224,7 @@ pub fn pool_push() -> *mut c_void {
+ /// Pools nest, so a token naming an outer pool pops the inner ones too - which
+ /// is what happens when a `@autoreleasepool` unwinds past one.
+ pub fn pool_pop(token: *mut c_void) {
+-    if token.is_null() {
++    if token == DEAD_POOL {
+         return;
+     }
+     if crate::debug::enabled() {
+@@ -233,11 +241,10 @@ pub fn pool_pop(token: *mut c_void) {
+         }
+     }
+     loop {
+-        let pool = match POOLS.try_with(|pools| pools.borrow_mut().pop()) {
+-            Ok(pool) => pool,
+-            Err(_) => return,
++        let Ok(top) = POOLS.try_with(|pools| pools.borrow_mut().pop()) else {
++            return;
+         };
+-        let Some(pool) = pool else {
++        let Some(pool) = top else {
+             if crate::debug::enabled() {
+                 crate::fail!("objc debug: autorelease pool pop with an empty pool stack");
+             }
+@@ -265,13 +272,11 @@ pub fn autorelease(object: Id) -> Id {
+         return object;
+     }
+     crate::debug::validate(object, "autorelease");
+-    if POOLS
+-        .try_with(|pools| match pools.borrow_mut().last_mut() {
+-            Some(pool) => pool.objects.push(object),
+-            None => no_pool(),
+-        })
+-        .is_err()
+-    {
++    let pushed = POOLS.try_with(|pools| match pools.borrow_mut().last_mut() {
++        Some(pool) => pool.objects.push(object),
++        None => no_pool(),
++    });
++    if pushed.is_err() {
+         no_pool();
+     }
+     object
+@@ -481,7 +486,7 @@ mod tests {
+     use super::{make_immortal, pool_pop, pool_push, release, retain, retain_count};
+     use std::sync::atomic::{AtomicUsize, Ordering};
+ 
+-    static LATE_POOL_TOKEN: AtomicUsize = AtomicUsize::new(usize::MAX);
++    static LATE_POOL_TOKEN: AtomicUsize = AtomicUsize::new(0);
+ 
+     struct PushAfterPoolDestruction;
+ 
+@@ -499,14 +504,17 @@ mod tests {
+ 
+     #[test]
+     fn pool_access_after_thread_local_destruction_is_safe() {
+-        LATE_POOL_TOKEN.store(usize::MAX, Ordering::SeqCst);
++        LATE_POOL_TOKEN.store(0, Ordering::SeqCst);
+         std::thread::spawn(|| {
+             PUSH_AFTER_POOL_DESTRUCTION.with(|_| {});
+             assert!(!pool_push().is_null());
+         })
+         .join()
+         .unwrap();
+-        assert_eq!(LATE_POOL_TOKEN.load(Ordering::SeqCst), 0);
++        assert_eq!(
++            LATE_POOL_TOKEN.load(Ordering::SeqCst),
++            super::DEAD_POOL as usize
++        );
+     }
+ 
+     #[test]
+diff --git a/crates/objc/src/class.rs b/crates/objc/src/class.rs
+index 78557ec7447367d3a4d8a95331d3777586dff09f..ea7836e4edeecbad05ff08e774861df09f14adeb 100644
+--- a/crates/objc/src/class.rs
++++ b/crates/objc/src/class.rs
+@@ -68,7 +68,7 @@ impl Ivar {
+ /// The mutable half of a class.
+ #[derive(Default)]
+ struct Contents {
+-    methods: HashMap<usize, &'static Method>,
++    methods: crate::address::AddressMap<&'static Method>,
+     ivars: Vec<&'static Ivar>,
+     protocols: Vec<&'static crate::protocol::Protocol>,
+     properties: Vec<&'static crate::property::Property>,
+@@ -113,6 +113,34 @@ pub fn generation() -> usize {
+     GENERATION.load(Ordering::Acquire)
+ }
+ 
++#[derive(Clone, Copy)]
++struct CachedMethod {
++    class: usize,
++    sel: usize,
++    generation: usize,
++    method: Option<&'static Method>,
++}
++
++const METHOD_SLOTS: usize = 512;
++
++thread_local! {
++    static METHOD_CACHE: [std::cell::Cell<CachedMethod>; METHOD_SLOTS] = const {
++        [const {
++            std::cell::Cell::new(CachedMethod {
++                class: 0,
++                sel: 0,
++                generation: 0,
++                method: None,
++            })
++        }; METHOD_SLOTS]
++    };
++}
++
++fn method_slot(class: usize, sel: usize) -> usize {
++    let key = (class as u64) ^ (sel as u64).rotate_left(32);
++    (crate::address::mix(key) >> 55) as usize % METHOD_SLOTS
++}
++
+ /// Every class this runtime has built, so a pointer can be told from a foreign
+ /// one.
+ ///
+@@ -120,16 +148,57 @@ pub fn generation() -> usize {
+ /// and reading it as one walks a structure that is not there. Off the send path:
+ /// a send already knows its receiver is the guest's, and [`is_known`] is for the
+ /// entry points a *host* object can reach - `CFRelease` on a `CGEventRef`, say.
+-static KNOWN: LazyLock<RwLock<std::collections::HashSet<usize>>> =
+-    LazyLock::new(|| RwLock::new(std::collections::HashSet::new()));
++const CLASS_CAPACITY: usize = 1 << 16;
++const CLASS_STRIDE: usize = size_of::<Class>();
++const NO_ARENA: usize = usize::MAX;
++
++static ARENA: AtomicUsize = AtomicUsize::new(0);
++static BUILT: AtomicUsize = AtomicUsize::new(0);
++static BUILDING: Mutex<()> = Mutex::new(());
++static OVERFLOWED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++static OVERFLOW: RwLock<crate::address::AddressMap<()>> =
++    RwLock::new(HashMap::with_hasher(std::hash::BuildHasherDefault::new()));
+ 
+ /// Whether `p` is a class this runtime built.
+ pub fn is_known(p: *const Class) -> bool {
+-    !p.is_null()
+-        && KNOWN
++    if p.is_null() {
++        return false;
++    }
++    let built = BUILT.load(Ordering::Acquire);
++    let offset = (p as usize).wrapping_sub(ARENA.load(Ordering::Relaxed));
++    if offset < built * CLASS_STRIDE && offset.is_multiple_of(CLASS_STRIDE) {
++        return true;
++    }
++    OVERFLOWED.load(Ordering::Acquire)
++        && OVERFLOW
+             .read()
+             .unwrap_or_else(|e| e.into_inner())
+-            .contains(&(p as usize))
++            .contains_key(&(p as usize))
++}
++
++fn arena_slot() -> Option<*mut Class> {
++    if ARENA.load(Ordering::Relaxed) == 0 {
++        // SAFETY: a fresh private anonymous reservation.
++        let mapped = unsafe {
++            libc::mmap(
++                std::ptr::null_mut(),
++                CLASS_CAPACITY * CLASS_STRIDE,
++                libc::PROT_READ | libc::PROT_WRITE,
++                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
++                -1,
++                0,
++            )
++        };
++        let base = match mapped == libc::MAP_FAILED {
++            true => NO_ARENA,
++            false => mapped as usize,
++        };
++        ARENA.store(base, Ordering::Relaxed);
++    }
++    let base = ARENA.load(Ordering::Relaxed);
++    let index = BUILT.load(Ordering::Relaxed);
++    (base != NO_ARENA && index < CLASS_CAPACITY)
++        .then(|| (base + index * CLASS_STRIDE) as *mut Class)
+ }
+ 
+ impl Class {
+@@ -139,7 +208,7 @@ impl Class {
+         is_meta: bool,
+         instance_size: usize,
+     ) -> &'static Class {
+-        let class = Box::leak(Box::new(Class {
++        let class = Class {
+             isa: AtomicPtr::new(std::ptr::null_mut()),
+             superclass: AtomicPtr::new(superclass),
+             name,
+@@ -147,12 +216,27 @@ impl Class {
+             is_meta,
+             registered: AtomicUsize::new(0),
+             contents: RwLock::new(Contents::default()),
+-        }));
+-        KNOWN
+-            .write()
+-            .unwrap_or_else(|e| e.into_inner())
+-            .insert(std::ptr::from_ref(class) as usize);
+-        class
++        };
++        let _building = BUILDING.lock().unwrap_or_else(|e| e.into_inner());
++        match arena_slot() {
++            Some(slot) => {
++                // SAFETY: an unused, aligned slot of a reservation that is never
++                // unmapped, published only once written.
++                unsafe { slot.write(class) };
++                BUILT.fetch_add(1, Ordering::Release);
++                // SAFETY: as above.
++                unsafe { &*slot }
++            }
++            None => {
++                let class: &'static Class = Box::leak(Box::new(class));
++                OVERFLOW
++                    .write()
++                    .unwrap_or_else(|e| e.into_inner())
++                    .insert(std::ptr::from_ref(class) as usize, ());
++                OVERFLOWED.store(true, Ordering::Release);
++                class
++            }
++        }
+     }
+ 
+     pub fn name(&self) -> *const c_char {
+@@ -226,7 +310,23 @@ impl Class {
+ 
+     /// The method `sel` resolves to, searching superclasses.
+     pub fn method(&'static self, sel: Sel) -> Option<&'static Method> {
+-        self.chain().find_map(|c| c.own_method(sel))
++        let class = std::ptr::from_ref(self) as usize;
++        let generation = generation();
++        let slot = method_slot(class, sel as usize);
++        let cached = METHOD_CACHE.with(|cache| cache[slot].get());
++        if cached.class == class && cached.sel == sel as usize && cached.generation == generation {
++            return cached.method;
++        }
++        let method = self.chain().find_map(|c| c.own_method(sel))?;
++        METHOD_CACHE.with(|cache| {
++            cache[slot].set(CachedMethod {
++                class,
++                sel: sel as usize,
++                generation,
++                method: Some(method),
++            })
++        });
++        Some(method)
+     }
+ 
+     /// Install `imp` for `sel`, failing if this class already declares it.
+@@ -396,12 +496,33 @@ impl Class {
+ /// `NSObject`, and a `Once` re-entered from inside its own initializer does not
+ /// return.
+ pub fn lookup(name: &CStr) -> Option<&'static Class> {
+-    let name = name.to_str().ok()?;
+-    CLASSES
++    let address = name.as_ptr() as usize;
++    let generation = NAMED.load(Ordering::Acquire);
++    let slot = (crate::address::mix(address as u64) >> 56) as usize % LOOKUP_SLOTS;
++    let (at, cached_generation, cached) = RECENT_LOOKUPS.with(|recent| recent[slot].get());
++    if at == address
++        && cached_generation == generation
++        && let Some(class) = cached
++        && class.name.as_c_str() == name
++    {
++        return Some(class);
++    }
++    let class = CLASSES
+         .read()
+         .unwrap_or_else(|e| e.into_inner())
+-        .get(name)
+-        .copied()
++        .get(name.to_str().ok()?)
++        .copied()?;
++    RECENT_LOOKUPS.with(|recent| recent[slot].set((address, generation, Some(class))));
++    Some(class)
++}
++
++static NAMED: AtomicUsize = AtomicUsize::new(1);
++
++const LOOKUP_SLOTS: usize = 128;
++
++thread_local! {
++    static RECENT_LOOKUPS: [std::cell::Cell<(usize, usize, Option<&'static Class>)>; LOOKUP_SLOTS] =
++        const { [const { std::cell::Cell::new((0, 0, None)) }; LOOKUP_SLOTS] };
+ }
+ 
+ /// Every registered class, by name.
+@@ -499,7 +620,10 @@ pub fn dispose_pair(class: &'static Class) {
+ }
+ 
+ fn with_classes<R>(body: impl FnOnce(&mut HashMap<String, &'static Class>) -> R) -> R {
+-    body(&mut CLASSES.write().unwrap_or_else(|e| e.into_inner()))
++    let mut classes = CLASSES.write().unwrap_or_else(|e| e.into_inner());
++    let result = body(&mut classes);
++    NAMED.fetch_add(1, Ordering::Release);
++    result
+ }
+ 
+ /// A `&'static Class` as the raw pointer the C API passes around.
+diff --git a/crates/objc/src/debug.rs b/crates/objc/src/debug.rs
+index 0b16f4401c386ea7d646fadb5a0f9d9b10e2356a..8209e0257ebfa9ddc3fea1efa152b46e1da9d4eb 100644
+--- a/crates/objc/src/debug.rs
++++ b/crates/objc/src/debug.rs
+@@ -601,6 +601,26 @@ mod tests {
+                 crate::arc::release(object);
+                 crate::arc::release(object);
+             }
++            "exit-pool" => {
++                struct Teardown;
++                impl Drop for Teardown {
++                    fn drop(&mut self) {
++                        let pool = crate::arc::pool_push();
++                        crate::arc::pool_pop(pool);
++                    }
++                }
++                thread_local! {
++                    static TEARDOWN: Teardown = const { Teardown };
++                }
++                std::thread::spawn(|| {
++                    // Registered before the pools, so destroyed after them.
++                    TEARDOWN.with(|_| {});
++                    let pool = crate::arc::pool_push();
++                    crate::arc::pool_pop(pool);
++                })
++                .join()
++                .expect("a pool pushed and popped at thread exit is a no-op");
++            }
+             "dealloc" => {
+                 let object = object(c"RosemaryDebugDealloc", Some(incomplete_dealloc as Imp));
+                 crate::arc::release(object);
+@@ -677,6 +697,7 @@ mod tests {
+             ("overrelease", Some("use of finalized")),
+             ("dealloc", Some("without calling super")),
+             ("pool", Some("already popped")),
++            ("exit-pool", None),
+             ("weak", Some("weak slot was never initialized")),
+             ("property", Some("past the")),
+             ("class", Some("invalid class handle")),
+diff --git a/crates/objc/src/lib.rs b/crates/objc/src/lib.rs
+index c72eaed6f9277dea8aea4cdacbe73871cdebe43a..4b7fdfe1461cfa1f1e0eb8b4b7ce63139fda2391 100644
+--- a/crates/objc/src/lib.rs
++++ b/crates/objc/src/lib.rs
+@@ -1,5 +1,6 @@
+ #![allow(clippy::missing_safety_doc, clippy::not_unsafe_ptr_arg_deref)]
+ 
++mod address;
+ pub mod allocator;
+ pub mod api;
+ pub mod arc;
+@@ -219,6 +220,36 @@ pub fn class_data() -> Vec<(String, u64)> {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn only_a_class_itself_is_known() {
++        bootstrap();
++        let nsobject = class::lookup(c"NSObject").expect("NSObject");
++        let as_ptr = |c: &'static class::Class| std::ptr::from_ref(c);
++        assert!(class::is_known(as_ptr(nsobject)));
++        assert!(class::is_known(as_ptr(nsobject.metaclass())));
++        let instance = object::create_instance(nsobject, 0);
++        assert!(!class::is_known(instance as *const class::Class));
++        let inside = (as_ptr(nsobject) as usize + 8) as *const class::Class;
++        assert!(!class::is_known(inside));
++        assert!(!class::is_known(std::ptr::null()));
++    }
++
++    #[test]
++    fn an_immortal_object_survives_being_over_released() {
++        bootstrap();
++        let nsobject = class::lookup(c"NSObject").expect("NSObject");
++        let object = object::create_instance(nsobject, 0);
++        arc::make_immortal(object);
++        for _ in 0..1000 {
++            arc::release(object);
++        }
++        assert!(arc::retain_count(object) > 1000);
++        assert!(std::ptr::eq(
++            unsafe { object::class_of(object) }.unwrap(),
++            nsobject
++        ));
++    }
++
+     #[test]
+     fn nsobject_is_installed_and_its_metaclass_chain_terminates() {
+         bootstrap();
+@@ -305,6 +336,24 @@ mod invariants {
+         assert_eq!(after, second as *const c_void);
+     }
+ 
++    #[test]
++    fn a_method_added_to_a_superclass_later_is_found_from_the_subclass() {
++        let base = class_named(c"RosemaryMethodCacheBase");
++        let derived = class::allocate_pair(Some(base), c"RosemaryMethodCacheSub", 0).unwrap();
++        class::register_pair(derived);
++        let sel = sel::get("lateAnswer");
++        assert!(derived.method(sel).is_none());
++        assert!(base.add_method(sel, first as *const c_void, c"Q16@0:8"));
++        assert_eq!(
++            derived.method(sel).map(|m| m.implementation()),
++            Some(first as *const c_void)
++        );
++        assert_eq!(
++            derived.method(sel).map(|m| m.implementation()),
++            Some(first as *const c_void)
++        );
++    }
++
+     /// A subclass overriding a superclass's method moves the probe too, which is
+     /// the same invariant reached by the other route: resolution, not storage.
+     #[test]
+diff --git a/crates/objc/src/nsobject.rs b/crates/objc/src/nsobject.rs
+index 4a0afe76391fcbedaad6bab1bc6eb7f5a6abaee1..9c61adaa97aadbb2b9654b36f629437af17ace09 100644
+--- a/crates/objc/src/nsobject.rs
++++ b/crates/objc/src/nsobject.rs
+@@ -76,6 +76,8 @@ pub(crate) fn install() {
+         c"B24@0:8#16",
+     );
+     add(class, "respondsToSelector:", responds as Imp, c"B24@0:8:16");
++    add(class, "isProxy", is_proxy as Imp, c"B16@0:8");
++    add(class, "zone", zone as Imp, c"^{_NSZone=}16@0:8");
+     add(
+         class,
+         "methodForSelector:",
+@@ -241,6 +243,14 @@ unsafe extern "C" fn hash(receiver: Id, _sel: Sel) -> usize {
+     receiver as usize
+ }
+ 
++unsafe extern "C" fn is_proxy(_receiver: Id, _sel: Sel) -> bool {
++    false
++}
++
++unsafe extern "C" fn zone(_receiver: Id, _sel: Sel) -> *mut c_void {
++    std::ptr::null_mut()
++}
++
+ unsafe extern "C" fn is_kind_of(receiver: Id, _sel: Sel, class: Id) -> bool {
+     // SAFETY: an instance and a class.
+     let Some(mine) = (unsafe { crate::object::class_of(receiver) }) else {
+diff --git a/crates/objc/src/sel.rs b/crates/objc/src/sel.rs
+index faed67fc7d2e5eb3d96ea60ff9b339ffa3960c6d..b9d430a4ae661deece03856887811e28ff4e2532 100644
+--- a/crates/objc/src/sel.rs
++++ b/crates/objc/src/sel.rs
+@@ -23,12 +23,32 @@ pub fn register(name: &CStr) -> Sel {
+     leaked.as_ptr()
+ }
+ 
++const RECENT_SLOTS: usize = 256;
++
++thread_local! {
++    static RECENT: [std::cell::Cell<(usize, usize, Sel)>; RECENT_SLOTS] =
++        const { [const { std::cell::Cell::new((0, 0, std::ptr::null())) }; RECENT_SLOTS] };
++}
++
+ /// The selector for a Rust string, for this crate's own classes.
+ ///
+ /// Panics on an interior NUL, which only a bug here could produce.
+ pub fn get(name: &str) -> Sel {
++    let address = name.as_ptr() as usize;
++    let slot = (crate::address::mix((address ^ name.len()) as u64) >> 56) as usize % RECENT_SLOTS;
++    let (at, length, sel) = RECENT.with(|recent| recent[slot].get());
++    // SAFETY: a non-null cached selector is an interned, NUL-terminated name.
++    if at == address
++        && length == name.len()
++        && !sel.is_null()
++        && unsafe { CStr::from_ptr(sel) }.to_bytes() == name.as_bytes()
++    {
++        return sel;
++    }
+     let c = CString::new(name).expect("a selector name has no interior NUL");
+-    register(&c)
++    let sel = register(&c);
++    RECENT.with(|recent| recent[slot].set((address, name.len(), sel)));
++    sel
+ }
+ 
+ /// A selector's name, which is the selector.
+@@ -64,6 +84,19 @@ pub fn is_equal(a: Sel, b: Sel) -> bool {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn a_reused_name_buffer_gets_its_new_selector() {
++        let mut name = String::with_capacity(32);
++        name.push_str("cacheProbeAlpha");
++        let alpha = get(&name);
++        name.clear();
++        name.push_str("cacheProbeBravo");
++        let bravo = get(&name);
++        assert_ne!(alpha, bravo);
++        assert_eq!(bravo, register(c"cacheProbeBravo"));
++        assert_eq!(alpha, register(c"cacheProbeAlpha"));
++    }
++
+     #[test]
+     fn the_same_name_registers_to_the_same_pointer() {
+         let a = get("countByEnumeratingWithState:objects:count:");
+diff --git a/crates/rosemary/src/abi/table.rs b/crates/rosemary/src/abi/table.rs
+index 5852db0ac9ab3f53fc3443fda2d45b342f588500..8c867f8e8767394c25a09909fd91aaff1c8b1a2a 100644
+--- a/crates/rosemary/src/abi/table.rs
++++ b/crates/rosemary/src/abi/table.rs
+@@ -607,6 +607,13 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+     // `CFComparisonResult` is a `CFIndex`, so a signed doubleword, and
+     // `CFStringCompareFlags` is a `CFOptionFlags` - both 64-bit on LP64.
+     sig!("CFStringCompare", I64, P, P, U64),
++    sig!("CFStringHasPrefix", U8, P, P),
++    sig!("CFStringHasSuffix", U8, P, P),
++    sig!("CFNullGetTypeID", U64),
++    sig!("CFBagGetTypeID", U64),
++    sig!("CFCopyDescription", P, P),
++    sig!("CFCopyTypeIDDescription", P, U64),
++    sig!("CFUUIDCreateFromUUIDBytes", P, P, U64, U64),
+     sig!("CFStringCompareWithOptions", I64, P, P, I64, I64, U64),
+     // `Boolean CFStringFindWithOptions(CFStringRef, CFStringRef, CFRange,
+     // CFStringCompareFlags, CFRange *)`, with the range flattened.
+@@ -1259,6 +1266,14 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+     sig!("SetSystemUIMode", I32, U32, U32),
+     // `OSErr FSFindFolder(FSVolumeRefNum, OSType, Boolean, FSRef *)`.
+     sig!("FSFindFolder", I16, I16, U32, U8, P),
++    sig!("GetIconRef", I16, I16, U32, U32, P),
++    sig!("ReleaseIconRef", I16, P),
++    sig!("LocaleRefFromLocaleString", I32, P, P),
++    sig!("UCCreateCollator", I32, P, U32, U32, P),
++    sig!("UCDisposeCollator", I32, P),
++    sig!("UCCompareText", I32, P, P, U64, P, U64, P, P),
++    sig!("UCGetCollationKey", I32, P, P, U64, U64, P, P),
++    sig!("UCCompareCollationKeys", I32, P, U64, P, U64, P, P),
+     // The handler is a guest function the Apple Event Manager calls when an
+     // event arrives, so it crosses as a thunk; removal names the same one.
+     cbsig!([2], "AEInstallEventHandler", I16, U32, U32, P, P, U8),
+diff --git a/crates/rosemary/src/main.rs b/crates/rosemary/src/main.rs
+index 2d06c415b94a5c2a1f4cf02b275c0854c8356353..3d6195fbafac7eb491e18703b10d33efab37e207 100644
+--- a/crates/rosemary/src/main.rs
++++ b/crates/rosemary/src/main.rs
+@@ -416,6 +416,9 @@ fn launch(path: OsString, options: &RunOptions, args: Vec<OsString>) -> ExitCode
+     let path = path.as_str();
+     rosemary::shims::runtime::set_executable_path(std::path::Path::new(path));
+     rosemary::frameworks::set_main_bundle(std::path::Path::new(path));
++    if rosemary::bundle::enclosing(std::path::Path::new(path)).is_some() {
++        darwin::env::launch_as_app();
++    }
+     // The same path as the guest spells it, for `argv[0]`.
+     let guest = guest_spelling(path);
+     // A Mac's `~/Library` subtree, which this host has not got and a guest
+diff --git a/crates/sdl3/src/lib.rs b/crates/sdl3/src/lib.rs
+index cd054cd09cb9728d6bcf69de2a445b9b4fbe81bc..7cee877e5b74a4c110ff124adf9365b85932bc99 100644
+--- a/crates/sdl3/src/lib.rs
++++ b/crates/sdl3/src/lib.rs
+@@ -240,6 +240,7 @@ struct Api {
+         Option<unsafe extern "C" fn(u32, *mut c_int) -> *mut *mut DisplayMode>,
+ 
+     SDL_PollEvent: Option<unsafe extern "C" fn(*mut Event) -> bool>,
++    SDL_PeepEvents: Option<unsafe extern "C" fn(*mut Event, c_int, c_int, u32, u32) -> c_int>,
+     SDL_WaitEventTimeout: Option<unsafe extern "C" fn(*mut Event, i32) -> bool>,
+     SDL_StartTextInput: Option<unsafe extern "C" fn(Window) -> bool>,
+     SDL_StopTextInput: Option<unsafe extern "C" fn(Window) -> bool>,
+@@ -469,6 +470,7 @@ fn api() -> Option<&'static Api> {
+             SDL_GetDisplayName,
+             SDL_GetFullscreenDisplayModes,
+             SDL_PollEvent,
++            SDL_PeepEvents,
+             SDL_WaitEventTimeout,
+             SDL_StartTextInput,
+             SDL_StopTextInput,
+@@ -1167,6 +1169,137 @@ pub mod clipboard {
+     }
+ }
+ 
++pub mod dialog {
++    use super::*;
++    use std::sync::{Arc, Mutex};
++
++    pub enum Kind {
++        Open { many: bool },
++        Save,
++        Folder { many: bool },
++    }
++
++    pub type Answer = Arc<Mutex<Option<Vec<Vec<u8>>>>>;
++
++    #[repr(C)]
++    struct Filter {
++        name: *const c_char,
++        pattern: *const c_char,
++    }
++
++    struct Request {
++        answer: Answer,
++        _names: Vec<CString>,
++        _patterns: Vec<CString>,
++        filters: Vec<Filter>,
++        default: Option<CString>,
++    }
++
++    unsafe extern "C" fn answered(
++        userdata: *mut c_void,
++        files: *const *const c_char,
++        _filter: c_int,
++    ) {
++        // SAFETY: the box `show` leaked; SDL answers each request once.
++        let request = unsafe { Box::from_raw(userdata as *mut Request) };
++        let mut paths = Vec::new();
++        let mut at = files;
++        // SAFETY: null on failure, else a null-terminated list of C strings.
++        unsafe {
++            while !at.is_null() && !(*at).is_null() {
++                paths.push(CStr::from_ptr(*at).to_bytes().to_vec());
++                at = at.add(1);
++            }
++        }
++        *request.answer.lock().unwrap_or_else(|e| e.into_inner()) = Some(paths);
++    }
++
++    pub fn show(
++        kind: Kind,
++        window: Window,
++        filters: &[(String, String)],
++        default: Option<&[u8]>,
++    ) -> Option<Answer> {
++        type Show = unsafe extern "C" fn(
++            unsafe extern "C" fn(*mut c_void, *const *const c_char, c_int),
++            *mut c_void,
++            Window,
++            *const Filter,
++            c_int,
++            *const c_char,
++            bool,
++        );
++        type Save = unsafe extern "C" fn(
++            unsafe extern "C" fn(*mut c_void, *const *const c_char, c_int),
++            *mut c_void,
++            Window,
++            *const Filter,
++            c_int,
++            *const c_char,
++        );
++        type Folder = unsafe extern "C" fn(
++            unsafe extern "C" fn(*mut c_void, *const *const c_char, c_int),
++            *mut c_void,
++            Window,
++            *const c_char,
++            bool,
++        );
++        let handle = library()?;
++        let names: Vec<CString> = filters
++            .iter()
++            .filter_map(|(name, _)| CString::new(name.as_str()).ok())
++            .collect();
++        let patterns: Vec<CString> = filters
++            .iter()
++            .filter_map(|(_, pattern)| CString::new(pattern.as_str()).ok())
++            .collect();
++        let filters = names
++            .iter()
++            .zip(&patterns)
++            .map(|(name, pattern)| Filter {
++                name: name.as_ptr(),
++                pattern: pattern.as_ptr(),
++            })
++            .collect();
++        let answer = Answer::default();
++        let request = Box::new(Request {
++            answer: answer.clone(),
++            _names: names,
++            _patterns: patterns,
++            filters,
++            default: default.and_then(|path| CString::new(path).ok()),
++        });
++        let location = request
++            .default
++            .as_ref()
++            .map_or(std::ptr::null(), |p| p.as_ptr());
++        let (list, count) = (request.filters.as_ptr(), request.filters.len() as c_int);
++        let list = if count == 0 { std::ptr::null() } else { list };
++        // SAFETY: SDL3 declares these prototypes; the request stays alive until
++        // `answered` takes it back.
++        unsafe {
++            match kind {
++                Kind::Open { many } => {
++                    let show = entry::<Show>(handle, "SDL_ShowOpenFileDialog")?;
++                    let userdata = Box::into_raw(request).cast();
++                    show(answered, userdata, window, list, count, location, many);
++                }
++                Kind::Save => {
++                    let show = entry::<Save>(handle, "SDL_ShowSaveFileDialog")?;
++                    let userdata = Box::into_raw(request).cast();
++                    show(answered, userdata, window, list, count, location);
++                }
++                Kind::Folder { many } => {
++                    let show = entry::<Folder>(handle, "SDL_ShowOpenFolderDialog")?;
++                    let userdata = Box::into_raw(request).cast();
++                    show(answered, userdata, window, location, many);
++                }
++            }
++        }
++        Some(answer)
++    }
++}
++
+ pub mod virtual_joystick {
+     use super::*;
+ 
+@@ -1739,6 +1872,33 @@ pub mod video {
+         Some(translate(&raw))
+     }
+ 
++    pub fn take_next_text() -> Option<String> {
++        let peep = api()?.SDL_PeepEvents?;
++        let mut raw = super::Event::default();
++        // SAFETY: room for one event; `SDL_PEEKEVENT` over every type.
++        if unsafe { peep(&mut raw, 1, 1, 0, u32::MAX) } != 1 || kind(&raw) != event_type::TEXT_INPUT
++        {
++            return None;
++        }
++        // SAFETY: as above, `SDL_GETEVENT`, now that it is known to be text.
++        if unsafe {
++            peep(
++                &mut raw,
++                1,
++                2,
++                event_type::TEXT_INPUT,
++                event_type::TEXT_INPUT,
++            )
++        } != 1
++        {
++            return None;
++        }
++        match translate(&raw) {
++            Event::Text { text, .. } => Some(text),
++            _ => None,
++        }
++    }
++
+     /// The next event, waiting up to `milliseconds` for one: for a loop with
+     /// nothing to do between events, which [`poll`] would spin.
+     pub fn wait(milliseconds: i32) -> Option<Event> {

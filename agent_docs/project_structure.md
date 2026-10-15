@@ -2,6 +2,9 @@
 
 - crates/appkit: NSView, window, event, input, display-link, controls, font,
   file-panel, and AppKit diagnostic behavior.
+- crates/appkit/src/controls.rs: AppKit control drawing and
+  `NSButtonCell` bezel-only frame dispatch, with Objective-C registration and
+  rendering regression coverage.
 - crates/appkit/src/event.rs: key event normalization for text clients,
   Linux Control-to-Command shortcut mapping, and regression coverage for
   printable text, editing keys, modifiers, and shortcuts.
@@ -26,6 +29,9 @@
 - crates/objc: Objective-C messaging and autorelease-pool safety.
 - crates/metal_translate: Metal/SPIR-V translation support.
 - scripts/run-studio.sh: local launcher and diagnostic log wrapper.
+- scripts/trace-studio-memory.py: one-shot privacy-conscious `/proc` memory,
+  swap, process, pressure, cgroup, zram, Play boundary, and aggregate
+  mapping sampler. It never persists Studio log lines or mapping labels.
 - scripts/citric: GTK launcher entry point and CLI wrapper.
 - citric_launcher/: GTK 4 UI, configuration, desktop-entry integration, and
   launch diagnostics.
@@ -45,8 +51,8 @@
 - bin/rosemary: ignored ready-to-run Rosemary binary.
 - downloads/darwin-cache: ignored local runtime cache.
 - docs/: migration, compatibility, crash, bundle, patch, and validation notes.
-- patches/: pinned base commit, canonical Citric runtime patch, and historical
-  snapshots.
+- patches/: pinned base commit, canonical Citric runtime patch, the reconciled
+  PR 77–80 import overlay, and historical snapshots.
 - tests/test_citric_launcher.py: launcher configuration, argument, and desktop
   entry tests.
 - tests/test_run_studio_locale.py: numeric-locale launch contract test.
@@ -64,6 +70,31 @@ The periodic-stutter diagnostic path is owned by `scripts/run-studio.sh` and
 runtime hooks in the patch. Its output is session metadata and raw logs outside
 Git; no standalone diagnostic module was introduced.
 
+The memory-leak investigation is owned by `scripts/run-studio.sh` and
+`scripts/trace-studio-memory.py`. Diagnostics are disabled for normal launches
+and enabled only by `STUDIO_MEMORY_TRACE=1` or `STUDIO_MEMORY_TRACE=detailed`.
+The launcher writes the per-session JSONL trace beside
+the normal log, and stops the sampler when the Studio process tree exits. The
+tracer recognizes fixed PlaySoloManager boundaries and schedules 60/120-second
+post-stop snapshots. The trace is intentionally outside Git and contains no
+command lines, environment values, file paths, mapping labels, or memory
+contents. The launcher requests mimalloc shutdown statistics only while the
+one-shot marker is active. Mapping summaries include fixed region-size buckets
+and are emitted at Play boundaries and periodic 30-second samples. The
+`scripts/summarize-memory-diagnostics.py` helper recognizes fixed mimalloc
+footer rows without retaining raw log text.
+
+The detailed one-shot mode consumes the ignored
+`logs/.memory-trace-detailed-once` marker. It adds per-VMA identity, addresses,
+permissions, labels/paths, sizes, RSS/PSS/swap, and private/shared counters to
+the local trace, and enables Rosemary VM request tracing. The summarizer
+reduces `mmap`/`mprotect` output to fixed counts; raw VM request lines remain
+local and are not documentation artifacts.
+
+The latest ignored capture is `logs/run-20261015T010138-120845.memory.jsonl`.
+It is evidence only and remains outside Git; its missing end record and absent
+exit-code sidecar leave clean process shutdown uncertain.
+
 The clipboard compatibility change is owned by the AppKit pasteboard/text
 modules and the WebKit view bridge. The canonical patch remains the source of
 truth; `bin/rosemary` is an ignored installed build artifact.
@@ -74,10 +105,11 @@ ancestor traversal for key equivalents. Diagnostics are environment-gated in
 the existing AppKit and WebKit input paths.
 
 The upstream-ready clipboard branches live in the separate Rosemary checkout:
-`citric/pasteboard-bridge` owns the Carbon/Cocoa bridge, and
-`citric/clipboard-text-actions` owns native AppKit and WebKit text actions on
-top of that bridge. They are pushed to the user's fork and are not part of
-Citric's current branch history. Both are included in open Rosemary PR #42.
+`citric/pasteboard-carbon-bridge` owns the Carbon/Cocoa bridge, and
+`citric/native-clipboard-actions` owns native AppKit and WebKit text actions
+independently. They are pushed to the user's fork and are not part of Citric's
+current branch history. PR #42 remains open and untouched; the user
+will close it and open replacement PRs manually.
 
 The Save panel hidden-extension preference is owned by the AppKit panel bridge
 in the canonical patch; its getter and setter are covered by panel tests.
