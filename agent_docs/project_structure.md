@@ -27,12 +27,12 @@
 - scripts/citric: GTK launcher entry point and CLI wrapper.
 - citric_launcher/: GTK 4 UI, configuration, desktop-entry integration, and
   launch diagnostics.
-- citric_launcher/studio_bundle.py: pinned Studio archive downloader,
-  checksum/app validation, safe ZIP extraction, atomic installation, and the
-  bounded published-version check.
+- citric_launcher/studio_bundle.py: pinned and latest Studio archive
+  downloader, checksum/app validation, safe ZIP extraction, atomic
+  installation, and published-version checking.
 - citric_launcher/app.py and citric_launcher/core.py: asynchronous Studio
-  update availability check, update button label, and guarded pinned-installer
-  behavior.
+  update availability check, update button label, and guarded replacement
+  behavior for the selected release.
 - scripts/build-studio.sh: fetches the pinned Rosemary base, applies the patch
   series in a temporary checkout, and performs a locked release build.
 - scripts/patch-color-dialog.py: idempotent Qt Cocoa QColorDialog patching.

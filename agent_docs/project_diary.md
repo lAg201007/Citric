@@ -1,5 +1,23 @@
 # Project diary
 
+- On 2026-10-14, the launcher update flow was completed. Startup still checks
+  Roblox's MacStudio endpoint without downloading, but the update action now
+  refreshes release metadata and downloads the matching official build before
+  asking to replace the installed bundle. The pinned release keeps its
+  checksum; dynamic releases use strict source, archive, and bundle validation.
+  Tests use mocked archives because live CDN access and GUI validation were not
+  available. The reusable lesson is to separate advisory release discovery
+  from an explicit, failure-safe replacement action.
+
+- On 2026-10-14, GitHub issue #1 isolated a locale-sensitive Luau decimal
+  literal failure: the bundled parser follows locale-sensitive `strtod`
+  behavior when `LC_NUMERIC` uses a comma, while division and `tonumber` use
+  different conversion paths. Citric already clears `LC_ALL` and forces
+  `LC_NUMERIC=C` in its normal launcher, and the launch-contract regression
+  passes under a non-C inherited locale. The parser source is inside the
+  proprietary Studio bundle, so the durable parser correction belongs in
+  upstream Luau; manual Play confirmation through Citric remains pending.
+
 - On 2026-10-14, the reusable clipboard fixes were split from the Citric
   overlay into two stacked Rosemary v0.2.3 branches. `citric/pasteboard-bridge`
   keeps the Carbon/Cocoa pasteboard and promised-flavor work independently

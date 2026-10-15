@@ -38,9 +38,12 @@ confirmation.
 At startup, the launcher makes an advisory request to Roblox's MacStudio
 version endpoint when a compatible installed bundle is available. A newer
 published version changes the action label to `UPDATE STUDIO NEW VERSION
-<version>`. Selecting it never silently replaces Studio: the validated
-0.742.0.7421053 archive remains the only installable build, and a newer
-unvalidated release is reported while the current bundle stays intact.
+<version>`. Selecting it refreshes the metadata, downloads the matching
+official build, validates it, and asks before replacing Studio. The pinned
+0.742.0.7421053 archive keeps its recorded SHA-256 check; newer releases are
+validated by the official HTTPS source and bundle identity, version, build,
+executable, and architecture. Citric does not claim runtime compatibility
+testing for every newly published release.
 
 The launcher applies a narrow, plugin-ID-agnostic compatibility rule to
 cached plugin models that contain the known legacy `bit` fallback declaration.

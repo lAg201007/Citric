@@ -1,5 +1,79 @@
 # Latest session work
 
+Deployment: `citric_studio_latest_update_20261014`
+
+State: complete in source; live network download and GUI update validation
+remain pending.
+
+Outcome: the launcher now checks Roblox's MacStudio release metadata at
+startup and, when a newer version is published, labels the action with the
+available version. Clicking the action refreshes the metadata, downloads the
+matching official CDN archive, validates it, and asks before replacing the
+installed bundle. The pinned release retains its SHA-256 verification; dynamic
+releases use strict HTTPS host/path checks, archive limits and safe extraction,
+bundle identity/version/build checks, executable validation, and x86_64 Mach-O
+validation. Failed downloads or validation leave the current bundle intact.
+
+Verification: 25 Python unit tests passed, including mocked latest-release
+metadata, dynamic archive URL derivation, successful latest installation,
+invalid-bundle preservation, confirmation gating, and pinned checksum
+retention. Python compilation and `git diff --check` passed. No live release
+download or GUI update click was run in this environment, so network access
+and the actual replacement flow remain user-driven.
+
+Blocker: no source blocker. A live network test is still needed to verify the
+Roblox endpoint, CDN archive, and launcher dialog together.
+
+Exact next entry point: restart the launcher with network access, wait for the
+update label, click it, approve replacement, and confirm that the new Studio
+bundle launches. Refresh `docs/bundle.md` if the installed bundle changes.
+
+Deployment token report: `citric_studio_latest_update_20261014` (unavailable;
+the installed report script found no matching session record).
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID
+
+Deployment: `luau_locale_issue1_20261014`
+
+State: complete; the Citric-side mitigation was already present and verified.
+
+Outcome: GitHub issue #1 was traced to locale-sensitive decimal parsing in the
+Luau code bundled inside Roblox Studio. The official Luau source uses
+`strtod` for this conversion, so a parser-level fix would belong upstream in
+Luau rather than in Citric's proprietary Studio bundle. Citric's launcher
+already clears inherited `LC_ALL` and exports `LC_NUMERIC=C` before starting
+Rosemary, covering the affected launch path.
+
+Verification: `tests/test_run_studio_locale.py` passed with inherited
+`LC_ALL`/`LC_NUMERIC=pt_BR.UTF-8`; `bash -n scripts/run-studio.sh` and
+`git diff --check` passed. No source, test, or configuration files were
+changed during this diagnosis; this handoff only updates the durable
+`agent_docs/` record. The test covers environment propagation, not a live
+Studio parse.
+
+Blocker: no Citric source blocker. Manual Play validation through the current
+launcher is still required. Launch paths that bypass `scripts/run-studio.sh`
+do not receive this mitigation.
+
+Exact next entry point: start Studio through the Citric launcher with a
+non-C numeric locale, run the decimal-literal reproduction from issue #1, and
+inspect the launcher metadata if it still fails. A durable parser fix should
+be proposed to Luau after reproducing it against the upstream runtime.
+
+Deployment token report: `luau_locale_issue1_20261014` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID
+
 Deployment: `clipboard_upstream_20261014`
 
 State: complete; both upstream-ready branches are pushed to the user's fork

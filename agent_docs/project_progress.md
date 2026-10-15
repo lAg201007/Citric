@@ -1,5 +1,22 @@
 # Project progress
 
+Latest completed deployment: `citric_studio_latest_update_20261014`. The
+launcher automatically checks the published Mac Studio version and the update
+button downloads and validates the matching build after the user clicks it.
+Replacement remains confirmed and failure-safe. Automated tests pass; live
+network and GUI update validation remain pending. There is no active deployment.
+
+Latest completed deployment: `luau_locale_issue1_20261014`. Issue #1 was
+confirmed as a locale-sensitive Luau decimal-literal parsing failure: the
+bundled parser uses locale-sensitive `strtod` behavior, while arithmetic
+division and `tonumber` follow different paths. Citric already mitigates this
+when Studio is launched through `scripts/run-studio.sh` by clearing `LC_ALL`
+and forcing `LC_NUMERIC=C`; the dedicated launch-contract test passes with
+non-C inherited locales. The parser itself is inside the proprietary Studio
+bundle, so no parser source change was made here. A locale-independent parser
+fix belongs upstream in Luau. Manual Play confirmation through the latest
+Citric launcher remains pending. There is no active deployment.
+
 Latest completed deployment: `open_portal_fork_20261014`. The SDL file-picker
 fallback and XDG Desktop Portal integration were split into two upstreamable
 branches based on Rosemary v0.2.3 and pushed to the user's Rosemary fork:

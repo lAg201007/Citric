@@ -20,17 +20,20 @@ applied to the pinned base in `patches/base-commit` and ordered by
 `patches/series`. The older patch files remain historical snapshots. Citric's
 GTK 4 Python launcher delegates execution to `scripts/run-studio.sh`; it does
 not include the proprietary Studio bundle in Git. Its optional downloader
-fetches a pinned Roblox CDN ZIP, checks its SHA-256, validates the bundle
-identifier/version/executable and Intel Mach-O slice, and installs it under the
-ignored `app/full/RobloxStudio.app` path with a replacement confirmation.
+fetches a pinned Roblox CDN ZIP or the build named by the latest release
+metadata, checks the pinned SHA-256 when available, validates the bundle
+identifier/version/build, executable, and Intel Mach-O slice, and installs it
+under the ignored `app/full/RobloxStudio.app` path with a replacement
+confirmation.
 
 `citric_launcher/studio_bundle.py --check-update` queries
 `clientsettings.roblox.com/v2/client-version/MacStudio`, validates the returned
 version and build identifier, and compares numeric version components. The GTK
 launcher runs this check asynchronously and updates its button label when a
-newer release exists. The check is advisory because the downloader has a
-recorded checksum and compatibility validation only for the pinned build;
-unknown releases are never installed automatically.
+newer release exists. Clicking the update action refreshes the metadata and
+downloads that release; it never replaces Studio without confirmation. Dynamic
+releases have no recorded per-release checksum, so archive limits, safe paths,
+official host/path checks, and bundle metadata validation are used instead.
 
 The launcher clears inherited `LC_ALL` and forces `LC_NUMERIC=C` for Studio.
 Launch metadata records both the incoming and effective numeric locale values
