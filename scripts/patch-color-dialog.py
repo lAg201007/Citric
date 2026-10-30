@@ -20,6 +20,11 @@ try:
 except OSError as error:
     raise SystemExit(f"could not read the Qt Cocoa plugin: {error}")
 
+fresh_original = contents.count(native_original) == 1 and contents.count(factory_original) == 1
+# A Studio update replaces the plugin; an unpatched new build gets a new backup.
+if backup.exists() and fresh_original and contents != backup.read_bytes():
+    backup.unlink()
+
 if not backup.exists():
     if contents.count(native_patched) == 1 and contents.count(factory_patched) == 1:
         print("Qt Cocoa: QColorDialog fallback patch already applied.")

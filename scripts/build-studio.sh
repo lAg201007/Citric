@@ -7,7 +7,20 @@ UPSTREAM_URL_FILE="$PATCH_DIR/upstream-url"
 BASE_COMMIT_FILE="$PATCH_DIR/base-commit"
 SERIES_FILE="$PATCH_DIR/series"
 CACHE_ROOT="${CITRIC_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/citric}"
-CITRIC_TARGET_DIR="${CARGO_TARGET_DIR:-$CACHE_ROOT/target}"
+NO_PATCHES="${CITRIC_ROSEMARY_NO_PATCHES:-0}"
+case "$NO_PATCHES" in
+    0) OUTPUT_NAME="rosemary" ;;
+    1)
+        CACHE_ROOT="$CACHE_ROOT/no-patches"
+        OUTPUT_NAME="rosemary-unpatched"
+        ;;
+    *) printf 'CITRIC_ROSEMARY_NO_PATCHES must be 0 or 1.\n' >&2; exit 2 ;;
+esac
+if [[ "$NO_PATCHES" == 1 && -n "${CARGO_TARGET_DIR:-}" ]]; then
+    CITRIC_TARGET_DIR="$CARGO_TARGET_DIR/no-patches"
+else
+    CITRIC_TARGET_DIR="${CARGO_TARGET_DIR:-$CACHE_ROOT/target}"
+fi
 CHECK_ONLY=0
 BUILD_ONLY=0
 
@@ -22,6 +35,7 @@ case "${1:-}" in
         ;;
     --help|-h)
         printf 'Usage: %s [--check-only|--build-only]\n' "$0"
+        printf 'Set CITRIC_ROSEMARY_NO_PATCHES=1 to build the pinned base without patches/series.\n'
         exit 0
         ;;
     *)
@@ -68,31 +82,37 @@ if [[ "$ACTUAL_BASE" != "$BASE_COMMIT" ]]; then
 fi
 
 PATCH_COUNT=0
-while IFS= read -r PATCH_NAME || [[ -n "$PATCH_NAME" ]]; do
-    if [[ -z "$PATCH_NAME" ]]; then
-        continue
-    fi
-    if [[ "$PATCH_NAME" == */* || "$PATCH_NAME" == *".."* || ! "$PATCH_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.patch$ ]]; then
-        printf 'Invalid patch name in series: %s\n' "$PATCH_NAME" >&2
-        exit 2
-    fi
-    PATCH_PATH="$PATCH_DIR/$PATCH_NAME"
-    if [[ ! -f "$PATCH_PATH" ]]; then
-        printf 'Listed patch not found: %s\n' "$PATCH_PATH" >&2
-        exit 2
-    fi
-    git -C "$SOURCE_DIR" apply --check "$PATCH_PATH"
-    git -C "$SOURCE_DIR" apply "$PATCH_PATH"
-    PATCH_COUNT=$((PATCH_COUNT + 1))
-done < "$SERIES_FILE"
+if [[ "$NO_PATCHES" == 0 ]]; then
+    while IFS= read -r PATCH_NAME || [[ -n "$PATCH_NAME" ]]; do
+        if [[ -z "$PATCH_NAME" ]]; then
+            continue
+        fi
+        if [[ "$PATCH_NAME" == */* || "$PATCH_NAME" == *".."* || ! "$PATCH_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.patch$ ]]; then
+            printf 'Invalid patch name in series: %s\n' "$PATCH_NAME" >&2
+            exit 2
+        fi
+        PATCH_PATH="$PATCH_DIR/$PATCH_NAME"
+        if [[ ! -f "$PATCH_PATH" ]]; then
+            printf 'Listed patch not found: %s\n' "$PATCH_PATH" >&2
+            exit 2
+        fi
+        git -C "$SOURCE_DIR" apply --check "$PATCH_PATH"
+        git -C "$SOURCE_DIR" apply "$PATCH_PATH"
+        PATCH_COUNT=$((PATCH_COUNT + 1))
+    done < "$SERIES_FILE"
+fi
 
-if (( PATCH_COUNT == 0 )); then
+if (( PATCH_COUNT == 0 && NO_PATCHES == 0 )); then
     printf 'The patch series is empty.\n' >&2
     exit 2
 fi
 
 if (( CHECK_ONLY == 1 )); then
-    printf 'Base %s fetched; %s patch(es) applied successfully.\n' "$BASE_COMMIT" "$PATCH_COUNT"
+    if [[ "$NO_PATCHES" == 1 ]]; then
+        printf 'Base %s fetched with no Citric patch series applied.\n' "$BASE_COMMIT"
+    else
+        printf 'Base %s fetched; %s patch(es) applied successfully.\n' "$BASE_COMMIT" "$PATCH_COUNT"
+    fi
     exit 0
 fi
 
@@ -109,10 +129,10 @@ if (( BUILD_ONLY == 1 )); then
 fi
 
 mkdir -p "$CITRIC_ROOT/bin"
-OUTPUT_TEMP="$(mktemp "$CITRIC_ROOT/bin/.rosemary.XXXXXXXX")"
+OUTPUT_TEMP="$(mktemp "$CITRIC_ROOT/bin/.$OUTPUT_NAME.XXXXXXXX")"
 cp -- "$BUILT_ROSEMARY" "$OUTPUT_TEMP"
 chmod 0755 "$OUTPUT_TEMP"
-mv -f -- "$OUTPUT_TEMP" "$CITRIC_ROOT/bin/rosemary"
+mv -f -- "$OUTPUT_TEMP" "$CITRIC_ROOT/bin/$OUTPUT_NAME"
 OUTPUT_TEMP=""
 
-printf 'Rosemary built and installed at %s/bin/rosemary\n' "$CITRIC_ROOT"
+printf 'Rosemary built and installed at %s/bin/%s\n' "$CITRIC_ROOT" "$OUTPUT_NAME"

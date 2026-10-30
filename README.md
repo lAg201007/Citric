@@ -9,6 +9,7 @@ The proprietary Roblox Studio app bundle is not included in Git. Use the launche
 - Linux
 - Python 3, GTK 4, and PyGObject for the graphical launcher
 - Git, Rust, Cargo, and the native build dependencies required by [Rosemary](https://github.com/microlift/rosemary)
+- WebKitGTK 6.0 (`libwebkitgtk-6.0.so.4`; `webkitgtk-6.0` on Arch) at runtime: Rosemary v0.4 renders `WKWebView` with it, and Studio's login and logout pages are web views that stay blank and loading without it
 - A compatible macOS Roblox Studio app bundle
 
 ## Build
@@ -24,6 +25,18 @@ The resulting runtime is stored in `bin/rosemary`. To check that the source and 
 ```sh
 ./scripts/citric build --check-only
 ```
+
+To compare against the pinned Rosemary base without Citric's Rosemary patch
+series, build a separate `bin/rosemary-unpatched` binary and launch Studio with
+the same environment variable. This leaves the normal `bin/rosemary` untouched:
+
+```sh
+CITRIC_ROSEMARY_NO_PATCHES=1 ./scripts/build-studio.sh
+CITRIC_ROSEMARY_NO_PATCHES=1 ./scripts/run-studio.sh
+```
+
+The variable disables `patches/series` for Rosemary only; Citric's Studio and
+plugin launch setup still runs.
 
 ## Use
 

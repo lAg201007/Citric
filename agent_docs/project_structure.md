@@ -1,5 +1,12 @@
 # Project structure
 
+Explorer/input compatibility is owned by the AppKit table, pasteboard, drag
+and event modules in the Rosemary overlay. `patches/0008-rosemary-v0.3.0-overlay.patch`
+is the authoritative source representation; `bin/rosemary` is only an
+installed artifact and currently reflects the older 0.2.3 build. Future work
+should inspect the v0.3.0 temporary build checkout rather than treating the
+old installed binary or historical source snapshots as the final interface.
+
 - crates/appkit: NSView, window, event, input, display-link, controls, font,
   file-panel, and AppKit diagnostic behavior.
 - crates/appkit/src/controls.rs: AppKit control drawing and
@@ -26,6 +33,8 @@
   requests, panel option mapping including Qt's filter accessory, local URI
   conversion, cancellation, fallback eligibility, and diagnostic logging.
 - crates/corefoundation: collection singletons, run-loop and timer lifetime.
+- crates/foundation/src/runtime.rs: NSObject instance/class description and
+  debugDescription compatibility, including autorelease and override tests.
 - crates/objc: Objective-C messaging and autorelease-pool safety.
 - crates/metal_translate: Metal/SPIR-V translation support.
 - scripts/run-studio.sh: local launcher and diagnostic log wrapper.
@@ -51,8 +60,10 @@
 - bin/rosemary: ignored ready-to-run Rosemary binary.
 - downloads/darwin-cache: ignored local runtime cache.
 - docs/: migration, compatibility, crash, bundle, patch, and validation notes.
-- patches/: pinned base commit, canonical Citric runtime patch, the reconciled
-  PR 77–80 import overlay, and historical snapshots.
+- docs/nsobject-description.md: isolated upstream preparation and validation
+  record for NSObject textual descriptions.
+- patches/: pinned Rosemary v0.3.0 base commit, canonical reconciled overlay,
+  historical v0.2.x snapshots, and diagnostic patches retained for provenance.
 - tests/test_citric_launcher.py: launcher configuration, argument, and desktop
   entry tests.
 - tests/test_run_studio_locale.py: numeric-locale launch contract test.
@@ -118,3 +129,13 @@ Linux shortcut mapping is owned by `crates/appkit/src/event.rs` and the menu
 configuration in `crates/appkit/src/decor.rs`. The event boundary maps Control
 to Command for non-modifier chords while preserving AltGr and exposing the
 `ROSEMARY_MENU_CTRL` opt-out; focused event tests define the contract.
+
+Foundation's composed-character compatibility is implemented in the string
+module and documented in `docs/nsstring-composed-characters.md`; its patch is
+kept separate for future upstream review.
+
+- patches/0007-native-mouse-message-diagnostics.patch: opt-in Objective-C
+  selector dispatch telemetry used by the native Qt mouse investigation.
+
+- scripts/trace-studio-cursor.sh: narrow opt-in cursor-delivery capture for Qt
+  categories and cursor selector dispatch.

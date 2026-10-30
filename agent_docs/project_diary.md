@@ -1,5 +1,81 @@
 # Project diary
 
+- On 2026-10-15, the cursor diagnosis was redirected from frame analysis to
+  source-level event delivery after the user confirmed that visual input is
+  sufficient: only Studio's software cursor graphic freezes, while the native
+  cursor and scene remain responsive. Static Qt Cocoa inspection found the
+  `QNSView` mouse path handing events to
+  `QWindowSystemInterface::handleMouseEvent<DefaultDelivery>` and a separate
+  native-`NSCursor` branch. An untracked focused probe now traces the exact Qt
+  imports and `QCoreApplication::sendEvent`; it passed shell, whitespace, and
+  symbol checks but has not been run. The renderer is in a stripped Studio
+  binary, so the next evidence must distinguish Qt receiver delivery from the
+  `MouseService`/software-cursor render state. Do not request frame capture or
+  claim a root cause yet.
+
+- On 2026-10-15, Explorer/input diagnosis separated the reported failures
+  from the already improved text clipboard path. Click selection and search
+  typing worked, while menu and shortcut Cut/Paste did not; a user-performed
+  instance drag showed no preview or move. Old source inspection found missing
+  NSTableView selection and native drag/drop forwarding, but the installed
+  binary is v0.2.3 and the repository source pin is v0.3.0. Reusable lesson:
+  reconcile the release overlay before patching, and trace F/number shortcuts
+  across the full event path because key mappings alone do not prove Studio
+  delivery.
+
+- On 2026-10-15, the focused cursor capture recorded 342 `cursorUpdate:` and
+  408 `setCursor:` calls, all on QNSView, across 42.36 seconds. The associated
+  run exited 0, had 11 startup Qt window records, zero Qt mouse-category
+  records, and no exact RMB-release markers. This confirms native cursor
+  callbacks were observed but does not prove QWidget delivery or viewport
+  cursor updates. The probe now enables `qt.qpa.events=true`; a phased user
+  retest is pending.
+
+- On 2026-10-15, the user tested `RBX_MOUSE_MOVE_EVENTS_FIX_ENABLED=1` with a
+  valid Fish invocation, but the cursor graphic still froze after RMB release.
+  The flag is therefore insufficient by itself. A focused untracked script now
+  captures only `cursorUpdate:`/`setCursor:` and Qt mouse/window categories,
+  with environment forwarding and mode-0600 output validated. The next short
+  user capture is pending; absence of a record must be treated as ambiguous.
+
+- On 2026-10-15, the six-patch desktop run reproduced the cursor-only freeze
+  with exit code 0. SDL/unbuttoned coordinates and AppKit tracking callbacks
+  continued, while Qt mouse-category logging produced no Play records. Patch
+  0007 adds opt-in selected Objective-C message tracing with receiver/class,
+  owner, selector, IMP, timestamp, and thread metadata for regular and stret
+  lookups. Thirty-six Objective-C tests, exact seven-patch application, and
+  the Release build passed. The next capture must use the installed SHA
+  `6504e4f6b53fc31068cee1e38d2924cc23d2805b4a1188b47132b3e6aeaaacaf`.
+
+- On 2026-10-15, the Qt input-logging retry exposed
+  `rangeOfComposedCharacterSequenceAtIndex:` on `__NSCFString` after the
+  NSObject description gap was implemented. The isolated Foundation patch
+  uses UTF-16 offsets and Unicode extended-grapheme segmentation, with 151
+  Foundation unit tests and 20 integration tests passing. The authoritative
+  subsequent desktop run completed with exit code 0 using the patch 0006 SHA,
+  and the user reproduced the original cursor-only visual freeze. The earlier
+  code-134 retry is historical and should not be attributed to the current
+  build. Continue at the Qt acceptance/forwarding boundary.
+
+- On 2026-10-15, the pointer-release investigation was paused for a
+  user-driven capture. The reported sequence is: Play updates the pointer,
+  RMB camera movement is released, then unbuttoned motion stops until another
+  button is held or the wheel is scrolled; waiting does not recover it. The
+  user confirmed that the behavior existed before importing PRs 77–80, so the
+  imported recentering changes are not treated as the cause. The fourth patch
+  only broadens opt-in input tracing to observe the associated unbuttoned path,
+  pointer mapping, recentering, tracking areas, and dispatch. Keep the
+  diagnostic patch uncommitted until the capture is analyzed.
+
+- On 2026-10-15, the input capture showed that only the Play cursor graphic
+  freezes after RMB release. SDL and mapped pointer coordinates continued,
+  with association enabled and relative/recentering disabled; native
+  `QNSViewMouseMoveHelper` callbacks returned normally. This rules out a
+  stuck SDL relative mode in that run but does not show whether Qt accepted or
+  forwarded the event. Enabling Qt mouse/window logging on a retry exposed a
+  separate startup gap: `QNSView` received `description` and aborted with code
+  134 before Play. Isolate that missing compatibility before another capture.
+
 - On 2026-10-15, Rosemary PRs 77–80 were reconciled into
   `patches/0003-upstream-pr77-80.patch` while the v0.2.3 base remained pinned.
   The import keeps Citric's chooser, input aliases, and memory diagnostics and
@@ -398,3 +474,29 @@ different early selector failure.
   longer sessions remain unverified. Memory diagnostics were changed to be
   opt-in through `STUDIO_MEMORY_TRACE=1` or `STUDIO_MEMORY_TRACE=detailed`,
   keeping future tracking available without affecting normal launches.
+
+- On 2026-10-15, the Qt logging retry exposed a general Foundation gap rather
+  than a cursor-specific failure: `QNSView` inherited no `NSObject` description
+  method. The isolated patch implements instance and class `description` and
+  `debugDescription` with dynamic dispatch, autoreleased NSString results, and
+  focused inheritance/ownership tests. It remains uncommitted and is prepared
+  for a later Rosemary contribution; the graphical retest and cursor diagnosis
+  are separate pending work.
+
+- On 2026-10-15, the cursor investigation corrected its diagnostic boundary.
+  The OS/native cursor was already known to move normally; tracing QNSView
+  `cursorUpdate:` and `setCursor:` therefore measured the wrong subsystem. The
+  remaining symptom is only the software cursor graphic drawn inside Studio's
+  Play viewport. Local binary inspection found `RBX::MouseService::CursorCache`,
+  `MouseIcon` state, cursor texture resources, and
+  `RobloxViewStudio::updateNativeMouseIconVisibility` as candidate boundaries.
+  The reusable lesson is to trace the rendered state or compositor handoff
+  directly before requesting another user reproduction.
+- On 2026-10-15, Rosemary v0.3.0 was adopted as the active source base at
+  `91314d454fdb86e265228c0e43b53152fc5762ce`. The prior seven-patch overlay
+  was reconciled into `patches/0008-rosemary-v0.3.0-overlay.patch`; upstream
+  PR 77/78 and other duplicated release changes were removed from the active
+  series while Citric-specific behavior and diagnostics were retained. The
+  old patch files remain historical snapshots. Patch application passed, but
+  no v0.3.0 build or Studio validation was run. Reusable lesson: merge against
+  the tagged release first, then regenerate the canonical overlay.

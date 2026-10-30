@@ -1,5 +1,13 @@
 # Project overview
 
+The current Explorer/input investigation is separate from the completed
+clipboard text work. User testing shows Explorer Cut/Paste failing through
+both menu and keyboard, Explorer instance drag-and-drop producing no preview,
+and workspace tool shortcuts such as F and 1–5 not reaching Studio. The
+installed runtime is currently an older Rosemary 0.2.3 build, so findings from
+its older source path must be compared with the pinned v0.3.0 overlay before a
+fix is selected.
+
 Studio 0.743.0.7431133 exposed a missing `+[NSGraphicsContext graphicsContextWithCGContext:flipped:]` selector during startup. The AppKit compatibility layer now creates a retained Core Graphics-backed wrapper, exposes `CGContext` and `graphicsPort`, preserves the initial flipped state, and releases the context with the wrapper. Automated coverage and a release build pass; the headless smoke launch advanced beyond the selector but could not create a window without a display.
 
 Citric is the local continuation of the Rosemary compatibility work for running
@@ -31,8 +39,15 @@ The patch-overlay migration is complete. Future work resumes from
 docs/current-state.md and should preserve the separation between source changes,
 local runtime assets, and user account state.
 
-The current import deployment adds `patches/0003-upstream-pr77-80.patch` to
-the series while keeping the Rosemary v0.2.3 base pinned. It reconciles
+The completed `rosemary_v030_base_20261015` deployment now pins the official
+Rosemary v0.3.0 release at commit `91314d454fdb86e265228c0e43b53152fc5762ce`
+and applies `patches/0008-rosemary-v0.3.0-overlay.patch`. It absorbs upstream
+PR 77 and 78 work already present in v0.3.0 while retaining Citric-specific
+behavior, diagnostics, and remaining overlay changes. The older patch files
+remain historical snapshots; no v0.3.0 binary build or Studio retest was run.
+
+The earlier import deployment added `patches/0003-upstream-pr77-80.patch` to
+the series while keeping the Rosemary v0.2.3 base pinned. It reconciled
 upstream runtime, autorelease-pool, drawable-lifetime, input/locale, and Qt
 compatibility work with Citric's existing chooser and diagnostic changes.
 Automated validation is recorded in docs/upstream-imports.md; the rebuilt
@@ -181,3 +196,41 @@ for per-VMA and guest VM tracing when needed. In the latest bounded two-cycle
 test, memory stopped growing linearly and stayed stable for two minutes after
 the second Stop, with approximately 244 MiB above the settled baseline.
 Longer sessions remain unverified.
+
+The current input investigation is paused after a user-driven capture. Only
+the Play cursor graphic freezes after RMB camera movement is released; the
+scene continues rendering. SDL and mapped pointer coordinates continue and
+native tracking callbacks return normally, while the issue predates the PR77–80
+import. The optional `patches/0004-hover-input-diagnostics.patch` and
+`scripts/trace-studio-input.sh` extend opt-in logging toward Qt acceptance and
+forwarding without changing normal input behavior. The Qt logging retry
+crashed before Play because `QNSView` lacks `description`, which must be
+isolated before the next capture.
+
+The subsequent Foundation work also implements
+`rangeOfComposedCharacterSequenceAtIndex:` in
+`patches/0006-nsstring-composed-character-range.patch`, with UTF-16 and
+extended-grapheme regressions. Automated validation passed, and the latest
+desktop retry completed with exit code 0 using the patch 0006 binary. Both
+missing selectors are now passed; the original cursor-only visual freeze was
+reproduced and remains the active investigation.
+
+Patch 0007 adds an opt-in Objective-C selected-message trace for regular and
+structure-return lookups. The six-patch user run exited normally and showed
+continued SDL and AppKit motion callbacks but no Qt mouse-category records
+during Play. The seven-patch Release build is installed for the next bounded
+capture; no behavioral cursor fix is claimed.
+
+The follow-up Qt delivery probe tested `RBX_MOUSE_MOVE_EVENTS_FIX_ENABLED=1`
+with a valid Fish invocation; the cursor graphic still froze after RMB release,
+so that flag is not sufficient. `scripts/trace-studio-cursor.sh` now provides a
+narrow opt-in capture of cursor selectors and Qt mouse/window categories. Its
+next user run is pending, and absence of a record will remain an ambiguous
+signal rather than proof that the callback never ran.
+
+The focused capture recorded native QNSView `cursorUpdate:` and `setCursor:`
+dispatch, but only startup Qt window records and no Qt mouse-category records;
+there were no exact RMB-release markers. This confirms native cursor callbacks
+were observed without establishing QWidget delivery or a viewport cursor
+update. The script now also enables `qt.qpa.events=true` for the next phased
+capture.

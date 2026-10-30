@@ -86,6 +86,8 @@ Arquivos: crates/appkit/src/event.rs, cgevent.rs, nsevent.rs, application.rs, wi
 
 O diff instrumenta eventos SDL, criação de NSEvent, estado de mouse associado/relativo, coordenadas de janela e backing, janela alvo, evento corrente, hit-test, dispatch e retorno dos métodos. O identificador de trace permite correlacionar um movimento físico com a leitura posterior de CGGetLastMouseDelta. Também há tratamento de eco/ajuste de warp e rastreamento de janela/foco.
 
+The opt-in pointer diagnostic also records selected Objective-C sends made by the native Qt Cocoa plugin. Set `ROSEMARY_OBJC_TRACE_LOG` to the same ignored log path and list selectors in `ROSEMARY_OBJC_TRACE_SELECTORS`; the input capture script configures both. Each record includes monotonic elapsed time, thread, receiver, runtime class, method owner, selector, and resolved implementation address. It observes the ordinary and structure-return dispatch paths, reads no guest arguments, and leaves dispatch unchanged. This helps tell whether Qt's native view callback reaches the mouse handler after the cursor graphic stops moving.
+
 The Play cursor lag was traced to the no-button event path: after SDL updated the pointer position, the event pump discarded `mouseMoved:` unless the window opted in or a tracking area handled it. LMB movement used `mouseDragged:` and bypassed that gate. The compatibility fallback now forwards unbuttoned motion to the content view while preserving tracking-area delivery without duplicates. The user confirmed in Play that pointer position updates immediately without a button held.
 
 ### Duplicate text in Studio fields
@@ -139,3 +141,84 @@ retention mechanisms that may contribute to the observed memory growth.
 Implemented behavior and automated coverage are recorded in
 [upstream-imports.md](upstream-imports.md); the effect in Studio remains
 unconfirmed until the user repeats the bounded memory test.
+
+## Play pointer stops updating after camera release
+
+The user reports that unbuttoned pointer updates stop after releasing RMB in
+Play; holding either mouse button or scrolling updates the location. Waiting
+one second before moving does not recover it. The user clarified that this
+issue also occurred before the PR77–80 import, so the imported recentering code
+is not an established cause. No recentering behavior has been removed.
+
+The existing input trace omitted most associated, unbuttoned motion. The
+optional fourth patch extends the trace scope to that path when
+`ROSEMARY_INPUT_TRACE` is enabled, including SDL coordinates, mapped pointer,
+relative/associated/recentering state, active tracking-area count and dispatch.
+`scripts/trace-studio-input.sh` enables the existing trace variables for one
+user-driven session and stores its output under ignored `logs/`. It does not
+enable memory tracing or change default mouse behavior. Root cause and manual
+validation remain pending a reproduction capture.
+
+Follow-up capture: the user clarified that only the Play cursor graphic freezes;
+the scene continues animating. After RMB release, SDL and mapped positions
+continue changing with association enabled and relative/recentering disabled.
+Tracking callbacks reach native `QNSViewMouseMoveHelper` and return normally.
+This rules out the proposed stuck-relative-mode sequence in that capture, but
+does not establish whether Qt forwards the callback to Studio. The installed
+Qt5 binary contains the `mouseMovedImpl:` child-window filter; a Qt6
+`s_windowUnderMouse` explanation is not applicable. Multiple tracking callbacks
+alone do not prove incorrect delivery. The wrapper now also forwards Qt's own
+mouse/window logging categories into the guest to inspect the next boundary.
+No behavioral fix is claimed or installed.
+
+The first capture therefore narrows the remaining fault to the Qt acceptance or
+forwarding boundary rather than SDL delivery, pointer mapping, relative mode,
+or native tracking callback dispatch. A retry that enabled Qt's own logging
+aborted before Play with code 134 when `description` was sent to `QNSView`;
+this is a separate compatibility gap that must be isolated before collecting
+the Qt boundary evidence.
+
+## NSObject description compatibility
+
+The Qt-logging startup abort exposed missing NSObject descriptions. A dedicated
+fifth patch now implements instance/class `description` and `debugDescription`
+in Foundation with inherited dispatch, autoreleased NSString ownership and
+four regression tests. See [nsobject-description.md](nsobject-description.md)
+for the isolated implementation and upstream preparation notes. This fixes
+the missing API in source; the user's graphical startup and cursor capture
+remain pending. The cursor-visual issue itself is not claimed fixed.
+
+## NSString composed-character compatibility
+
+The user desktop retry advanced past NSObject descriptions and exposed
+`rangeOfComposedCharacterSequenceAtIndex:` on `__NSCFString`. The isolated
+sixth patch now implements extended grapheme ranges using UTF-16 indexes,
+with surrogate/emoji/combining-mark and bounds regressions. See
+[nsstring-composed-characters.md](nsstring-composed-characters.md). The new
+the user later completed a desktop retest with the recorded patch 0006 binary;
+the launch exited with code 0 and reproduced the Play cursor visual issue. Both
+missing Foundation selectors now pass in the desktop run; the cursor behavior
+remains unresolved.
+
+Patch 0007 extends the opt-in input diagnostics with selected Objective-C
+message lookup records for ordinary and structure-return dispatch. The next
+capture uses the seven-patch build and configured selectors to locate the
+boundary after SDL/AppKit motion reaches native Qt.
+
+The follow-up probe tested `RBX_MOUSE_MOVE_EVENTS_FIX_ENABLED=1` through a
+valid Fish invocation, but the cursor graphic still froze after RMB release.
+That flag is therefore not a sufficient fix. `scripts/trace-studio-cursor.sh`
+narrows the next capture to Qt mouse/window categories and
+`cursorUpdate:`/`setCursor:` selector records. Missing records remain
+ambiguous because filtering or selector choice can produce the same result.
+
+The focused capture recorded 342 native `cursorUpdate:` and 408
+`setCursor:` calls, all on QNSView, over 42.36 seconds. The run exited 0, had
+11 startup Qt window records, no Qt mouse-category records, and no exact RMB
+release markers. This confirms native cursor callbacks were observed without
+proving QWidget delivery or Studio's rendered cursor update. The user then
+clarified that this is the wrong boundary: the OS cursor moves normally and
+only Studio's software cursor graphic freezes. Do not request another run of
+this native probe. Candidate direct boundaries found in the Studio binary are
+`RBX::MouseService::CursorCache`, `MouseIcon`, cursor textures, and
+`RobloxViewStudio::updateNativeMouseIconVisibility`.

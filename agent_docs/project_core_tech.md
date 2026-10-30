@@ -1,5 +1,14 @@
 # Project core technology
 
+Explorer interaction depends on more than the text pasteboard bridge:
+NSTableView row selection and AppKit drag/drop protocol forwarding are
+separate compatibility boundaries. The current investigation found old-path
+drag registration as a no-op and no native dragging-session/drop callbacks;
+these findings are provisional until checked against the v0.3.0 materialized
+source. Workspace shortcuts must be traced from SDL key mapping through
+AppKit key-equivalent dispatch to Studio because F-key mappings are present in
+the source.
+
 Rosemary is a Rust 2024 workspace that loads macOS Mach-O applications through
 native or Microlift-backed execution and supplies Darwin, Objective-C,
 CoreFoundation, AppKit, Metal, and SDL compatibility layers.
@@ -33,11 +42,11 @@ and Objective-C dispatch.
 
 The compatibility diff includes AppKit window/view/input behavior,
 CoreFoundation lifetime handling, Objective-C autorelease safety, keyboard/font
-compatibility, and diagnostic logging. `patches/0001-citric-runtime-compat.patch`
-is now the authoritative source representation; Rosemary is fetched into a
-temporary checkout only for applying and building it.
+compatibility, and diagnostic logging. `patches/0008-rosemary-v0.3.0-overlay.patch`
+is now the authoritative source representation; Rosemary v0.3.0 is fetched
+into a temporary checkout only for applying and building it.
 
-The current canonical patch is `patches/0001-citric-runtime-compat.patch`,
+The current canonical patch is `patches/0008-rosemary-v0.3.0-overlay.patch`,
 applied to the pinned base in `patches/base-commit` and ordered by
 `patches/series`. The older patch files remain historical snapshots. Citric's
 GTK 4 Python launcher delegates execution to `scripts/run-studio.sh`; it does
@@ -48,7 +57,7 @@ identifier/version/build, executable, and Intel Mach-O slice, and installs it
 under the ignored `app/full/RobloxStudio.app` path with a replacement
 confirmation.
 
-`patches/0003-upstream-pr77-80.patch` is the reconciled import layer for the
+`patches/0003-upstream-pr77-80.patch` is the historical reconciled import layer for the
 upstream Rosemary PR 77–80 snapshots. It adds sharded runtime references and
 caches, per-turn autorelease pools, drawable/layer retirement, input and
 locale behavior, and selected Qt/AppKit/Foundation APIs while retaining
@@ -80,6 +89,17 @@ Shift and left Alt are preserved, while right Alt/AltGr passes through so
 keyboard layouts can produce alternate characters. The mapping is opt-out via
 `ROSEMARY_MENU_CTRL=0` and is implemented generically rather than as a list of
 Studio commands.
+
+The optional `patches/0004-hover-input-diagnostics.patch` extends input
+telemetry for a reported Play cursor freeze after releasing RMB. When
+`ROSEMARY_INPUT_TRACE=1` is set, associated unbuttoned SDL motion logs its
+coordinates, mapped pointer, association/recentring state, tracking-area
+count, and dispatch path; the wrapper also forwards Qt mouse/window logging
+categories. The analyzed capture shows SDL and native tracking continuing
+after release, leaving Qt acceptance/forwarding unresolved. A logging retry
+currently reaches an unimplemented `QNSView description` selector and aborts
+before Play, so that compatibility gap must be isolated before the next
+capture. The instrumentation is opt-in and does not alter the event path.
 
 Before Studio starts, `scripts/patch_plugin_compatibility.py` scans cached
 `Plugin.rbxm` models across every plugin ID and version in InstalledPlugins.
@@ -208,3 +228,43 @@ concerns independently reviewable. Both branches target current Rosemary main
 and are pushed to the user's fork. Official PR #42 was
 left open and untouched for the user to close manually before creating the two
 replacement PRs.
+
+Foundation also owns the isolated NSObject description patch 0005 and
+`NSString.rangeOfComposedCharacterSequenceAtIndex:` patch 0006. The latter
+segments UTF-16 indices into extended grapheme ranges using the pinned
+`unicode-segmentation` crate and preserves the existing out-of-range exception
+path. Automated tests pass; the latest desktop retry completed with the patch
+0006 binary and passed both selectors. The cursor-only visual freeze remains
+an independent unresolved input-path issue.
+
+Patch 0007 adds opt-in Objective-C selected-message diagnostics to the native
+dispatch lookup. It records selector metadata and resolved implementations for
+ordinary and structure-return lookups without inspecting arguments or altering
+dispatch. The input wrapper controls the selector list and writes to the
+ignored per-session trace.
+
+The focused cursor probe in `scripts/trace-studio-cursor.sh` forwards the
+existing input environment and enables only Qt mouse/window categories plus
+Objective-C `cursorUpdate:` and `setCursor:` records. It is mode-0600 and
+opt-in; missing records are diagnostically ambiguous and do not change input
+behavior.
+
+The cursor probe additionally enables `qt.qpa.events=true` and records only
+the configured Qt categories plus native cursor selectors. This is explicitly
+not a trace of Studio's software-rendered viewport cursor: a native QNSView
+record only proves Objective-C dispatch. Local inspection identified
+`RBX::MouseService::CursorCache`, `MouseIcon` state, cursor texture resources,
+and `RobloxViewStudio::updateNativeMouseIconVisibility` as candidate direct
+boundaries for the next diagnostic.
+
+Static inspection of the bundled Qt 5 Cocoa plugin narrows the platform path:
+`QNSView(Mouse)::mouseMovedImpl:` validates the content view, calls
+`handleMouseEvent:`, and can separately update the native `NSCursor`.
+`handleMouseEvent:` converts the Cocoa event and invokes Qt's imported
+`QWindowSystemInterface::handleMouseEvent<DefaultDelivery>`. The optional
+`RBX_MOUSE_MOVE_EVENTS_FIX_ENABLED` setting belongs to tracking/event setup,
+while `RBX_MAC_CURSOR_FIX_ENABLED` controls the native cursor branch; neither
+is evidence that Studio's software cursor was redrawn. The focused
+`scripts/trace-studio-viewport-cursor.sh` probe traces this Qt handoff and
+`QCoreApplication::sendEvent` without claiming access to the stripped Studio
+engine's render state.

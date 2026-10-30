@@ -1,0 +1,66 @@
+diff --git a/crates/appkit/src/event.rs b/crates/appkit/src/event.rs
+index 156a521..217da7e 100644
+--- a/crates/appkit/src/event.rs
++++ b/crates/appkit/src/event.rs
+@@ -570,7 +570,8 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+         } => {
+             crate::cursor::mouse_moved();
+             let associated = crate::screen::mouse_is_associated();
+-            let _trace_scope = (buttons != 0 || !associated).then(InputTraceScope::begin);
++            let _trace_scope =
++                (buttons != 0 || !associated || input_trace_enabled()).then(InputTraceScope::begin);
+             let expected_echo = pending_warp_target();
+             let (dx, dy, warp_echo, adjusted_echo) = match take_warp_echo(x, y, dx, dy) {
+                 WarpEchoResult::None => (dx, dy, false, None),
+@@ -579,7 +580,12 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+                     (delta.0, delta.1, false, Some((target, Some(delta))))
+                 }
+             };
+-            if buttons != 0 || !associated || warp_echo || adjusted_echo.is_some() {
++            if input_trace_enabled()
++                || buttons != 0
++                || !associated
++                || warp_echo
++                || adjusted_echo.is_some()
++            {
+                 input_trace(&format!(
+                     "stage=warp_echo_check window_id={id} expected={expected_echo:?} event=({x:.3},{y:.3}) consumed={warp_echo} adjusted={adjusted_echo:?}"
+                 ));
+@@ -593,7 +599,7 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+             let warped = take_warp_delta();
+             let delta_scale = mouse_look_delta_scale(buttons, associated);
+             let (camera_dx, camera_dy) = camera_motion_delta(dx, dy, warped, delta_scale);
+-            if buttons != 0 || !associated {
++            if input_trace_enabled() || buttons != 0 || !associated {
+                 let previous = pointer_position();
+                 let relative = crate::window::sdl_windows()
+                     .into_iter()
+@@ -623,11 +629,12 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+             // pointer: on Wayland SDL reports the pointer relative to this event's
+             // window, which may differ from the one that sent the last event.
+             let (x, y) = track_pointer(id, x, y);
+-            if buttons != 0 || !associated {
++            if input_trace_enabled() || buttons != 0 || !associated {
+                 input_trace(&format!(
+-                    "stage=sdl_motion_mapped window_id={id} location_delivered=({x:.3},{y:.3}) frozen_pointer={:?} buttons={buttons:#x} associated={}",
++                    "stage=sdl_motion_mapped window_id={id} location_delivered=({x:.3},{y:.3}) frozen_pointer={:?} buttons={buttons:#x} associated={} recentring={}",
+                     pointer_position(),
+                     crate::screen::mouse_is_associated(),
++                    crate::screen::recentring(),
+                 ));
+             }
+             // SDL's position keeps integrating the deltas of a disassociated
+@@ -915,6 +922,13 @@ where
+         return;
+     }
+     let areas = crate::cursor::mouse_moved_areas(window);
++    if input_trace_enabled() {
++        input_trace(&format!(
++            "stage=unbuttoned_motion window_id={id} tracking_areas={} wants_mouse_moved={} location=({x:.3},{y:.3})",
++            areas.len(),
++            wants_mouse_moved(window),
++        ));
++    }
+     if !areas.is_empty() {
+         let point = location(window, x as f64, y as f64);
+         for area in &areas {

@@ -1,6 +1,64 @@
 # Project progress
 
+Active deployment: `software_cursor_source_trace_20261015`. The user has
+already reproduced the symptom visually: only Studio's software cursor inside
+the Play viewport freezes after RMB camera movement is released, while the OS
+cursor and scene remain responsive. The frame analyzer was discarded because
+it would measure the symptom without identifying its source. Static Qt Cocoa
+inspection confirms the AppKit event reaches `handleMouseEvent:` and the
+imported `QWindowSystemInterface::handleMouseEvent<DefaultDelivery>` path;
+the Studio renderer remains a stripped proprietary boundary. The untracked
+`scripts/trace-studio-viewport-cursor.sh` is prepared to trace those exact Qt
+handoff calls and `QCoreApplication::sendEvent`; syntax, whitespace, and
+import-symbol checks passed, but it has not been run. Next milestone: use that
+focused probe once, then inspect Qt receiver delivery and the Studio
+`MouseService`/software-cursor render boundary. No root cause or fix is known.
+
+No active deployment. The completed `explorer_input_diagnosis_20261015`
+deployment found three related user-facing failures: Explorer Cut/Paste does
+not work from the Edit menu or shortcuts, Explorer instance dragging produces
+no preview or move, and Edit workspace shortcuts such as F and 1–5 do not
+respond. The current installed binary is still Rosemary 0.2.3 while the
+source pin is v0.3.0 and has not been rebuilt. Old source inspection shows
+incomplete NSTableView selection and native drag/drop forwarding; shortcut
+mapping exists but its delivery path is unverified. Next milestone: compare
+the v0.3.0 overlay, implement only confirmed gaps, and validate with focused
+tests before another manual session.
+
+No active deployment. The completed `rosemary_v030_base_20261015` deployment
+updated `patches/base-commit` to official Rosemary v0.3.0 commit
+`91314d454fdb86e265228c0e43b53152fc5762ce` and reduced the active series to
+`patches/0008-rosemary-v0.3.0-overlay.patch`. The aggregate overlay applies
+cleanly to a fresh checkout of that commit and preserves Citric-specific
+compatibility and diagnostic changes. No v0.3.0 Rust test suite, binary build,
+or Studio run was performed; the next milestone is a clean offline build
+followed by bounded Studio validation. See `docs/upstream-imports.md` for
+reconciliation decisions and evidence.
+
 No active deployment. The latest completed deployment is
+`studio_software_cursor_trace_20261015`: the native Qt/QNSView cursor probe
+was rejected as the wrong diagnostic boundary after the user clarified that
+the OS cursor moves normally and only the cursor graphic drawn inside the Play
+viewport freezes. The latest short capture recorded native
+`cursorUpdate:` and `setCursor:` dispatch on QNSView, but no correlated Qt
+input.mouse records or exact RMB action markers. This proves native cursor
+callbacks were observed, while QWidget delivery and the rendered viewport
+cursor remain unresolved. The cursor investigation
+`hover_after_camera_20261015` remains unresolved. Only the Play cursor graphic
+freezes after RMB camera movement is released; the scene continues rendering,
+and SDL/mapped coordinates plus native tracking callbacks continue. This
+predates the PR77–80 import. Local binary inspection found candidate Studio
+software-cursor symbols/state (`RBX::MouseService::CursorCache`, `MouseIcon`,
+cursor textures, and `RobloxViewStudio::updateNativeMouseIconVisibility`), but
+no direct render-state trace has been implemented. The two startup gaps exposed by Qt logging
+(`NSObject` description and NSString composed-character range) have been
+implemented; the latest user run exited normally and reproduced the visual
+freeze. Patch 0007 and `scripts/trace-studio-cursor.sh` remain diagnostic-only
+and are insufficient for the software cursor. The next milestone is a direct
+trace of the viewport cursor/cache or render-state boundary, followed by one
+short user capture.
+
+The earlier completed deployment is
 `memory_stability_release_20261015`: the reconciled PR 77–80 import is present as
 `patches/0003-upstream-pr77-80.patch` after the existing two overlays, with the
 Rosemary v0.2.3 base still pinned. The imported runtime and compatibility

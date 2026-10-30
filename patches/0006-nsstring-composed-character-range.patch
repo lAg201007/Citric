@@ -1,0 +1,231 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index a8cc0bc..62c992d 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1368,6 +1368,7 @@ dependencies = [
+  "libc",
+  "objc",
+  "prefix",
++ "unicode-segmentation",
+  "ureq",
+ ]
+ 
+@@ -3243,6 +3244,12 @@ version = "1.0.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "d8d00a78170970967fdb83f9d49b92f959ab2bb829186b113e4f4604ad98e180"
+ 
++[[package]]
++name = "unicode-segmentation"
++version = "1.13.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
++
+ [[package]]
+ name = "untrusted"
+ version = "0.9.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index 413ecd7..bfee95c 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -38,6 +38,7 @@ metal_translate = { path = "crates/metal_translate" }
+ metal = { path = "crates/metal" }
+ ash = "0.38"
+ libc = "0.2"
++unicode-segmentation = "1.13.3"
+ half = "2.7.1"
+ libm = "0.2"
+ backtrace = "0.3"
+diff --git a/crates/foundation/Cargo.toml b/crates/foundation/Cargo.toml
+index 14bd12f..51fa37c 100644
+--- a/crates/foundation/Cargo.toml
++++ b/crates/foundation/Cargo.toml
+@@ -13,3 +13,4 @@ darwin.workspace = true
+ prefix.workspace = true
+ libc.workspace = true
+ ureq.workspace = true
++unicode-segmentation.workspace = true
+diff --git a/crates/foundation/src/string.rs b/crates/foundation/src/string.rs
+index dc71707..93cd1c1 100644
+--- a/crates/foundation/src/string.rs
++++ b/crates/foundation/src/string.rs
+@@ -153,6 +153,43 @@ fn unit_slice(units: &[u16], from: usize, to: usize) -> Id {
+     unsafe { api::CFAutorelease(s) as Id }
+ }
+ 
++/// Locate an extended grapheme cluster in NSString's UTF-16 coordinate space.
++/// Lossy decoding is used only for boundary analysis: each isolated surrogate
++/// becomes one replacement scalar, preserving the original UTF-16 offsets.
++/// The receiver's contents are never normalized or replaced.
++fn composed_character_range(units: &[u16], index: usize) -> Option<NSRange> {
++    use unicode_segmentation::UnicodeSegmentation;
++
++    if index >= units.len() {
++        return None;
++    }
++    let text = String::from_utf16_lossy(units);
++    let mut location = 0;
++    for grapheme in text.graphemes(true) {
++        let length = grapheme.encode_utf16().count();
++        if index < location + length {
++            return Some(NSRange { location, length });
++        }
++        location += length;
++    }
++    None
++}
++
++unsafe extern "C" fn range_of_composed_character_at_index(
++    receiver: Id,
++    _sel: Sel,
++    index: usize,
++) -> NSRange {
++    // SAFETY: the receiver is an NSString; all indexes count UTF-16 units.
++    let units = unsafe { units(receiver) };
++    composed_character_range(&units, index).unwrap_or_else(|| {
++        objc::fail!(
++            "-[NSString rangeOfComposedCharacterSequenceAtIndex:]: NSRangeException: index {index} outside length {}",
++            units.len(),
++        )
++    })
++}
++
+ unsafe extern "C" fn character_at_index(receiver: Id, _sel: Sel, index: usize) -> u16 {
+     // SAFETY: an `NSString`.
+     unsafe { units(receiver) }.get(index).copied().unwrap_or(0)
+@@ -1512,6 +1549,8 @@ pub(crate) fn install() {
+         "maximumLengthOfBytesUsingEncoding:" => length_of_bytes, c"Q24@0:8Q16";
+         "isEqualToString:" => is_equal_to_string, c"B24@0:8@16";
+         "characterAtIndex:" => character_at_index, c"S24@0:8Q16";
++        "rangeOfComposedCharacterSequenceAtIndex:" => range_of_composed_character_at_index,
++            c"{_NSRange=QQ}24@0:8Q16";
+         "getCharacters:range:" => get_characters_range, c"v40@0:8^S16{_NSRange=QQ}24";
+         "getCharacters:" => get_characters, c"v24@0:8^S16";
+         "description" => description, c"@16@0:8";
+@@ -1618,6 +1657,127 @@ pub(crate) fn install() {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn composed_ranges_cover_every_utf16_unit_of_extended_graphemes() {
++        // Include boundaries before and after the cluster to detect byte or
++        // Unicode-scalar offsets being mistaken for NSString's UTF-16 indexes.
++        for cluster in ["a", "e\u{301}", "😀", "👍🏽", "👩‍💻", "🇧🇷", "\r\n", "각"]
++        {
++            let text = format!("x{cluster}y");
++            let units: Vec<_> = text.encode_utf16().collect();
++            let width = cluster.encode_utf16().count();
++            assert_eq!(
++                composed_character_range(&units, 0),
++                Some(NSRange {
++                    location: 0,
++                    length: 1
++                })
++            );
++            for index in 1..=width {
++                assert_eq!(
++                    composed_character_range(&units, index),
++                    Some(NSRange {
++                        location: 1,
++                        length: width
++                    }),
++                    "{cluster:?}, UTF-16 index {index}"
++                );
++            }
++            assert_eq!(
++                composed_character_range(&units, width + 1),
++                Some(NSRange {
++                    location: width + 1,
++                    length: 1
++                })
++            );
++        }
++    }
++
++    #[test]
++    fn composed_ranges_reject_invalid_indices_and_preserve_unpaired_surrogate_offsets() {
++        assert_eq!(composed_character_range(&[], 0), None);
++        let units = [0xd800, b'a' as u16, 0xdc00, b'b' as u16];
++        for index in 0..units.len() {
++            assert_eq!(
++                composed_character_range(&units, index),
++                Some(NSRange {
++                    location: index,
++                    length: 1
++                })
++            );
++        }
++        assert_eq!(composed_character_range(&units, units.len()), None);
++        assert_eq!(composed_character_range(&units, usize::MAX), None);
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn composed_range_invalid_index_reports_range_exception() {
++        const CHILD: &str = "ROSEMARY_COMPOSED_RANGE_EXCEPTION_TEST";
++        if std::env::var_os(CHILD).is_some() {
++            // This subprocess deliberately exercises the Foundation fail path.
++            // Keep the expected abort from producing a core dump.
++            unsafe {
++                let limit = libc::rlimit {
++                    rlim_cur: 0,
++                    rlim_max: 0,
++                };
++                libc::setrlimit(libc::RLIMIT_CORE, &limit);
++            }
++            crate::bootstrap();
++            let object = from_str("a");
++            unsafe {
++                range_of_composed_character_at_index(
++                    object,
++                    objc::sel::get("rangeOfComposedCharacterSequenceAtIndex:"),
++                    1,
++                )
++            };
++            panic!("out-of-range access returned");
++        }
++        use std::os::unix::process::ExitStatusExt;
++        let output = std::process::Command::new(std::env::current_exe().unwrap())
++            .args([
++                "--exact",
++                "string::tests::composed_range_invalid_index_reports_range_exception",
++                "--nocapture",
++            ])
++            .env(CHILD, "1")
++            .output()
++            .expect("range-exception test subprocess");
++        assert_eq!(output.status.signal(), Some(libc::SIGABRT));
++        assert!(String::from_utf8_lossy(&output.stderr).contains("NSRangeException"));
++    }
++
++    #[test]
++    fn composed_range_selector_is_inherited_by_mutable_strings() {
++        crate::bootstrap();
++        let object =
++            corefoundation::string::from_utf16(&[b'x' as u16, 0xd83d, 0xde00, b'y' as u16]) as Id;
++        let send: unsafe extern "C" fn(Id, Sel, usize) -> NSRange =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let mutable = unsafe { mutable_copy(object, objc::sel::get("mutableCopy")) };
++        for receiver in [object, mutable] {
++            for index in [1, 2] {
++                assert_eq!(
++                    unsafe {
++                        send(
++                            receiver,
++                            objc::sel::get("rangeOfComposedCharacterSequenceAtIndex:"),
++                            index,
++                        )
++                    },
++                    NSRange {
++                        location: 1,
++                        length: 2
++                    },
++                );
++            }
++        }
++        objc::arc::release(mutable);
++        objc::arc::release(object);
++    }
++
+     #[test]
+     fn path_components_keep_the_root_and_a_trailing_slash() {
+         assert_eq!(path_components_of("/tmp/scratch"), ["/", "tmp", "scratch"]);

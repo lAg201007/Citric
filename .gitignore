@@ -7,6 +7,7 @@
 /app/full/RobloxStudio.app/
 /app/full/.citric-studio-*/
 /bin/rosemary
+/bin/rosemary-unpatched
 /downloads/darwin-cache/
 /logs/
 *.core

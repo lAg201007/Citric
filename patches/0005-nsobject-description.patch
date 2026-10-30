@@ -1,0 +1,159 @@
+diff --git a/crates/foundation/src/runtime.rs b/crates/foundation/src/runtime.rs
+index 68fc002..870d939 100644
+--- a/crates/foundation/src/runtime.rs
++++ b/crates/foundation/src/runtime.rs
+@@ -3,7 +3,7 @@
+ use objc::object::Id;
+ use objc::sel::Sel;
+ 
+-use crate::define::methods;
++use crate::define::{class_methods, methods};
+ 
+ exports::exports! {
+     functions {
+@@ -167,10 +167,44 @@ unsafe extern "C" fn class_name(receiver: Id, _sel: Sel) -> Id {
+     unsafe { corefoundation::api::CFAutorelease(string as corefoundation::base::CFTypeRef) as Id }
+ }
+ 
++/// NSObject's instance description includes the dynamic class and identity.
++/// Build a Foundation string here instead of making the Objective-C runtime
++/// depend on Foundation or returning a borrowed buffer to the guest.
++unsafe extern "C" fn object_description(receiver: Id, _sel: Sel) -> Id {
++    // SAFETY: a message receiver is a live object.
++    let name = unsafe { objc::object::class_of(receiver) }
++        .map_or("NSObject", objc::class::Class::name_str);
++    autoreleased(&format!("<{name}: {receiver:p}>"))
++}
++
++/// NSObject's class description is the receiving class's name, not its
++/// metaclass's address and not an instance-style description.
++unsafe extern "C" fn class_description(receiver: Id, _sel: Sel) -> Id {
++    // SAFETY: a class-method receiver is a registered class object.
++    let name = unsafe { objc::class::from_ptr(receiver.cast()) }
++        .map_or("NSObject", objc::class::Class::name_str);
++    autoreleased(name)
++}
++
++/// The default debug description delegates to the receiver's description so
++/// subclass overrides also apply when the debugger or a logger asks for it.
++unsafe extern "C" fn debug_description(receiver: Id, _sel: Sel) -> Id {
++    // SAFETY: both the instance and class selectors return an NSString object.
++    let send: unsafe extern "C" fn(Id, Sel) -> Id =
++        unsafe { std::mem::transmute(objc::msg::entry()) };
++    unsafe { send(receiver, objc::sel::get("description")) }
++}
++
+ pub(crate) fn install() {
+     let nsobject = objc::class::lookup(c"NSObject").expect("the runtime's own NSObject");
+     methods!(nsobject, {
+         "className" => class_name, c"@16@0:8";
++        "description" => object_description, c"@16@0:8";
++        "debugDescription" => debug_description, c"@16@0:8";
++    });
++    class_methods!(nsobject, {
++        "description" => class_description, c"@16@0:8";
++        "debugDescription" => debug_description, c"@16@0:8";
+     });
+ }
+ 
+@@ -178,6 +212,100 @@ pub(crate) fn install() {
+ mod tests {
+     use super::*;
+ 
++    unsafe fn send_text(receiver: Id, selector: &str) -> Id {
++        // SAFETY: the tests use only the no-argument object-return selectors.
++        let send: unsafe extern "C" fn(Id, Sel) -> Id =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        unsafe { send(receiver, objc::sel::get(selector)) }
++    }
++
++    #[test]
++    fn inherited_descriptions_return_strings_without_retaining_the_receiver() {
++        crate::bootstrap();
++        let parent = objc::class::lookup(c"NSObject").unwrap();
++        let class = objc::class::allocate_pair(Some(parent), c"InheritedDescriptionProbe", 0)
++            .expect("unique subclass");
++        objc::class::register_pair(class);
++        let receiver = objc::object::create_instance(class, 0);
++        let count = objc::arc::retain_count(receiver);
++        let pool = objc::arc::pool_push();
++        for selector in ["description", "debugDescription"] {
++            let result = unsafe { send_text(receiver, selector) };
++            assert_eq!(
++                unsafe { crate::string::bytes(result) },
++                format!("<InheritedDescriptionProbe: {receiver:p}>").as_bytes(),
++            );
++        }
++        assert_eq!(objc::arc::retain_count(receiver), count);
++        objc::arc::pool_pop(pool);
++        objc::arc::release(receiver);
++    }
++
++    #[test]
++    fn class_descriptions_name_the_receiving_subclass() {
++        crate::bootstrap();
++        let pool = objc::arc::pool_push();
++        for name in [c"NSObject", c"NSString"] {
++            let class = objc::class::lookup(name).unwrap();
++            for selector in ["description", "debugDescription"] {
++                let result = unsafe { send_text(objc::class::ptr(class) as Id, selector) };
++                assert_eq!(unsafe { crate::string::bytes(result) }, name.to_bytes());
++            }
++        }
++        objc::arc::pool_pop(pool);
++    }
++
++    unsafe extern "C" fn custom_description(_receiver: Id, _sel: Sel) -> Id {
++        autoreleased("custom description")
++    }
++
++    #[test]
++    fn debug_descriptions_honor_instance_and_class_overrides() {
++        crate::bootstrap();
++        let class = objc::class::allocate_pair(
++            Some(objc::class::lookup(c"NSObject").unwrap()),
++            c"CustomDescriptionProbe",
++            0,
++        )
++        .expect("unique subclass");
++        for target in [class, class.metaclass()] {
++            target.add_method(
++                objc::sel::get("description"),
++                custom_description as *const std::ffi::c_void,
++                c"@16@0:8",
++            );
++        }
++        objc::class::register_pair(class);
++        let object = objc::object::create_instance(class, 0);
++        let pool = objc::arc::pool_push();
++        for receiver in [object, objc::class::ptr(class) as Id] {
++            let result = unsafe { send_text(receiver, "debugDescription") };
++            assert_eq!(
++                unsafe { crate::string::bytes(result) },
++                b"custom description"
++            );
++        }
++        objc::arc::pool_pop(pool);
++        objc::arc::release(object);
++    }
++
++    #[test]
++    fn description_strings_can_be_retained_past_the_autorelease_pool() {
++        crate::bootstrap();
++        let object = objc::object::create_instance(objc::class::lookup(c"NSObject").unwrap(), 0);
++        let pool = objc::arc::pool_push();
++        let description = unsafe { send_text(object, "description") };
++        objc::arc::retain(description);
++        objc::arc::pool_pop(pool);
++        assert_eq!(objc::arc::retain_count(description), 1);
++        assert_eq!(
++            unsafe { crate::string::bytes(description) },
++            format!("<NSObject: {object:p}>").as_bytes(),
++        );
++        objc::arc::release(description);
++        objc::arc::release(object);
++    }
++
+     #[test]
+     fn hfs_type_preserves_four_character_byte_order() {
+         crate::bootstrap();

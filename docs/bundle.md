@@ -24,12 +24,13 @@ O manifesto usa caminhos relativos à raiz do repositório, então um comando da
 
 ## Rosemary
 
-- Version: Rosemary v0.2.3, pinned to commit `91e2de231604237ed5faa81513ba441d7b0a79bb`.
+- Current source pin: Rosemary v0.3.0, commit `91314d454fdb86e265228c0e43b53152fc5762ce`, with the reconciled overlay in `patches/0008-rosemary-v0.3.0-overlay.patch`. This source update has not rebuilt `bin/rosemary`; the hashes and runtime notes below describe previous v0.2.3 builds.
+- Last recorded local binary: Rosemary v0.2.3, pinned to commit `91e2de231604237ed5faa81513ba441d7b0a79bb`.
 - Binary: `bin/rosemary` (ELF x86_64).
 - SHA-256: `7c808dc50464a6351dac759f83460fd2a6029e223d8f4ca74a83a331ca1e6ce1`.
 - ELF build ID: `dba17823c35df6931107e8f1543fc597798e113e`.
 - The latest portal-enabled local Release build is v0.2.3 with SHA-256 `9021b8d129adc78a755a6fbff25fdbec3a152f51ab41b5ab3bee857f914ec3c6` and ELF build ID `a99a35bb9f8857b26eaa5f7d0a09de79b25b5b42`.
-- The canonical Citric overlay applies to that exact upstream commit. Rosemary v0.2.3 already includes Citric's merged `systemFontSizeForControlSize:`, `NSButtonCell` background-style, and Num Lock changes; these implementations are omitted from Citric's patch.
+- That earlier Citric overlay applied to the exact v0.2.3 commit. Rosemary v0.2.3 already included Citric's merged `systemFontSizeForControlSize:`, `NSButtonCell` background-style, and Num Lock changes; those implementations were omitted from its patch.
 - The local binary enables `ROSEMARY_PERF_TRACE` through the launcher by default. Trace records include elapsed timestamps, deduplicate display-link schedule messages, and split window composition into smaller stages. The latest image-copy path copies opaque pixels directly, skips transparent pixels and transparent rows, and blends partial-alpha pixels. Damage logs retain the Core Animation setter call site. The file chooser uses theme-aware field backgrounds so its entries remain readable in dark appearance. The user restarted an earlier build through Citric and confirmed that the visible stutter disappeared during a 10-second empty-Baseplate Play test; the trace still records periodic full-window damage.
 - The source is fetched from the pinned upstream commit and Citric patch series by `scripts/build-studio.sh`; source files are not stored in the current working tree.
 - This build includes the chooser search field, hidden-file toggle, keyboard shortcuts, filtered navigation, generic file-type icons, and the Linux Control-to-Command mapping for macOS Studio shortcuts. Shift and left Alt are preserved, and right Alt/AltGr passes through unchanged. Studio shortcut retesting on this installed v0.2.3 binary is pending.
@@ -57,9 +58,9 @@ At launcher startup, Citric checks Roblox's published Mac Studio version against
 Citric does not currently receive or use a per-release SHA-256 checksum from the version-check metadata. The original pinned build keeps its recorded checksum; later builds use the official HTTPS release metadata plus archive and bundle validation. This verifies that the downloaded archive matches the advertised Studio bundle identity and architecture; it is not an automated runtime compatibility test against every Rosemary release. Citric checks for updates automatically at launcher startup but never downloads or replaces Studio until the user clicks the update button. The checked-in bundle manifest describes the local snapshot at the time it was recorded; installing a different bundle changes that local snapshot and requires refreshing the manifest before using it to verify the replacement.
 
 
-## PR 77–80 integration build
+## Previous PR 77–80 integration build on v0.2.3
 
-The current local runtime remains Rosemary v0.2.3 with reconciled Citric ports
+The last recorded local runtime was Rosemary v0.2.3 with reconciled Citric ports
 of PRs 77–80. The locked offline Release build installed `bin/rosemary` with
 SHA-256 `07072320b4441b4ef0c9834f3de9e4bdac7e43ebc93e65ce1d94c71b18aaa7ce`
 and ELF build ID `f3d8383bcda1f2bfca16fc355ce29263811b786e`. The previous local

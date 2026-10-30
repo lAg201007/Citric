@@ -2,7 +2,21 @@
 set -u
 umask 077
 EXPERIMENT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-if [[ -z "${ROSEMARY_BIN:-}" ]]; then
+PATCH_MODE=enabled
+CITRIC_ROSEMARY_NO_PATCHES="${CITRIC_ROSEMARY_NO_PATCHES:-0}"
+case "$CITRIC_ROSEMARY_NO_PATCHES" in
+    0) ;;
+    1)
+        PATCH_MODE=disabled
+        ROSEMARY_BIN="$EXPERIMENT_DIR/bin/rosemary-unpatched"
+        if [[ ! -x "$ROSEMARY_BIN" ]]; then
+            printf 'Unpatched Rosemary not found. Build it with CITRIC_ROSEMARY_NO_PATCHES=1 ./scripts/build-studio.sh, then run again with the same variable.\n' >&2
+            exit 127
+        fi
+        ;;
+    *) printf 'CITRIC_ROSEMARY_NO_PATCHES must be 0 or 1.\n' >&2; exit 2 ;;
+esac
+if [[ "$CITRIC_ROSEMARY_NO_PATCHES" == 0 && -z "${ROSEMARY_BIN:-}" ]]; then
     BUNDLED_ROSEMARY="$EXPERIMENT_DIR/bin/rosemary"
     BUILT_ROSEMARY="$EXPERIMENT_DIR/target/release/rosemary"
     if [[ -x "$BUNDLED_ROSEMARY" ]]; then
@@ -170,9 +184,13 @@ fi
 if [[ -n "${STUDIO_TIMEOUT:-}" ]]; then
     RUN_COMMAND=(timeout --signal=TERM --kill-after=10s "$STUDIO_TIMEOUT" "${RUN_COMMAND[@]}")
 fi
+PATCH_MODE=enabled
+if [[ "$CITRIC_ROSEMARY_NO_PATCHES" == 1 ]]; then
+    PATCH_MODE=disabled
+fi
 {
     printf 'date='; date --iso-8601=seconds
-    printf 'prefix=%s\napp=%s\nrosemary=%s\n' "$ROSEMARY_PREFIX" "$STUDIO_APP" "$ROSEMARY_BIN"
+    printf 'prefix=%s\napp=%s\nrosemary=%s\nrosemary_citric_patches=%s\n' "$ROSEMARY_PREFIX" "$STUDIO_APP" "$ROSEMARY_BIN" "$PATCH_MODE"
     printf 'rosemary_sha256=%s\n' "$(sha256sum -- "$ROSEMARY_BIN" | cut -d ' ' -f 1)"
     printf 'sdl_video_driver=%s\nperf_trace=%s\n' "${SDL_VIDEODRIVER:-auto}" "$ROSEMARY_PERF_TRACE"
     printf 'locale_source_lc_all=%s\nlocale_source_lc_numeric=%s\n' "$SOURCE_LC_ALL" "$SOURCE_LC_NUMERIC"

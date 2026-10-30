@@ -292,3 +292,106 @@ of inherited guest settings, both opt-in modes, and successive explicit runs.
 
 Final opt-in diagnostics verification: all 37 Python tests passed, shell syntax
 validation passed, and all three patches applied cleanly to the pinned base.
+
+## Pointer-release diagnostic capture
+
+The fourth patch adds opt-in logging for associated unbuttoned motion, which
+was absent from most previous input traces. All 16 AppKit event tests passed,
+including hover delivery without window opt-in; Rust formatting and source
+whitespace checks passed. All four patches apply to the pinned base and
+reproduce the tested event source. Shell syntax validation passed for
+`scripts/trace-studio-input.sh`. These checks verify the instrumentation, not a
+fix for the user's pointer-release report. A short user-driven reproduction
+is required to distinguish SDL delivery, pointer mapping, and tracking dispatch.
+
+The diagnostic Release build completed and was atomically installed locally.
+SHA-256: `2ea87f25499de085732376b8abfaecd0cd5976cdd861bc8acbde912a39bc8bed`.
+ELF build ID: `863ad2f23566779e8995fe70aee8ad5d6c7c0b81`.
+This supersedes the previous local executable for input tracing only; the
+memory-lifetime fixes remain intact. No commit or push is authorized for this
+new diagnostic-only change until separately requested.
+
+The first input capture completed with launcher exit code 0 and confirmed that
+SDL motion, pointer mapping, and native tracking-callback dispatch continue
+after RMB release. The user reports a cursor-only visual freeze. A temporary
+wrapper fixture verified the added guest-side Qt logging rules, preservation
+of unrelated guest environment entries and launch arguments, no implicit
+memory tracing, and mode 0600 for the ignored input log. Shell syntax passed.
+Native Qt mouse-event acceptance still needs the next short user capture.
+
+The analyzed capture showed continued SDL and native tracking delivery after
+RMB release while the user saw only the cursor graphic freeze. The requested
+Qt logging retry did not reach Play: it exited with code 134 after an
+unrecognized `description` selector was sent to `QNSView`. No pointer behavior
+fix has been validated.
+
+## NSObject descriptions
+
+The isolated fifth patch passed all 147 Foundation unit tests and 20 integration
+tests, including four new inheritance/override/ownership regressions. Formatting,
+source whitespace and full five-patch application passed. The Release build was
+installed with SHA-256
+`bead6f7816af8fc4b530f30b7bc4b074acd56d114c0f49343cf64f367a60c1f2`
+and ELF build ID `5d1a991563ca214ef7b9bbe366d39da3f5310cea`.
+An automated graphical smoke attempt aborted because the tool environment had
+no available screens, not because a description selector was missing. It does
+not replace the pending user desktop validation. Detailed API and contribution
+notes are in [nsobject-description.md](nsobject-description.md).
+
+## NSString composed-character range
+
+The second Qt-logging desktop retry confirmed that NSObject descriptions no
+longer block startup, then aborted on the missing composed-character selector.
+The isolated sixth patch passed all 151 Foundation unit tests and 20 integration
+tests. Four new regressions cover Unicode grapheme/UTF-16 boundaries, unpaired
+surrogates, mutable/immutable dispatch and the NSRangeException failure path.
+The unrelated tempfile lockfile edge was restored; a locked test and Release
+build still passed. Formatting, source whitespace and six-patch application
+passed, including exact reproduction of the tested source and lockfile.
+Installed SHA-256:
+`4166d57a43da9f92c8429f8169b9787c25315d623a998330d69c00f4dc2fdbdc`.
+The user subsequently launched this exact build through the input tracing
+script; the run exited with code 0 and reproduced the cursor-only visual issue
+in Play. Both missing Foundation selectors therefore passed in the desktop
+run. No cursor behavior fix is claimed.
+
+## Objective-C pointer dispatch trace
+
+Added an opt-in trace in the Objective-C message lookup used by native Qt Cocoa
+calls. It records only configured selectors and includes monotonic time, thread,
+receiver, runtime class, method owner, and resolved IMP. The logger observes
+both ordinary and structure-return lookup paths, reuses the same file opened by
+the input wrapper, and does not inspect message arguments or alter the selected
+implementation. A child-process regression test verifies selector filtering,
+method metadata, and the recorded call; all 36 Objective-C unit tests pass.
+
+The user's latest run on the six-patch build completed with exit code 0 and
+reproduced the cursor-only freeze. The Qt message categories produced no mouse
+event records during Play. Patch 0007 now adds the native selector trace to the
+seven-patch build; desktop validation of that trace remains pending. The known
+tracking callbacks and SDL coordinates continuing after RMB release do not by
+themselves identify where Qt stops updating the cursor graphic.
+
+## Focused Qt cursor-delivery probe
+
+The user tested `RBX_MOUSE_MOVE_EVENTS_FIX_ENABLED=1` with a valid Fish
+invocation and confirmed that the cursor graphic still freezes after RMB
+release. This rules out that flag as a sufficient fix, but does not identify
+the downstream consumer. `scripts/trace-studio-cursor.sh` was added as an
+untracked, brief capture path. It records only Qt mouse/window categories and
+Objective-C `cursorUpdate:`/`setCursor:` dispatch, preserves unrelated guest
+environment values, and writes mode-0600 output. Shell syntax, forwarding,
+and permissions fixtures passed. A user-run capture is pending; no record is
+not by itself proof that the callback never executed.
+
+The first focused capture produced 342 `cursorUpdate:` and 408 `setCursor:`
+records, all with QNSView as receiver/runtime class, over a 42.36-second
+Objective-C trace span. Its associated run exited with code 0 and contained 11
+startup `qt.qpa.window` records but zero `qt.qpa.input.mouse` records. No exact
+RMB-release markers were present, so the result proves native cursor callbacks
+were observed but does not establish QWidget delivery or viewport rendering.
+The user clarified that native cursor motion is already normal and that only
+the software cursor drawn in the Studio viewport freezes. This probe is
+therefore insufficient and must not be repeated. The next diagnostic must
+observe the Studio cursor/cache or render-state handoff directly; no behavioral
+fix is claimed.

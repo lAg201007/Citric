@@ -4,7 +4,7 @@ Snapshot date: October 15, 2026 (America/Recife).
 
 ## Ponto de partida
 
-Citric is pinned to the official Rosemary v0.2.3 release at commit `91e2de231604237ed5faa81513ba441d7b0a79bb`. The canonical patch series applies to this exact upstream revision and carries Citric-only compatibility changes, including guest-PC attribution for the Play redraw trace. Rosemary v0.2.3 already contains Citric's merged `systemFontSizeForControlSize:`, `NSButtonCell` background-style, and Num Lock changes, so the overlay no longer duplicates them. `scripts/build-studio.sh` fetches the exact pinned revision, applies `patches/series` in a temporary source tree, and builds `bin/rosemary`. Citric’s current snapshot contains the launcher, scripts, documentation, and patches; prior Git history remains unchanged and still includes Rosemary source.
+Citric is now pinned to the official Rosemary v0.4.1 release at commit `21b2be4759aa1c711104fcb55486b6a4b621ad53`. The canonical `patches/0010-rosemary-v0.4.1-overlay.patch` rebases the former v0.3.0 overlay onto that release. Where v0.4.1 now ships an equivalent or newer implementation, the upstream version wins: `ROSEMARY_COMMAND_KEY` and edit chords, queued key and mouse events with text attached to key events, X11 pointer confinement and recentring, IOSurface compositing, Quartz paths on tiny-skia, NSGraphicsContext over a CGContext, NSButtonCell, `CFCopyDescription`, `CFUUIDCreateFromUUIDBytes`, character sets, `clonefile`/`renameatx_np`, `CCRandomGenerateBytes` and guest locale handling. Citric keeps the XDG portal/Chrome file panel (with upstream's `delegate` accessors added), `ROSEMARY_MENU_CTRL` Control-as-Command for every key (disabled when `ROSEMARY_COMMAND_KEY=ctrl`), the warp-echo queue, camera delta scaling, real `setContinuous:`/`sendActionOn:`, and the input/perf diagnostics. Citric's coreanimation perf tracing and exact-copy fast path were dropped in favour of upstream's compositor. `scripts/build-studio.sh` fetches the pinned revision and applies `patches/series`. The workspace compiles, tests included; Studio has not been retested on this base, so the installed-binary records below describe earlier builds.
 
 A solicitação original de execução no Linux está fora do repositório CaseSolved. Nenhum código, place ou asset do jogo CaseSolved foi copiado para Citric. O nome Citric foi escolhido pelo usuário para este novo repositório.
 
@@ -32,14 +32,13 @@ A solicitação original de execução no Linux está fora do repositório CaseS
 - O projeto grande foi usado em testes Edit. Play e execução completa de scripts ainda não têm validação estável e repetível nesta cópia.
 - Outros aborts de Objective-C e panic do runtime estão listados em docs/crashes.md.
 
-## Rosemary PR 77–80 integration
+## Previous Rosemary PR 77–80 integration on v0.2.3
 
-The local three-patch series now ports PRs 77–80 while keeping the v0.2.3
-base fixed. It adds per-turn autorelease pools, drawable/layer lifetime fixes,
-runtime and Metal heap improvements, input/locale behavior, and Qt compatibility
-APIs. Existing Citric portal/fallback chooser features and diagnostic work are
-preserved. See [upstream-imports.md](upstream-imports.md) for source revisions,
-reconciliation decisions, test results and subsequent Studio validation.
+The former three-patch series ported PRs 77–80 while keeping the v0.2.3
+base fixed. Rosemary v0.3.0 now includes the PR77 and PR78 runtime work; the
+current overlay keeps the remaining Citric changes and later imports. See
+[upstream-imports.md](upstream-imports.md) for source revisions, reconciliation
+decisions, historical test results and Studio validation.
 
 The user reports that the previous linear Play/Stop memory growth stopped after
 the import. Two short Play cycles completed with exit code 0, no process swap,
@@ -118,3 +117,7 @@ user confirmed that external Linux app to Script Editor, external Linux app to
 Explorer, and Explorer to Script Editor transfers all work after restarting
 with the updated Rosemary binary. The trace remains metadata-only and never
 records clipboard contents.
+
+- Logout in Studio on Rosemary v0.4.1 opened the "closing down other Studio" dialog and never completed. v0.4.1 registered every direct exec of a bundle executable as a running application, so Studio's crashpad handler (the same binary, spawned as a helper) showed up in `runningApplicationsWithBundleIdentifier:` as a second Studio. The overlay now defers `Launch::Direct` registration to `+[NSApplication sharedApplication]`, matching LaunchServices check-in on macOS; helpers that never create `NSApplication` are not listed. `appkit` compiles and the release build succeeded; user retest of logout is pending.
+- After the crashpad fix, logout reached `LoginController::logout` and then went idle: every thread was waiting, none was blocked in a call. Studio restarts itself on logout through `-[NSWorkspace openURLs:withApplicationAtURL:configuration:completionHandler:]` with an `NSWorkspaceOpenConfiguration`, and neither existed, so the class lookup returned nil and the completion handler never ran. Both are now implemented, along with `-openApplicationAtURL:configuration:completionHandler:`, on top of the v0.4.1 LaunchServices launch path: a new process takes the URLs as launch arguments, and a running instance gets them handed over. The completion handler runs on a global dispatch queue. The configuration keeps `createsNewApplicationInstance`, `arguments`, `environment` and the documented Boolean properties with Apple's defaults; `environment` is stored but not applied, and a launch that sets it logs that. A configuration unit test passes; user retest of logout is pending.
+- Root cause of the stuck logout and the endless "Loading Studio..." login page on the v0.4.1 base: both are `WKWebView` pages, and Rosemary v0.4 renders web views through WebKitGTK 6.0, which was not installed (`rosemary: webkit: web views will have no content: libwebkitgtk-6.0.so.4 is not installed` in the run log). The README now lists it as a runtime dependency. The `NSWorkspaceOpenConfiguration`, single `finishLaunching`, and kqueue `EV_CLEAR` wake regression test changes above remain correct on their own, but none of them was the cause. Login and logout retest after installing `webkitgtk-6.0` is pending.

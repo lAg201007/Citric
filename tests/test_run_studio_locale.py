@@ -240,6 +240,61 @@ class RunStudioLocaleTests(unittest.TestCase):
                 self.assertIn("memory_trace_detailed_vmas_requested=true\n", metadata)
                 self.assertTrue(marker.exists())
 
+    def test_no_patches_mode_requires_and_selects_the_separate_binary(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="citric-no-patches-") as temporary:
+            root = Path(temporary)
+            scripts, studio, patched = self._create_launch_fixture(root)
+            logs = root / "logs"
+            logs.mkdir()
+            unpatched = root / "bin" / "rosemary-unpatched"
+            unpatched.parent.mkdir()
+            unpatched.write_text("#!/bin/sh\nprintf 'unpatched binary selected\\n'\n", encoding="utf-8")
+            unpatched.chmod(0o755)
+            environment = self._launch_environment(root, studio, patched, "no-patches-test")
+            environment["CITRIC_ROSEMARY_NO_PATCHES"] = "1"
+
+            result = subprocess.run(
+                [str(scripts / "run-studio.sh")],
+                cwd=root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("unpatched binary selected", (logs / "no-patches-test.log").read_text())
+            metadata = (logs / "no-patches-test.meta").read_text()
+            self.assertIn(f"rosemary={unpatched}\n", metadata)
+            self.assertIn("rosemary_citric_patches=disabled\n", metadata)
+
+    def test_no_patches_mode_fails_instead_of_falling_back_to_patched_binary(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="citric-no-patches-missing-") as temporary:
+            root = Path(temporary)
+            scripts = root / "scripts"
+            scripts.mkdir()
+            shutil.copy2(ROOT / "scripts" / "run-studio.sh", scripts / "run-studio.sh")
+            patched = root / "bin" / "rosemary"
+            patched.parent.mkdir()
+            patched.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            patched.chmod(0o755)
+            environment = os.environ.copy()
+            environment.update({"HOME": str(root), "CITRIC_ROSEMARY_NO_PATCHES": "1"})
+
+            result = subprocess.run(
+                [str(scripts / "run-studio.sh")],
+                cwd=root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 127)
+            self.assertIn("Unpatched Rosemary not found", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

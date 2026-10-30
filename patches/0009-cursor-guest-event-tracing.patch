@@ -1,0 +1,62 @@
+diff --git a/crates/rosemary/src/trace.rs b/crates/rosemary/src/trace.rs
+index 55d53458..860301fb 100644
+--- a/crates/rosemary/src/trace.rs
++++ b/crates/rosemary/src/trace.rs
+@@ -49,6 +49,23 @@ pub fn leaving<T>(symbol: &str, ctx: &RegisterContext, result: &Result<T, crate:
+     }
+ }
+ 
++/// Report a selected call from one guest image into another.
++///
++/// These calls transfer directly back into guest code and do not pass through
++/// `abi::call_planned`, where ordinary import traces are emitted. Recording the
++/// target here lets a focused trace follow calls from a platform plugin into Qt.
++pub fn entering_guest(symbol: &str, target: u64, ctx: &RegisterContext, event_type: Option<u16>) {
++    eprintln!(
++        "rosemary: guest call [{:#x}] at {:#x} {symbol} -> {target:#x}({:#x}, {:#x}, {:#x}, {:#x}) event_type={event_type:?}",
++        thread_id(),
++        ctx.rip,
++        ctx.rdi,
++        ctx.rsi,
++        ctx.rdx,
++        ctx.rcx,
++    );
++}
++
+ /// This thread, as a number small enough to read across a log.
+ fn thread_id() -> u32 {
+     darwin::pthread::id()
+diff --git a/crates/rosemary/src/vm.rs b/crates/rosemary/src/vm.rs
+index 574cf4a0..af1456e1 100644
+--- a/crates/rosemary/src/vm.rs
++++ b/crates/rosemary/src/vm.rs
+@@ -1171,6 +1171,29 @@ impl Vm {
+         // An import that resolved into another **guest** image, which happens
+         // as soon as one exists.
+         if plan.resolves_to_guest {
++            if crate::trace::watching(&site.symbol) {
++                let symbol = site.symbol.trim_start_matches('_');
++                let event_type = if symbol == "ZN16QCoreApplication9sendEventEP7QObjectP6QEvent" {
++                    // Qt 5's QEvent stores its private pointer before the 16-bit
++                    // type field. Read only that field so sendEvent tracing can
++                    // ignore the rest of Qt's high-volume event traffic.
++                    let Some(type_address) = ctx.rsi.checked_add(8) else {
++                        return self.transfer_to_guest(site.resolved, ctx);
++                    };
++                    let mut raw_type = [0u8; 2];
++                    if self.view.read(type_address, &mut raw_type).is_err() {
++                        return self.transfer_to_guest(site.resolved, ctx);
++                    }
++                    let event_type = u16::from_ne_bytes(raw_type);
++                    if !(2..=5).contains(&event_type) {
++                        return self.transfer_to_guest(site.resolved, ctx);
++                    }
++                    Some(event_type)
++                } else {
++                    None
++                };
++                crate::trace::entering_guest(&site.symbol, site.resolved, ctx, event_type);
++            }
+             return self.transfer_to_guest(site.resolved, ctx);
+         }
+         let mut mem = &self.view;

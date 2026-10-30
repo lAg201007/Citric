@@ -1,5 +1,381 @@
 # Latest session work
 
+Deployment: `software_cursor_source_trace_20261015`
+
+State: active and pending one focused user run; source diagnosis is not complete.
+The user's visual report is sufficient evidence of the symptom: after releasing
+RMB camera movement, only the cursor graphic rendered inside Studio's Play
+viewport freezes; the native OS cursor and the rest of the scene continue to
+update. No frame analyzer or video capture is part of this investigation.
+
+Verified source evidence: static inspection of the bundled Qt 5
+`libqcocoa.dylib` shows `-[QNSView(Mouse) mouseMovedImpl:]` validating the
+content view/child window, calling `handleMouseEvent:`, and optionally setting
+the native `NSCursor`. `handleMouseEvent:` converts the Cocoa event and calls
+the imported `QWindowSystemInterface::handleMouseEvent<DefaultDelivery>` path.
+This confirms the AppKit-to-Qt handoff but does not reach Studio's proprietary
+software-cursor renderer. The existing input trace also showed mapped motion
+continuing after RMB release; absent `qt.qpa.input.mouse` records remain
+ambiguous and are not treated as proof of non-delivery.
+
+Diagnostic preparation: untracked `scripts/trace-studio-viewport-cursor.sh`
+sets `ROSEMARY_TRACE_CALL` for the exact Qt mouse-event imports and
+`QCoreApplication::sendEvent`, correlates RMB and QNSView handlers, writes a
+private mode-0600 event trace, and runs the existing Studio launcher. Shell
+syntax, whitespace, and symbol-import checks passed. The script has not been
+run, no new capture exists, and no code fix, commit, or push was made.
+
+Limit and next entry point: the focused trace can establish Qt QPA entry and
+event-receiver delivery, but the stripped Studio Mach-O provides no debug
+symbols for the engine's software cursor state. Run this single targeted probe
+only if needed, then inspect the handoff around RMB release and continue toward
+`RBX::MouseService::CursorCache`/`MouseIcon` or the software-cursor render path.
+Preserve the existing user changes and keep diagnostics uncommitted.
+
+Token report for `software_cursor_source_trace_20261015`:
+
+Deployment token report: `software_cursor_source_trace_20261015` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+- no session record matched this deployment ID
+
+Deployment: `explorer_input_diagnosis_20261015`
+
+State: complete for diagnosis; no production code, tests, commits, pushes, or
+runtime changes were made.
+
+Objective: analyze Explorer cut/paste, Explorer instance drag-and-drop, and
+Edit workspace shortcuts such as F and 1–5 in the current Citric Studio
+session.
+
+User evidence: ordinary Explorer clicks and search typing work, but Cut/Paste
+fails both through the Edit menu and keyboard shortcuts. A user-performed
+instance drag produced no preview and did not move the instance. The shortcut
+failure was reported alongside these Explorer failures; no input trace was
+captured for this deployment.
+
+Technical findings: the active installed binary is Rosemary 0.2.3, while the
+repository is already pinned to Rosemary v0.3.0 and has not yet been rebuilt
+or manually validated. In the inspected compatibility layer, NSTableView
+selection support and drag/drop protocol forwarding are incomplete in the old
+source path: drag registration is a no-op and no native dragging-session/drop
+callbacks are present. This is a strong explanation for Explorer selection
+actions and drag/drop, but must be rechecked against the v0.3.0 overlay before
+patching. F1–F12 key mappings exist in the source, so the direct F/number
+shortcut failure remains unresolved and needs a short key-event trace through
+SDL mapping, AppKit key equivalent dispatch, and Studio delivery.
+
+Verification: repository status and all six agent documents were inspected;
+no code or configuration was changed. Existing binary/session evidence is
+stale relative to the v0.3.0 source pin. Token accounting was unavailable
+because no matching session record was found.
+
+Next entry point: compare the v0.3.0 materialized source and canonical overlay
+for NSTableView selection, pasteboard action dispatch, and drag/drop callbacks;
+then run focused automated checks. After that, ask the user for one bounded
+manual shortcut test and one Explorer drag test only if the source-level fix
+requires desktop confirmation.
+
+Deployment: `rosemary_v030_base_20261015`
+
+State: complete. The active Rosemary base is official v0.3.0 at commit
+`91314d454fdb86e265228c0e43b53152fc5762ce`. The reconciled aggregate patch
+`patches/0008-rosemary-v0.3.0-overlay.patch` is the only entry in
+`patches/series`; prior patch files remain preserved as historical snapshots.
+
+Verification: the overlay was generated from the merged v0.2.3 Citric tree,
+`git apply --check` passed on a clean v0.3.0 checkout, and source whitespace
+checks passed. No Rust test suite, v0.3.0 Release build, or Studio session was
+run, so existing installed-binary evidence remains v0.2.3 and is stale for
+the new source base.
+
+Next entry point: run the normal locked offline build against the new pin,
+then perform bounded Studio startup and Play/Stop validation. Preserve the
+existing diagnostic work and ask the user to perform any complex mouse
+interaction.
+
+Deployment: `studio_software_cursor_trace_20261015`
+
+State: complete for the diagnostic review. The native-cursor probe was
+discarded as insufficient after the user clarified that the OS cursor moves
+normally and only Studio's cursor graphic inside the Play viewport freezes.
+No behavioral cursor fix, commit, push, fork branch, or pull request was
+authorized.
+
+Objective: trace the software-rendered cursor path in Studio's viewport and
+avoid another user session that only measures native cursor callbacks.
+
+Evidence: `logs/mouse-cursor-20261015T161153-83542.log` is 108,897 bytes and
+contains 342 `cursorUpdate:` and 408 `setCursor:` records. All observed
+receivers/runtime classes are QNSView and the Objective-C trace spans 42.36 s.
+The associated run log is 804,871 bytes and exited with code 0. It contains
+only 11 `qt.qpa.window` records from startup and zero `qt.qpa.input.mouse`
+records. No exact RMB-release action markers correlate the native records.
+
+Interpretation: native cursor-related callbacks are observed, but this does
+not prove delivery to a Qt QWidget or that Studio's viewport cursor graphic
+received an update. Do not claim that callbacks continue specifically after
+RMB release, and do not treat missing Qt records as proof that no callback ran.
+The existing 508 MB full input trace remains preserved and was not dumped.
+
+Outcome: the existing native QNSView/Qt category script was identified as the
+wrong boundary and must not be used for the next test. Local binary inspection
+found Studio's `RBX::MouseService::CursorCache`, `MouseIcon` state, cursor
+texture resources, and `RobloxViewStudio::updateNativeMouseIconVisibility`.
+These are candidate software-cursor boundaries; no direct render-state trace
+has been implemented yet. The untracked script remains diagnostic-only and
+is not evidence about the viewport cursor.
+
+Next entry point: prepare a narrow trace at the Roblox viewport cursor/cache
+or compositor/render-state boundary, with a phase marker for RMB release. Do
+not ask the user to rerun the native cursor script until that direct trace can
+observe the rendered cursor state.
+
+Token report for `qt_widget_delivery_probe_20261015`:
+
+Deployment token report: `qt_widget_delivery_probe_20261015` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+
+- no session record matched this deployment ID
+
+Deployment: `qt_delivery_trace_20261015`
+
+State: complete for the bounded diagnostic preparation; the user-run capture
+with the focused script remains pending. No behavioral cursor fix, commit,
+push, fork branch, or pull request was authorized.
+
+Objective: test the existing `RBX_MOUSE_MOVE_EVENTS_FIX_ENABLED=1` hypothesis
+and prepare a narrow capture for Qt/AppKit cursor delivery after RMB release.
+
+Evidence: the user ran the flag through a valid Fish invocation and confirmed
+that the cursor graphic still freezes. This rules out that flag as a sufficient
+fix, but does not identify the downstream consumer or rendering boundary. The
+previous 508 MB full input trace remains preserved and was not inspected or
+dumped during this deployment.
+
+Outcome: untracked `scripts/trace-studio-cursor.sh` is ready for a brief
+reproduction. It captures only Objective-C `cursorUpdate:`/`setCursor:` and
+Qt `qt.qpa.input.mouse`/`qt.qpa.input.window` logging, forwards the required
+environment without changing unrelated values, and writes a mode-0600 ignored
+log. It does not alter cursor behavior or enable memory tracing.
+
+Verification: `bash -n`, fixture environment forwarding, and mode-0600 checks
+passed. The focused script and existing diagnostic patches remain uncommitted.
+
+Limitation: a missing cursor-category record can mean the selector/category is
+not used, logging is filtered, or the issue lies downstream; it is not proof
+that the cursor callback never ran. The next entry point is one short user-run
+capture through `scripts/trace-studio-cursor.sh`, followed by analysis of the
+sanitized event sequence.
+
+Token report for `qt_delivery_trace_20261015`:
+
+Deployment token report: `qt_delivery_trace_20261015` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+
+- no session record matched this deployment ID
+
+Deployment: `native_mouse_message_trace_20261015`
+
+State: complete for the diagnostic instrumentation; the next desktop capture
+and the cursor-only Play visual-freeze diagnosis remain pending. No behavioral
+cursor fix, commit, push, fork branch, or pull request was authorized.
+
+Objective: determine whether native Qt Cocoa mouse handling reaches the
+expected Objective-C selectors after the Play cursor graphic stops updating.
+
+Outcome: `patches/0007-native-mouse-message-diagnostics.patch` adds an opt-in
+Objective-C selected-message trace for configured selectors. It records
+monotonic timestamps, thread IDs, receiver/runtime class, method owner,
+selector, and resolved IMP for ordinary and structure-return lookups without
+reading guest arguments or changing dispatch. The existing input wrapper
+reuses the same ignored log. The seven-patch series applies to the pinned
+base; `ROSEMARY_OBJC_TRACE_LOG` and `ROSEMARY_OBJC_TRACE_SELECTORS` control
+the trace.
+
+Verification: all 36 Objective-C tests passed, the exact seven-patch
+application succeeded, and the local Release build was installed with
+SHA-256 `6504e4f6b53fc31068cee1e38d2924cc23d2805b4a1188b47132b3e6aeaaacaf`
+and ELF build ID `c7252200379d1e5cefe7265db7aaafdb9d4bf841`.
+
+User evidence: `logs/run-20261015T154111-72097.log` exited with code 0 and
+`logs/mouse-input-20261015T154110-72087.log` reproduced the cursor-only freeze.
+SDL/unbuttoned coordinates and AppKit tracking callbacks continued after RMB
+release, but no Qt mouse-category records appeared during Play. This narrows
+the next capture toward selector choice or a boundary after the native Qt
+logging categories; it does not establish a behavioral fix.
+
+Next entry point: run one short desktop capture with patch 0007's configured
+selector list, then compare selector dispatch around RMB release. Keep memory
+diagnostics and unrelated pending work separate.
+
+Token report for `native_mouse_message_trace_20261015`:
+
+Deployment token report: `native_mouse_message_trace_20261015` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+
+- no session record matched this deployment ID
+
+Deployment: `nsstring_composed_range_20261015`
+
+State: complete for the isolated Foundation implementation; desktop retry and
+the original cursor-only Play visual-freeze diagnosis remain pending. No
+commit, push, fork branch, or pull request was authorized.
+
+Objective: implement `-[NSString rangeOfComposedCharacterSequenceAtIndex:]`,
+which the Qt logging retry exposed on `__NSCFString`, so the input diagnostic
+capture can proceed past the previous NSObject description gap.
+
+Outcome: `patches/0006-nsstring-composed-character-range.patch` adds UTF-16
+indexed extended-grapheme range computation for NSString and mutable string
+subclasses, including surrogate pairs, combining marks, emoji sequences,
+unpaired surrogates, and the existing out-of-range exception path. The
+implementation uses the pinned `unicode-segmentation` dependency and keeps
+the change isolated for a future Rosemary review. The source note is
+`docs/nsstring-composed-characters.md`.
+
+Verification: 151 Foundation unit tests and 20 integration tests passed;
+formatting, source whitespace, six-patch application, the locked tempfile
+edge test, and the offline Release build passed. The installed binary was
+recorded as SHA-256
+`4166d57a43da9f92c8429f8169b9787c25315d623a998330d69c00f4dc2fdbdc`, ELF
+build ID `1e705722aebb396d726b52714ba4d09103bad0c2`.
+
+User validation: the authoritative desktop retry
+`logs/run-20261015T154111-72097.log` completed with exit code 0 and recorded
+the expected patch 0006 SHA-256
+`4166d57a43da9f92c8429f8169b9787c25315d623a998330d69c00f4dc2fdbdc`. Both
+missing selectors therefore passed in the installed binary. The user
+reproduced the original cursor-only visual freeze in Play, so the investigation
+can resume at Qt acceptance/forwarding rather than startup compatibility.
+
+The earlier code-134 log remains historical evidence from a prior launch and
+must not be used to characterize the current build.
+
+Next entry point: analyze the successful input capture associated with the
+154111 run and continue the cursor visual-freeze investigation. Keep the
+Foundation patches isolated for future Rosemary review.
+
+Token report for `nsstring_composed_range_20261015`:
+
+Deployment token report: `nsstring_composed_range_20261015` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+
+- no session record matched this deployment ID
+
+Deployment: `nsobject_description_20261015`
+
+State: complete for the isolated Foundation implementation; no commit, push,
+fork branch, or pull request was authorized. The desktop retest and the
+cursor-only Play visual-freeze investigation remain pending.
+
+Objective: implement the missing NSObject textual-description methods exposed
+by the Qt logging retry, so a future diagnostic capture can proceed without
+the code-134 startup abort.
+
+Outcome: `patches/0005-nsobject-description.patch` adds instance and class
+`description` and `debugDescription` methods in Foundation. Instance output
+uses the dynamic class and object identity; class output uses the class name;
+debug descriptions dispatch through `description`, preserving subclass
+overrides. Results are autoreleased NSString objects, and Foundation remains
+the owner of string construction without adding a runtime-to-Foundation
+dependency. The implementation is isolated in
+`docs/nsobject-description.md` for later upstream review.
+
+Verification: 147 Foundation unit tests and 20 integration tests passed,
+including four inheritance, override, and ownership regressions. Formatting,
+source whitespace, all five patch applications, and the offline Release build
+passed. Installed build SHA-256 is
+`bead6f7816af8fc4b530f30b7bc4b074acd56d114c0f49343cf64f367a60c1f2`; ELF build
+ID is `5d1a991563ca214ef7b9bbe366d39da3f5310cea`. A graphical smoke attempt
+could not create a window because no screens were available, so it does not
+replace user desktop validation.
+
+Next entry point: after the user restarts Studio through Citric, run the
+short input-diagnostics capture again to verify that Qt logging passes the
+description boundary and continue the cursor-forwarding investigation.
+
+Token report for `nsobject_description_20261015`:
+
+Deployment token report: `nsobject_description_20261015` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+
+- no session record matched this deployment ID
+
+Deployment: `hover_after_camera_20261015`
+
+State: paused; capture analyzed; a follow-up Qt logging capture is blocked by a startup compatibility crash.
+
+Objective: diagnose why Studio Play stops updating the pointer after RMB camera
+movement is released, while holding either mouse button or scrolling causes
+updates again.
+
+Current evidence: the user confirmed that the pointer remains frozen after
+waiting, that only the cursor graphic freezes while the Play scene continues,
+and that this behavior predates the Rosemary PR77–80 import. Therefore the
+imported relative/recentring changes are not an established cause. The capture
+`logs/mouse-input-20261015T152012-57340.log` shows SDL and mapped coordinates
+continuing after RMB release, with `associated=true`, `relative=false`, and
+`recentering=false`; native `QNSViewMouseMoveHelper` tracking callbacks also
+return normally. This moves the unresolved boundary into Qt's acceptance or
+forwarding path. The optional `patches/0004-hover-input-diagnostics.patch`
+logs that path's inputs when `ROSEMARY_INPUT_TRACE=1`, and
+`scripts/trace-studio-input.sh` also forwards Qt mouse/window logging rules.
+
+Verification: the diagnostic Release build was installed with SHA-256
+`2ea87f25499de085732376b8abfaecd0cd5976cdd861bc8acbde912a39bc8bed` and ELF
+build ID `863ad2f23566779e8995fe70aee8ad5d6c7c0b81`. Sixteen AppKit event tests,
+formatting, source whitespace checks, all four patch applications, and shell
+syntax validation passed. The analyzed capture exited with code 0. A retry
+with Qt logging exited with code 134 before Play because the logging path sent
+`description` to `QNSView`, which lacks that selector in the current
+compatibility layer. These checks validate instrumentation only; no input fix
+is claimed.
+
+Next entry point: isolate the missing `QNSView description` compatibility
+needed by the Qt logging retry, then capture Qt's `mouseMovedImpl` acceptance
+and forwarding boundary. Keep the diagnostic patch and script uncommitted
+until that evidence identifies a safe behavioral fix.
+
+Deployment token report: `hover_after_camera_20261015` (unavailable)
+
+| Agent | Rollouts | Input tokens | Cached input | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| _none recorded_ | 0 | 0 | 0 | 0 | 0 |
+
+Warnings:
+
+- no session record matched this deployment ID
+
 Deployment: `citric_pr77_80_import_20261015`
 
 State: complete; the four upstream PR snapshots were reconciled into a local

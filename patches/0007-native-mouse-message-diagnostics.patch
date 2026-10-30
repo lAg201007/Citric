@@ -1,0 +1,178 @@
+diff --git a/crates/objc/src/msg.rs b/crates/objc/src/msg.rs
+index 7b25c1d..0babd1b 100644
+--- a/crates/objc/src/msg.rs
++++ b/crates/objc/src/msg.rs
+@@ -3,6 +3,70 @@ use std::ffi::c_void;
+ use crate::object::Id;
+ use crate::sel::Sel;
+ 
++/// Developer-only message tracing. Selector identities are resolved once and
++/// compared without formatting or opening a file during ordinary dispatch.
++/// No guest arguments or object contents are read by this observer.
++fn trace_selected_message(
++    receiver: Id,
++    sel: Sel,
++    class: &'static crate::class::Class,
++    method: Option<&'static crate::class::Method>,
++) {
++    struct Config {
++        selectors: std::collections::HashSet<usize>,
++        started: std::time::Instant,
++        writer: std::sync::Mutex<std::fs::File>,
++    }
++    static CONFIG: std::sync::OnceLock<Option<Config>> = std::sync::OnceLock::new();
++    let Some(config) = CONFIG.get_or_init(|| {
++        let path = std::env::var_os("ROSEMARY_OBJC_TRACE_LOG")?;
++        let names = std::env::var("ROSEMARY_OBJC_TRACE_SELECTORS").ok()?;
++        let selectors = names
++            .split(',')
++            .map(str::trim)
++            .filter(|s| !s.is_empty())
++            .filter(|name| !name.as_bytes().contains(&0))
++            .map(|name| crate::sel::get(name) as usize)
++            .collect::<std::collections::HashSet<_>>();
++        if selectors.is_empty() {
++            return None;
++        }
++        let writer = std::fs::OpenOptions::new().append(true).open(path).ok()?;
++        Some(Config {
++            selectors,
++            started: std::time::Instant::now(),
++            writer: std::sync::Mutex::new(writer),
++        })
++    }) else {
++        return;
++    };
++    if !config.selectors.contains(&(sel as usize)) {
++        return;
++    }
++    // SAFETY: only a registered selector from Config can reach this point.
++    let name = unsafe { std::ffi::CStr::from_ptr(crate::sel::name(sel)) };
++    use std::io::Write;
++    let (imp, method_owner) = method.map_or((std::ptr::null(), "<unrecognized>"), |method| {
++        let owner = class
++            .chain()
++            .find(|candidate| candidate.own_method(sel).is_some())
++            .map_or("<unknown>", |candidate| candidate.name_str());
++        (method.implementation(), owner)
++    });
++    let line = format!(
++        "objc_message t_us={} thread={:?} receiver={receiver:p} class={} method_owner={method_owner} selector={} imp={imp:p}\n",
++        config.started.elapsed().as_micros(),
++        std::thread::current().id(),
++        class.name_str(),
++        name.to_string_lossy(),
++    );
++    let mut writer = config
++        .writer
++        .lock()
++        .unwrap_or_else(|error| error.into_inner());
++    let _ = writer.write_all(line.as_bytes());
++}
++
+ /// The `IMP` to jump to for `(receiver, sel)`, or the "unrecognised" trampoline.
+ ///
+ /// Called from [`msg_send`]'s prologue with the receiver and selector only; the
+@@ -19,7 +83,9 @@ unsafe extern "C" fn lookup(receiver: Id, sel: Sel) -> *const c_void {
+     let Some(class) = (unsafe { crate::object::class_of(receiver) }) else {
+         return refused;
+     };
+-    match class.method(sel) {
++    let method = class.method(sel);
++    trace_selected_message(receiver, sel, class, method);
++    match method {
+         Some(method) => method.implementation(),
+         None => refused,
+     }
+@@ -143,7 +209,9 @@ unsafe extern "C" fn lookup_stret(receiver: Id, sel: Sel) -> *const c_void {
+     let Some(class) = (unsafe { crate::object::class_of(receiver) }) else {
+         return refused;
+     };
+-    match class.method(sel) {
++    let method = class.method(sel);
++    trace_selected_message(receiver, sel, class, method);
++    match method {
+         Some(method) => method.implementation(),
+         None => refused,
+     }
+@@ -678,3 +746,80 @@ unsafe extern "C" fn forward_to_first_word() {
+         send = sym msg_send,
+     )
+ }
++
++#[cfg(test)]
++mod trace_tests {
++    use super::*;
++    use std::ffi::c_void;
++
++    const CHILD: &str = "ROSEMARY_OBJC_TRACE_TEST_CHILD";
++
++    unsafe extern "C" fn selected_method(_receiver: Id, _sel: Sel) -> usize {
++        17
++    }
++
++    unsafe extern "C" fn unselected_method(_receiver: Id, _sel: Sel) -> usize {
++        23
++    }
++
++    #[test]
++    fn selected_message_trace_records_dispatch_metadata() {
++        if std::env::var_os(CHILD).is_some() {
++            crate::bootstrap();
++            let superclass = crate::class::lookup(c"NSObject").expect("NSObject");
++            let class =
++                crate::class::allocate_pair(Some(superclass), c"RosemaryMessageTraceProbe", 0)
++                    .expect("unique trace test class");
++            crate::class::register_pair(class);
++            let selected = crate::sel::get("traceSelected");
++            let unselected = crate::sel::get("traceUnselected");
++            assert!(class.add_method(selected, selected_method as *const c_void, c"Q16@0:8",));
++            assert!(class.add_method(unselected, unselected_method as *const c_void, c"Q16@0:8",));
++            let object = crate::object::create_instance(class, 0);
++            let send: unsafe extern "C" fn(Id, Sel) -> usize =
++                unsafe { std::mem::transmute(entry()) };
++            assert_eq!(unsafe { send(object, selected) }, 17);
++            assert_eq!(unsafe { send(object, unselected) }, 23);
++            crate::arc::release(object);
++            return;
++        }
++
++        let path = std::env::temp_dir().join(format!(
++            "rosemary-objc-trace-{}-{}.log",
++            std::process::id(),
++            std::time::SystemTime::now()
++                .duration_since(std::time::UNIX_EPOCH)
++                .expect("clock after epoch")
++                .as_nanos(),
++        ));
++        std::fs::File::create(&path).expect("precreate trace file");
++        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
++            .args([
++                "--exact",
++                "msg::trace_tests::selected_message_trace_records_dispatch_metadata",
++                "--nocapture",
++            ])
++            .env(CHILD, "1")
++            .env("ROSEMARY_OBJC_TRACE_LOG", &path)
++            .env("ROSEMARY_OBJC_TRACE_SELECTORS", "traceSelected")
++            .output()
++            .expect("run isolated trace child");
++        let stderr = String::from_utf8_lossy(&output.stderr);
++        assert!(output.status.success(), "child failed: {stderr}");
++        let contents = std::fs::read_to_string(&path).expect("read trace");
++        let _ = std::fs::remove_file(&path);
++        let lines = contents.lines().collect::<Vec<_>>();
++        assert_eq!(lines.len(), 1, "unexpected trace records: {contents}");
++        let line = lines[0];
++        assert!(line.contains("objc_message t_us="), "{line}");
++        assert!(line.contains("thread=ThreadId("), "{line}");
++        assert!(line.contains("class=RosemaryMessageTraceProbe"), "{line}");
++        assert!(
++            line.contains("method_owner=RosemaryMessageTraceProbe"),
++            "{line}"
++        );
++        assert!(line.contains("selector=traceSelected"), "{line}");
++        assert!(line.contains("imp=0x"), "{line}");
++        assert!(!line.contains("traceUnselected"), "{line}");
++    }
++}
